@@ -66,13 +66,12 @@ pub fn import_jsonl(
         let fields: BTreeMap<String, String> = match obj.get("fields") {
             Some(serde_json::Value::Object(map)) => map
                 .iter()
-                .filter_map(|(k, v)| {
-                    // Coerce all values to strings
+                .map(|(k, v)| {
                     let s = match v {
                         serde_json::Value::String(s) => s.clone(),
                         other => other.to_string(),
                     };
-                    Some((k.clone(), s))
+                    (k.clone(), s)
                 })
                 .collect(),
             Some(_) => {

@@ -9,7 +9,7 @@ use tempfile::tempdir;
 fn test_initial_state() {
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     let dir = tempdir().unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let ledger = Ledger::init(&ledger_path, "minimal", "1.0.0").unwrap();
     let sm = StateMachine::new(&config, ledger);
     assert_eq!(sm.current_state(), "idle");
@@ -19,7 +19,7 @@ fn test_initial_state() {
 fn test_valid_transition() {
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     let dir = tempdir().unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let ledger = Ledger::init(&ledger_path, "minimal", "1.0.0").unwrap();
     let mut sm = StateMachine::new(&config, ledger);
     let result = sm.transition("begin", &[]);
@@ -31,7 +31,7 @@ fn test_valid_transition() {
 fn test_invalid_transition_from_wrong_state() {
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     let dir = tempdir().unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let ledger = Ledger::init(&ledger_path, "minimal", "1.0.0").unwrap();
     let mut sm = StateMachine::new(&config, ledger);
     // Can't complete from idle — that transition is from "working"
@@ -43,7 +43,7 @@ fn test_invalid_transition_from_wrong_state() {
 fn test_gate_blocks_transition() {
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     let dir = tempdir().unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let ledger = Ledger::init(&ledger_path, "minimal", "1.0.0").unwrap();
     let mut sm = StateMachine::new(&config, ledger);
     sm.transition("begin", &[]).unwrap();
@@ -56,7 +56,7 @@ fn test_gate_blocks_transition() {
 fn test_set_completion_enables_transition() {
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     let dir = tempdir().unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let ledger = Ledger::init(&ledger_path, "minimal", "1.0.0").unwrap();
     let mut sm = StateMachine::new(&config, ledger);
     sm.transition("begin", &[]).unwrap();
@@ -82,7 +82,7 @@ fn test_set_completion_enables_transition() {
 fn test_set_status() {
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     let dir = tempdir().unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let ledger = Ledger::init(&ledger_path, "minimal", "1.0.0").unwrap();
     let mut sm = StateMachine::new(&config, ledger);
 

@@ -390,19 +390,18 @@ fn eval_set_covered(gate: &GateConfig, ctx: &GateContext) -> GateResult {
         }
     };
 
-    // Collect the unique values of `field_name` from payloads where
+    // Collect the unique values of `field_name` from entries where
     // `"set" == set_name`.  Use HashSet for O(1) membership checks.
     let mut covered: HashSet<String> = HashSet::new();
     for entry in ctx.ledger.events_of_type(event_name) {
-        if let Ok(fields) = deserialize_payload(&entry.payload) {
-            let set_matches = fields
-                .get("set")
-                .map(|v| v.as_str() == set_name)
-                .unwrap_or(false);
-            if set_matches {
-                if let Some(member) = fields.get(field_name) {
-                    covered.insert(member.clone());
-                }
+        let set_matches = entry
+            .fields
+            .get("set")
+            .map(|v| v.as_str() == set_name)
+            .unwrap_or(false);
+        if set_matches {
+            if let Some(member) = entry.fields.get(field_name) {
+                covered.insert(member.clone());
             }
         }
     }
@@ -450,8 +449,16 @@ fn eval_min_elapsed(gate: &GateConfig, ctx: &GateContext) -> GateResult {
         .map(|s| s as u64)
         .unwrap_or(0);
 
-    // Find the most recent matching event.
-    let last_ts_ms = ctx.ledger.events_of_type(event).last().map(|e| e.timestamp);
+    // Find the most recent matching event and parse its ISO 8601 timestamp.
+    let last_ts_ms = ctx
+        .ledger
+        .events_of_type(event)
+        .last()
+        .and_then(|e| {
+            chrono::DateTime::parse_from_rfc3339(&e.ts)
+                .ok()
+                .map(|dt| dt.timestamp_millis())
+        });
 
     let description = format!(
         "at least {} second(s) since last '{}' event",
@@ -778,12 +785,14 @@ fn resolve_snapshot_reference(ctx: &GateContext, snapshot_key: &str) -> Result<S
 
     // Walk backwards to find the most recent snapshot with matching key.
     for entry in snapshots.iter().rev() {
-        if let Ok(fields) = deserialize_payload(&entry.payload) {
-            if fields.get("key").map(|k| k.as_str()) == Some(snapshot_key) {
-                return fields.get("value").cloned().ok_or_else(|| {
+        if entry.fields.get("key").map(|k| k.as_str()) == Some(snapshot_key) {
+            return entry
+                .fields
+                .get("value")
+                .cloned()
+                .ok_or_else(|| {
                     format!("snapshot with key '{}' has no 'value' field", snapshot_key)
                 });
-            }
         }
     }
 
@@ -954,22 +963,12 @@ fn run_shell_output_with_timeout(
     }
 }
 
-/// Check whether a ledger entry's payload matches all key/value pairs in `filter`.
+/// Check whether a ledger entry's fields match all key/value pairs in `filter`.
 fn entry_matches_filter(entry: &LedgerEntry, filter: &HashMap<String, String>) -> bool {
     if filter.is_empty() {
         return true;
     }
-    match deserialize_payload(&entry.payload) {
-        Ok(fields) => filter
-            .iter()
-            .all(|(k, v)| fields.get(k).map(|fv| fv == v).unwrap_or(false)),
-        Err(_) => false,
-    }
-}
-
-/// Deserialize a MessagePack payload into a `HashMap<String, String>`.
-fn deserialize_payload(
-    payload: &[u8],
-) -> Result<HashMap<String, String>, rmp_serde::decode::Error> {
-    rmp_serde::from_slice(payload)
+    filter
+        .iter()
+        .all(|(k, v)| entry.fields.get(k).map(|fv| fv == v).unwrap_or(false))
 }

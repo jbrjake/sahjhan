@@ -237,21 +237,11 @@ impl RenderEngine {
             .entries()
             .iter()
             .map(|entry| {
-                let timestamp = chrono::DateTime::from_timestamp_millis(entry.timestamp)
-                    .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
-                    .unwrap_or_else(|| format!("{}ms", entry.timestamp));
-
-                let fields: HashMap<String, String> = if !entry.payload.is_empty() {
-                    rmp_serde::from_slice(&entry.payload).unwrap_or_default()
-                } else {
-                    HashMap::new()
-                };
-
                 EventSummary {
                     seq: entry.seq,
                     event_type: entry.event_type.clone(),
-                    timestamp,
-                    fields,
+                    timestamp: entry.ts.clone(),
+                    fields: entry.fields.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
                 }
             })
             .collect();
@@ -300,10 +290,8 @@ impl RenderEngine {
 fn derive_current_state(config: &ProtocolConfig, ledger: &Ledger) -> String {
     let transitions = ledger.events_of_type("state_transition");
     if let Some(last) = transitions.last() {
-        if let Ok(fields) = deserialize_fields(&last.payload) {
-            if let Some(to) = fields.get("to") {
-                return to.clone();
-            }
+        if let Some(to) = last.fields.get("to") {
+            return to.clone();
         }
     }
     config.initial_state().unwrap_or("idle").to_string()
@@ -313,24 +301,18 @@ fn derive_current_state(config: &ProtocolConfig, ledger: &Ledger) -> String {
 fn completed_members_for_set(ledger: &Ledger, set_name: &str) -> Vec<String> {
     let mut covered = Vec::new();
     for entry in ledger.events_of_type("set_member_complete") {
-        if let Ok(fields) = deserialize_fields(&entry.payload) {
-            let set_matches = fields
-                .get("set")
-                .map(|v| v.as_str() == set_name)
-                .unwrap_or(false);
-            if set_matches {
-                if let Some(member) = fields.get("member") {
-                    if !covered.contains(member) {
-                        covered.push(member.clone());
-                    }
+        let set_matches = entry
+            .fields
+            .get("set")
+            .map(|v| v.as_str() == set_name)
+            .unwrap_or(false);
+        if set_matches {
+            if let Some(member) = entry.fields.get("member") {
+                if !covered.contains(member) {
+                    covered.push(member.clone());
                 }
             }
         }
     }
     covered
-}
-
-/// Deserialize MessagePack bytes to a HashMap<String, String>.
-fn deserialize_fields(payload: &[u8]) -> Result<HashMap<String, String>, String> {
-    rmp_serde::from_slice(payload).map_err(|e| e.to_string())
 }

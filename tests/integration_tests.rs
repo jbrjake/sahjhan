@@ -233,7 +233,7 @@ fn test_log_dump() {
         .current_dir(dir.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("protocol_init"));
+        .stdout(predicate::str::contains("genesis"));
 }
 
 #[test]
@@ -245,7 +245,7 @@ fn test_log_tail() {
         .current_dir(dir.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("protocol_init"));
+        .stdout(predicate::str::contains("genesis"));
 }
 
 #[test]
@@ -417,7 +417,7 @@ fn test_render_history_contains_events() {
         .success();
     let content = std::fs::read_to_string(dir.path().join("output/HISTORY.md")).unwrap();
     assert!(content.contains("Event History"));
-    assert!(content.contains("protocol_init"));
+    assert!(content.contains("genesis"));
 }
 
 #[test]

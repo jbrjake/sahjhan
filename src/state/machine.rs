@@ -120,15 +120,13 @@ impl StateMachine {
         self.ledger.reload().map_err(StateError::Ledger)?;
 
         // Record the transition event.
-        let mut fields = HashMap::new();
+        let mut fields = BTreeMap::new();
         fields.insert("from".to_string(), self.current_state.clone());
         fields.insert("to".to_string(), transition.to.clone());
         fields.insert("command".to_string(), command.to_string());
 
-        // TODO(Task 4): clean up — convert HashMap to BTreeMap for new append API
-        let btree_fields: BTreeMap<String, String> = fields.into_iter().collect();
         self.ledger
-            .append("state_transition", btree_fields)
+            .append("state_transition", fields)
             .map_err(StateError::Ledger)?;
 
         self.current_state = transition.to.clone();
@@ -139,13 +137,12 @@ impl StateMachine {
     // Event recording
     // -----------------------------------------------------------------------
 
-    /// Serialize `fields` as MessagePack and append an entry to the ledger.
+    /// Append an event to the ledger with the given fields.
     pub fn record_event(
         &mut self,
         event_type: &str,
         fields: HashMap<String, String>,
     ) -> Result<(), StateError> {
-        // TODO(Task 4): clean up — convert HashMap to BTreeMap for new append API
         let btree_fields: BTreeMap<String, String> = fields.into_iter().collect();
         self.ledger
             .append(event_type, btree_fields)
@@ -195,10 +192,8 @@ impl StateMachine {
     fn derive_state_from_ledger(config: &ProtocolConfig, ledger: &Ledger) -> String {
         let transitions = ledger.events_of_type("state_transition");
         if let Some(last) = transitions.last() {
-            if let Ok(fields) = deserialize_fields(&last.payload) {
-                if let Some(to) = fields.get("to") {
-                    return to.clone();
-                }
+            if let Some(to) = last.fields.get("to") {
+                return to.clone();
             }
         }
         config.initial_state().unwrap_or("idle").to_string()
@@ -252,7 +247,7 @@ impl StateMachine {
     }
 
     /// Scan ledger events of `event_type` and collect unique values of
-    /// `field_name` where the payload also contains `"set" == set_name`.
+    /// `field_name` where the entry also contains `"set" == set_name`.
     fn completed_members_for_set(
         &self,
         set_name: &str,
@@ -261,34 +256,19 @@ impl StateMachine {
     ) -> Vec<String> {
         let mut covered = Vec::new();
         for entry in self.ledger.events_of_type(event_type) {
-            if let Ok(fields) = deserialize_fields(&entry.payload) {
-                let set_matches = fields
-                    .get("set")
-                    .map(|v| v.as_str() == set_name)
-                    .unwrap_or(false);
-                if set_matches {
-                    if let Some(member) = fields.get(field_name) {
-                        if !covered.contains(member) {
-                            covered.push(member.clone());
-                        }
+            let set_matches = entry
+                .fields
+                .get("set")
+                .map(|v| v.as_str() == set_name)
+                .unwrap_or(false);
+            if set_matches {
+                if let Some(member) = entry.fields.get(field_name) {
+                    if !covered.contains(member) {
+                        covered.push(member.clone());
                     }
                 }
             }
         }
         covered
     }
-}
-
-// ---------------------------------------------------------------------------
-// MessagePack serialization helpers
-// ---------------------------------------------------------------------------
-
-/// Serialize a `HashMap<String, String>` to MessagePack bytes.
-fn serialize_fields(fields: &HashMap<String, String>) -> Result<Vec<u8>, StateError> {
-    rmp_serde::to_vec(fields).map_err(|e| StateError::Serialization(e.to_string()))
-}
-
-/// Deserialize MessagePack bytes to a `HashMap<String, String>`.
-fn deserialize_fields(payload: &[u8]) -> Result<HashMap<String, String>, StateError> {
-    rmp_serde::from_slice(payload).map_err(|e| StateError::Serialization(e.to_string()))
 }

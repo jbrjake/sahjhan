@@ -7,7 +7,7 @@
 use sahjhan::config::{GateConfig, ProtocolConfig};
 use sahjhan::gates::evaluator::{evaluate_gate, evaluate_gates, GateContext};
 use sahjhan::ledger::chain::Ledger;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use tempfile::tempdir;
 
@@ -33,7 +33,7 @@ fn make_gate(gate_type: &str, params: Vec<(&str, toml::Value)>) -> GateConfig {
 fn test_file_exists_pass() {
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     let test_file = dir.path().join("existing.txt");
@@ -66,7 +66,7 @@ fn test_file_exists_pass() {
 fn test_file_exists_fail() {
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     let gate = make_gate(
@@ -96,7 +96,7 @@ fn test_file_exists_fail() {
 fn test_files_exist_pass() {
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     std::fs::write(dir.path().join("a.txt"), "").unwrap();
@@ -127,7 +127,7 @@ fn test_files_exist_pass() {
 fn test_files_exist_fail_missing_one() {
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     std::fs::write(dir.path().join("a.txt"), "").unwrap();
@@ -162,7 +162,7 @@ fn test_files_exist_fail_missing_one() {
 fn test_command_succeeds_pass() {
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     let gate = make_gate(
@@ -184,7 +184,7 @@ fn test_command_succeeds_pass() {
 fn test_command_succeeds_fail() {
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     let gate = make_gate(
@@ -210,7 +210,7 @@ fn test_command_succeeds_fail() {
 fn test_command_succeeds_timeout() {
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     // Command that sleeps for 30 seconds, but timeout is 1 second.
@@ -256,7 +256,7 @@ fn test_command_succeeds_timeout() {
 fn test_command_output_match() {
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     let gate = make_gate(
@@ -281,7 +281,7 @@ fn test_command_output_match() {
 fn test_command_output_mismatch() {
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     let gate = make_gate(
@@ -310,7 +310,7 @@ fn test_command_output_mismatch() {
 fn test_command_output_timeout() {
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     let gate = make_gate(
@@ -358,18 +358,18 @@ fn test_command_output_timeout() {
 fn test_ledger_has_event_pass() {
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
     ledger
         .append(
             "my_event",
-            rmp_serde::to_vec(&HashMap::<String, String>::new()).unwrap(),
+            BTreeMap::new(),
         )
         .unwrap();
     ledger
         .append(
             "my_event",
-            rmp_serde::to_vec(&HashMap::<String, String>::new()).unwrap(),
+            BTreeMap::new(),
         )
         .unwrap();
 
@@ -395,12 +395,12 @@ fn test_ledger_has_event_pass() {
 fn test_ledger_has_event_fail_count() {
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
     ledger
         .append(
             "my_event",
-            rmp_serde::to_vec(&HashMap::<String, String>::new()).unwrap(),
+            BTreeMap::new(),
         )
         .unwrap();
 
@@ -426,14 +426,12 @@ fn test_ledger_has_event_fail_count() {
 fn test_ledger_has_event_with_filter_pass() {
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
-    let mut payload = HashMap::new();
+    let mut payload = BTreeMap::new();
     payload.insert("status".to_string(), "ok".to_string());
-    ledger
-        .append("my_event", rmp_serde::to_vec(&payload).unwrap())
-        .unwrap();
+    ledger.append("my_event", payload).unwrap();
 
     let mut filter = toml::value::Table::new();
     filter.insert("status".to_string(), toml::Value::String("ok".to_string()));
@@ -461,14 +459,12 @@ fn test_ledger_has_event_with_filter_pass() {
 fn test_ledger_has_event_with_filter_fail() {
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
-    let mut payload = HashMap::new();
+    let mut payload = BTreeMap::new();
     payload.insert("status".to_string(), "error".to_string());
-    ledger
-        .append("my_event", rmp_serde::to_vec(&payload).unwrap())
-        .unwrap();
+    ledger.append("my_event", payload).unwrap();
 
     let mut filter = toml::value::Table::new();
     filter.insert("status".to_string(), toml::Value::String("ok".to_string()));
@@ -500,25 +496,19 @@ fn test_ledger_has_event_with_filter_fail() {
 fn test_ledger_has_event_since_pass() {
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     // Record a transition, then the event we want to detect.
-    let mut trans_fields = HashMap::new();
+    let mut trans_fields = BTreeMap::new();
     trans_fields.insert("from".to_string(), "idle".to_string());
     trans_fields.insert("to".to_string(), "working".to_string());
     trans_fields.insert("command".to_string(), "begin".to_string());
     ledger
-        .append(
-            "state_transition",
-            rmp_serde::to_vec(&trans_fields).unwrap(),
-        )
+        .append("state_transition", trans_fields)
         .unwrap();
     ledger
-        .append(
-            "check_done",
-            rmp_serde::to_vec(&HashMap::<String, String>::new()).unwrap(),
-        )
+        .append("check_done", BTreeMap::new())
         .unwrap();
 
     let gate = make_gate(
@@ -543,26 +533,23 @@ fn test_ledger_has_event_since_pass() {
 fn test_ledger_has_event_since_fail() {
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     // Record the event BEFORE the transition — should not count.
     ledger
         .append(
             "check_done",
-            rmp_serde::to_vec(&HashMap::<String, String>::new()).unwrap(),
+            BTreeMap::new(),
         )
         .unwrap();
 
-    let mut trans_fields = HashMap::new();
+    let mut trans_fields = BTreeMap::new();
     trans_fields.insert("from".to_string(), "idle".to_string());
     trans_fields.insert("to".to_string(), "working".to_string());
     trans_fields.insert("command".to_string(), "begin".to_string());
     ledger
-        .append(
-            "state_transition",
-            rmp_serde::to_vec(&trans_fields).unwrap(),
-        )
+        .append("state_transition", trans_fields)
         .unwrap();
 
     let gate = make_gate(
@@ -591,15 +578,15 @@ fn test_ledger_has_event_since_fail() {
 fn test_set_covered_pass() {
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     for member in &["tests", "lint"] {
-        let mut fields = HashMap::new();
+        let mut fields = BTreeMap::new();
         fields.insert("set".to_string(), "check".to_string());
         fields.insert("member".to_string(), member.to_string());
         ledger
-            .append("set_member_complete", rmp_serde::to_vec(&fields).unwrap())
+            .append("set_member_complete", fields)
             .unwrap();
     }
 
@@ -622,16 +609,14 @@ fn test_set_covered_pass() {
 fn test_set_covered_fail_partial() {
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     // Only record "tests", not "lint".
-    let mut fields = HashMap::new();
+    let mut fields = BTreeMap::new();
     fields.insert("set".to_string(), "check".to_string());
     fields.insert("member".to_string(), "tests".to_string());
-    ledger
-        .append("set_member_complete", rmp_serde::to_vec(&fields).unwrap())
-        .unwrap();
+    ledger.append("set_member_complete", fields).unwrap();
 
     let gate = make_gate(
         "set_covered",
@@ -659,7 +644,7 @@ fn test_min_elapsed_pass_no_event() {
     // No event of the given type has occurred — elapsed is "infinite", should pass.
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     let gate = make_gate(
@@ -685,12 +670,12 @@ fn test_min_elapsed_fail_just_happened() {
     // We record an event right now — 3600s have NOT elapsed.
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
     ledger
         .append(
             "my_event",
-            rmp_serde::to_vec(&HashMap::<String, String>::new()).unwrap(),
+            BTreeMap::new(),
         )
         .unwrap();
 
@@ -720,7 +705,7 @@ fn test_min_elapsed_fail_just_happened() {
 fn test_no_violations_clean() {
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     let gate = make_gate("no_violations", vec![]);
@@ -739,12 +724,12 @@ fn test_no_violations_clean() {
 fn test_no_violations_with_violation() {
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
     ledger
         .append(
             "protocol_violation",
-            rmp_serde::to_vec(&HashMap::<String, String>::new()).unwrap(),
+            BTreeMap::new(),
         )
         .unwrap();
 
@@ -765,19 +750,19 @@ fn test_no_violations_with_resolved_violation() {
     // A violation that has been resolved should not block.
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     ledger
         .append(
             "protocol_violation",
-            rmp_serde::to_vec(&HashMap::<String, String>::new()).unwrap(),
+            BTreeMap::new(),
         )
         .unwrap();
     ledger
         .append(
             "violation_resolved",
-            rmp_serde::to_vec(&HashMap::<String, String>::new()).unwrap(),
+            BTreeMap::new(),
         )
         .unwrap();
 
@@ -803,25 +788,25 @@ fn test_no_violations_partial_resolution() {
     // Two violations, one resolved — still one unresolved.
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     ledger
         .append(
             "protocol_violation",
-            rmp_serde::to_vec(&HashMap::<String, String>::new()).unwrap(),
+            BTreeMap::new(),
         )
         .unwrap();
     ledger
         .append(
             "protocol_violation",
-            rmp_serde::to_vec(&HashMap::<String, String>::new()).unwrap(),
+            BTreeMap::new(),
         )
         .unwrap();
     ledger
         .append(
             "violation_resolved",
-            rmp_serde::to_vec(&HashMap::<String, String>::new()).unwrap(),
+            BTreeMap::new(),
         )
         .unwrap();
 
@@ -847,7 +832,7 @@ fn test_no_violations_partial_resolution() {
 fn test_field_not_empty_pass() {
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     let mut fields = HashMap::new();
@@ -872,7 +857,7 @@ fn test_field_not_empty_pass() {
 fn test_field_not_empty_fail_empty_value() {
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     let mut fields = HashMap::new();
@@ -897,7 +882,7 @@ fn test_field_not_empty_fail_empty_value() {
 fn test_field_not_empty_fail_missing_field() {
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     let fields = HashMap::new();
@@ -925,7 +910,7 @@ fn test_field_not_empty_fail_missing_field() {
 fn test_snapshot_compare_gt_pass() {
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     // Command outputs JSON; we extract "count" and compare > 5.
@@ -956,7 +941,7 @@ fn test_snapshot_compare_gt_pass() {
 fn test_snapshot_compare_eq_pass() {
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     let gate = make_gate(
@@ -986,7 +971,7 @@ fn test_snapshot_compare_eq_pass() {
 fn test_snapshot_compare_fail() {
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     let gate = make_gate(
@@ -1020,16 +1005,14 @@ fn test_snapshot_compare_fail() {
 fn test_snapshot_compare_with_ledger_reference() {
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     // Store a snapshot in the ledger with key "baseline" and value "5".
-    let mut snapshot_fields = HashMap::new();
+    let mut snapshot_fields = BTreeMap::new();
     snapshot_fields.insert("key".to_string(), "baseline".to_string());
     snapshot_fields.insert("value".to_string(), "5".to_string());
-    ledger
-        .append("snapshot", rmp_serde::to_vec(&snapshot_fields).unwrap())
-        .unwrap();
+    ledger.append("snapshot", snapshot_fields).unwrap();
 
     // Command outputs count=10, compare > snapshot:baseline (which resolves to 5).
     let gate = make_gate(
@@ -1067,7 +1050,7 @@ fn test_snapshot_compare_with_ledger_reference() {
 fn test_snapshot_compare_missing_snapshot_fails() {
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     // Reference a snapshot that does not exist.
@@ -1111,23 +1094,19 @@ fn test_snapshot_compare_missing_snapshot_fails() {
 fn test_snapshot_compare_uses_most_recent_snapshot() {
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     // Two snapshots with the same key — should use the more recent one.
-    let mut snap1 = HashMap::new();
+    let mut snap1 = BTreeMap::new();
     snap1.insert("key".to_string(), "baseline".to_string());
     snap1.insert("value".to_string(), "100".to_string());
-    ledger
-        .append("snapshot", rmp_serde::to_vec(&snap1).unwrap())
-        .unwrap();
+    ledger.append("snapshot", snap1).unwrap();
 
-    let mut snap2 = HashMap::new();
+    let mut snap2 = BTreeMap::new();
     snap2.insert("key".to_string(), "baseline".to_string());
     snap2.insert("value".to_string(), "5".to_string());
-    ledger
-        .append("snapshot", rmp_serde::to_vec(&snap2).unwrap())
-        .unwrap();
+    ledger.append("snapshot", snap2).unwrap();
 
     // count=10 > snapshot:baseline. If it uses the first snapshot (100), it would fail.
     // If it uses the most recent (5), it should pass.
@@ -1188,7 +1167,7 @@ fn test_field_validation_rejects_invalid_pattern() {
         },
     );
 
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     // state_params contains "member" with a value that violates the pattern.
@@ -1240,7 +1219,7 @@ fn test_field_validation_accepts_valid_pattern() {
         },
     );
 
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     let mut state_params = HashMap::new();
@@ -1274,7 +1253,7 @@ fn test_field_validation_accepts_valid_pattern() {
 fn test_evaluate_gates_all_pass() {
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     let gates = vec![
@@ -1301,7 +1280,7 @@ fn test_evaluate_gates_all_pass() {
 fn test_evaluate_gates_continues_after_failure() {
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
-    let ledger_path = dir.path().join("ledger.bin");
+    let ledger_path = dir.path().join("ledger.jsonl");
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     let gates = vec![

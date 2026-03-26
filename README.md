@@ -83,15 +83,6 @@ And because protocols are just TOML, I'm not writing a new bespoke enforcement s
 
 A protocol is a directory of TOML files. Here's one for TDD enforcement:
 
-```
-tdd-protocol/
-  protocol.toml
-  states.toml
-  transitions.toml
-  events.toml        # optional
-  renders.toml       # optional
-```
-
 ```toml
 # tdd-protocol/states.toml
 [states.idle]

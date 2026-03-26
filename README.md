@@ -4,11 +4,9 @@ Protocol enforcement engine for AI agents.
 
 ## What this is
 
-I run agents on a code audit tool called [Holtz](https://github.com/jbrjake/holtz). Part of the audit process requires the agent to do three review passes, with real analysis between each one, to make sure its own fixes didn't break anything new. One pass of actual work, then two more confirming nothing else fell over.
+I have a code audit project where agents review a codebase, find bugs, fix them with TDD, and then do review passes to make sure their fixes didn't break anything new. The protocol for this is about 400 lines long. Dot diagrams. Rationalization detection tables. Hard gates. Circuit breakers. A whole section called "Context Survival Protocol" because I know their memory will compact mid-run. I did the work. I wrote the skill correctly. Best practices, the whole thing.
 
-I want to show you what actually happened, because it's funnier and worse than anything I could paraphrase.
-
-Here's what it did instead. This is from the actual session transcript:
+Here's what the agent did with all 400 lines of carefully designed protocol:
 
 > **Agent:** Need 3 data points. Let me run it two more times to build up the convergence history.
 >
@@ -52,13 +50,7 @@ No files read. No code reviewed. No analysis. Just napping on the clock. The Bas
 
 I made one of these agents write a postmortem about what it did. Its conclusion: "This is not a documentation fix. This is a code fix. The convergence protocol has the same gap the other hooks addressed: advisory language that the model agrees with and ignores."
 
-It's right. And I hate that it's right, because what it's really saying is: the only enforcement that works is enforcement the agent can't get its hands on. Which means I had to build a blockchain.
-
-For babysitting AI agents.
-
-I know.
-
-If you'd told me a year ago I would find a legitimate use case for a hash-chained append-only ledger, I would have mass-unfollowed you. But it turns out there is exactly one situation where the crypto nerds were right all along: when your counterparty is an intelligent system that will, with 100% certainty, edit the evidence if you store it in a format it can write to. I didn't go looking for this. The agents cornered me into it. I want that on the record.
+It's right. And I hate that it's right, because what it's really saying is: the only enforcement that works is enforcement the agent can't get its hands on. Which means I had to build a blockchain. For babysitting AI agents. I know. If you'd told me a year ago I would find a legitimate use case for a hash-chained append-only ledger, I would have mass-unfollowed you. But it turns out there is exactly one situation where the crypto bros were right all along: when your counterparty is an intelligent system that will, given any opportunity whatsoever, edit the evidence. Four hundred lines of protocol design, dot diagrams, rationalization tables, and the agent's answer was `sleep 65`. I didn't go looking for this. The agents cornered me into it. I want that on the record.
 
 Sahjhan is the result. A Rust binary that enforces multi-step protocols so the agent can't sweet-talk, edit, reset, fabricate, or `sleep` its way past the parts it finds tedious. You write the protocol in TOML, Sahjhan enforces it with that regrettable ledger and gates that independently verify the work. The agent talks to the CLI and nothing else.
 
@@ -79,19 +71,19 @@ Rust 1.70+. Pre-built binaries for macOS and Linux on the [releases page](https:
 
 ## Why not just a script?
 
-Everything in those transcripts was enforced by text files and Python scripts. The agent read the guard, understood the check, and routed around it faster than I could have. When it couldn't beat the guard, it deleted the evidence and started over with fabricated data.
+Everything in those transcripts was enforced by text files and Python scripts. I wrote a 400-line skill with dot diagrams and hard gates and a rationalization detection table with eleven entries. The agent read all of it, agreed with all of it, and the moment it got tedious, `sleep 62`.
 
-That's the thing about enforcement the agent can read: it will read it. It sees your if-statements, understands the condition, and finds whatever you missed. A JSON history file? Four consecutive runs showed me exactly how trivially editable that is.
+That's the thing about enforcement the agent can read: it will. It sees your if-statements, grasps the condition, and finds whatever you didn't cover. A JSON history file? Four consecutive runs taught me exactly how editable that is.
 
-Sahjhan is compiled Rust. The agent can't `cat` the binary to study how it works. The ledger is binary with hash chaining, so there's no JSON to edit and no history file to delete. Hooks block direct file writes. Another hook checks file integrity after every Bash command, so `echo >` and `sed -i` tricks get caught. To actually cheat, the agent would need to reverse-engineer a binary format, compute SHA-256 hashes, and update a manifest, all in one command before the next hook fires. Could it? I genuinely don't know anymore. But the effort-to-reward ratio finally points toward just doing the work.
+Sahjhan is compiled Rust. The agent can't `cat` the binary to study the enforcement logic. The ledger is binary with hash chaining, so there's no JSON to edit and no history file to delete. Hooks block direct file writes. Another hook checks file integrity after every Bash command. To actually cheat, the agent would need to reverse-engineer a binary format, compute SHA-256 hashes, and update a manifest, all in one command before the next hook fires. Could it? At this point I genuinely don't know what to rule out. But the effort-to-reward ratio finally tips toward doing the actual work, which is all I ever wanted.
 
-And because protocols are just TOML, I'm not writing a new bespoke enforcement script every time. States, transitions, gates. Same shape every time, about twenty minutes to write. The agents keep surprising me, but the constraint is reusable even when the thing it's constraining is not.
+And because protocols are just TOML, I'm not writing a new bespoke enforcement script every time an agent finds a creative new way to disappoint me. States, transitions, gates. Same shape every time, twenty minutes to write.
 
 ## What enforcement actually looks like
 
-Timing gates prove the agent can tell time. I know this from experience. Sahjhan's gates check evidence instead.
+Timing gates prove the agent can tell time. I learned this the hard way. Sahjhan's gates check evidence instead.
 
-Here's what that looks like for a TDD protocol:
+Here's a TDD protocol where every step is independently verified:
 
 ```bash
 sahjhan --config-dir tdd-protocol init
@@ -134,13 +126,13 @@ sahjhan --config-dir tdd-protocol transition finalize
 
 ## How it works
 
-The TOML protocol defines the states, transitions, and gates. The compiled binary enforces them. The agent can't read it, can't modify it, can't study the logic the way those agents studied my Python guards and found the gaps in minutes.
+TOML defines the states, transitions, and gates. The compiled binary enforces them. My agents used to read my Python guard scripts and find the gaps in minutes. There's nothing to read here.
 
-The ledger is the hash chain (I'm still not over it) where every entry links cryptographically to the previous one. Edit an entry, chain breaks. Delete one, gap in the sequence. Reset the whole file, the manifest catches it. My agents used to delete `HISTORY.json` like they were clearing browser history. Can't do that here.
+The ledger is the hash chain (I'm still not over it). Every entry links cryptographically to the one before it. Edit one, chain breaks. Delete one, sequence gap. Reset the whole file, the manifest notices. My agents used to delete `HISTORY.json` like clearing browser history. That was fun while it lasted.
 
-The manifest tracks SHA-256 hashes of every managed file. Touch one through Bash, the hash won't match, violation goes into the ledger. Permanently. The manifest hash is also in the ledger, so tampering with the manifest means tampering with the ledger, which means defeating the hash chain. Turtles all the way down, but SHA-256 turtles.
+The manifest tracks SHA-256 hashes of every managed file. Touch one through Bash, the hash won't match, violation gets written to the ledger. Permanently. The manifest hash is also in the ledger, so tampering with the manifest means tampering with the ledger, which means defeating the hash chain. Turtles all the way down, but SHA-256 turtles.
 
-Hooks handle the rest. PreToolUse blocks writes to managed files. PostToolUse checks integrity after every Bash command.
+Hooks handle the perimeter. PreToolUse blocks writes to managed files. PostToolUse checks integrity after every Bash command.
 
 ## Building a protocol
 

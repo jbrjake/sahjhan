@@ -14,8 +14,12 @@ fn test_create_and_list_ledgers() {
     let path = temp_registry_path(&dir);
 
     let mut reg = LedgerRegistry::new(&path).unwrap();
-    reg.create("run-21", "docs/holtz/runs/21/ledger.jsonl", LedgerMode::Stateful)
-        .unwrap();
+    reg.create(
+        "run-21",
+        "docs/holtz/runs/21/ledger.jsonl",
+        LedgerMode::Stateful,
+    )
+    .unwrap();
     reg.create("project", "docs/holtz/project.jsonl", LedgerMode::EventOnly)
         .unwrap();
 
@@ -34,8 +38,12 @@ fn test_remove_from_registry() {
     let path = temp_registry_path(&dir);
 
     let mut reg = LedgerRegistry::new(&path).unwrap();
-    reg.create("run-21", "docs/holtz/runs/21/ledger.jsonl", LedgerMode::Stateful)
-        .unwrap();
+    reg.create(
+        "run-21",
+        "docs/holtz/runs/21/ledger.jsonl",
+        LedgerMode::Stateful,
+    )
+    .unwrap();
     reg.remove("run-21").unwrap();
 
     assert!(reg.list().is_empty());
@@ -50,8 +58,12 @@ fn test_resolve_default_ledger() {
     let path = temp_registry_path(&dir);
 
     let mut reg = LedgerRegistry::new(&path).unwrap();
-    reg.create("run-21", "docs/holtz/runs/21/ledger.jsonl", LedgerMode::Stateful)
-        .unwrap();
+    reg.create(
+        "run-21",
+        "docs/holtz/runs/21/ledger.jsonl",
+        LedgerMode::Stateful,
+    )
+    .unwrap();
 
     let entry = reg.resolve(None).unwrap();
     assert_eq!(entry.name, "run-21");
@@ -66,8 +78,12 @@ fn test_resolve_named_ledger() {
     let path = temp_registry_path(&dir);
 
     let mut reg = LedgerRegistry::new(&path).unwrap();
-    reg.create("run-21", "docs/holtz/runs/21/ledger.jsonl", LedgerMode::Stateful)
-        .unwrap();
+    reg.create(
+        "run-21",
+        "docs/holtz/runs/21/ledger.jsonl",
+        LedgerMode::Stateful,
+    )
+    .unwrap();
     reg.create("project", "docs/holtz/project.jsonl", LedgerMode::EventOnly)
         .unwrap();
 
@@ -101,14 +117,21 @@ fn test_duplicate_name_rejected() {
     let path = temp_registry_path(&dir);
 
     let mut reg = LedgerRegistry::new(&path).unwrap();
-    reg.create("run-21", "docs/holtz/runs/21/ledger.jsonl", LedgerMode::Stateful)
-        .unwrap();
+    reg.create(
+        "run-21",
+        "docs/holtz/runs/21/ledger.jsonl",
+        LedgerMode::Stateful,
+    )
+    .unwrap();
 
     let result = reg.create("run-21", "other/path.jsonl", LedgerMode::Stateful);
     assert!(result.is_err());
     // Error message should mention the duplicate name
     let msg = result.unwrap_err();
-    assert!(msg.contains("run-21"), "error should name the duplicate: {msg}");
+    assert!(
+        msg.contains("run-21"),
+        "error should name the duplicate: {msg}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -134,8 +157,12 @@ fn test_persistence() {
 
     {
         let mut reg = LedgerRegistry::new(&path).unwrap();
-        reg.create("run-21", "docs/holtz/runs/21/ledger.jsonl", LedgerMode::Stateful)
-            .unwrap();
+        reg.create(
+            "run-21",
+            "docs/holtz/runs/21/ledger.jsonl",
+            LedgerMode::Stateful,
+        )
+        .unwrap();
         reg.create("project", "docs/holtz/project.jsonl", LedgerMode::EventOnly)
             .unwrap();
     } // reg is dropped here

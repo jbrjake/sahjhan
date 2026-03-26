@@ -32,9 +32,7 @@ pub fn import_jsonl(
     let mut line_buf = String::new();
     loop {
         line_buf.clear();
-        let bytes_read = reader
-            .read_line(&mut line_buf)
-            .map_err(LedgerError::Io)?;
+        let bytes_read = reader.read_line(&mut line_buf).map_err(LedgerError::Io)?;
 
         // EOF
         if bytes_read == 0 {
@@ -53,14 +51,9 @@ pub fn import_jsonl(
             .map_err(|e| LedgerError::ParseError(format!("import line parse error: {e}")))?;
 
         // Extract event type (required)
-        let event_type = obj
-            .get("type")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                LedgerError::ParseError(
-                    "import line missing required \"type\" field".to_string(),
-                )
-            })?;
+        let event_type = obj.get("type").and_then(|v| v.as_str()).ok_or_else(|| {
+            LedgerError::ParseError("import line missing required \"type\" field".to_string())
+        })?;
 
         // Extract fields (optional — default to empty map)
         let fields: BTreeMap<String, String> = match obj.get("fields") {

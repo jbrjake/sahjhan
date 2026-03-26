@@ -195,7 +195,10 @@ pub(crate) fn resolve_ledger_from_targeting(
             )
         })?;
         let entry = registry.resolve(Some(name)).map_err(|e| {
-            (EXIT_CONFIG_ERROR, format!("Ledger resolution failed: {}", e))
+            (
+                EXIT_CONFIG_ERROR,
+                format!("Ledger resolution failed: {}", e),
+            )
         })?;
         let resolved = resolve_registry_path(&entry.path, config);
         return Ok((resolved, Some(entry.mode.clone())));
@@ -250,7 +253,10 @@ pub(crate) fn resolve_registry_path(entry_path: &str, config: &ProtocolConfig) -
 
 // [guard-event-only]
 /// Guard: check if a ledger mode is event-only and block stateful operations.
-pub(crate) fn guard_event_only(mode: &Option<LedgerMode>, operation: &str) -> Result<(), (i32, String)> {
+pub(crate) fn guard_event_only(
+    mode: &Option<LedgerMode>,
+    operation: &str,
+) -> Result<(), (i32, String)> {
     if let Some(LedgerMode::EventOnly) = mode {
         Err((
             EXIT_CONFIG_ERROR,
@@ -266,7 +272,10 @@ pub(crate) fn guard_event_only(mode: &Option<LedgerMode>, operation: &str) -> Re
 
 // [build-state-params]
 /// Build state_params for a target state (mirrors StateMachine::build_state_params).
-pub(crate) fn build_state_params(config: &ProtocolConfig, state_name: &str) -> HashMap<String, String> {
+pub(crate) fn build_state_params(
+    config: &ProtocolConfig,
+    state_name: &str,
+) -> HashMap<String, String> {
     let mut params = HashMap::new();
     if let Some(state_config) = config.states.get(state_name) {
         if let Some(state_params) = &state_config.params {

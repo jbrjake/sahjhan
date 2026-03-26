@@ -1109,10 +1109,7 @@ fn test_ledger_create_and_remove() {
         .stdout(predicate::str::contains("removed from registry"));
 
     // Verify the file still exists on disk
-    assert!(dir
-        .path()
-        .join("output/.sahjhan/temp.jsonl")
-        .exists());
+    assert!(dir.path().join("output/.sahjhan/temp.jsonl").exists());
 }
 
 #[test]
@@ -1576,13 +1573,7 @@ fn test_event_only_status_metadata() {
     // Status on event-only should show metadata
     Command::cargo_bin("sahjhan")
         .unwrap()
-        .args([
-            "--config-dir",
-            "enforcement",
-            "--ledger",
-            "eo3",
-            "status",
-        ])
+        .args(["--config-dir", "enforcement", "--ledger", "eo3", "status"])
         .current_dir(dir.path())
         .assert()
         .success()

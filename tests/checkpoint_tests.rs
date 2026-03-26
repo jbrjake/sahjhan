@@ -19,9 +19,7 @@ fn test_explicit_checkpoint() {
     let path = dir.path().join("ledger.jsonl");
 
     let mut ledger = Ledger::init(&path, "test-proto", "1.0.0").unwrap();
-    ledger
-        .write_checkpoint("phase-1", "after-init")
-        .unwrap();
+    ledger.write_checkpoint("phase-1", "after-init").unwrap();
 
     // Should now have genesis + checkpoint = 2 entries
     assert_eq!(ledger.len(), 2);
@@ -45,8 +43,12 @@ fn test_find_latest_checkpoint() {
     let mut ledger = Ledger::init(&path, "test-proto", "1.0.0").unwrap();
 
     // Events before checkpoint
-    ledger.append("finding", fields(&[("id", "PRE-1")])).unwrap();
-    ledger.append("finding", fields(&[("id", "PRE-2")])).unwrap();
+    ledger
+        .append("finding", fields(&[("id", "PRE-1")]))
+        .unwrap();
+    ledger
+        .append("finding", fields(&[("id", "PRE-2")]))
+        .unwrap();
 
     // Write checkpoint
     let cp_seq = {
@@ -55,14 +57,21 @@ fn test_find_latest_checkpoint() {
     };
 
     // Events after checkpoint
-    ledger.append("finding", fields(&[("id", "POST-1")])).unwrap();
-    ledger.append("finding", fields(&[("id", "POST-2")])).unwrap();
+    ledger
+        .append("finding", fields(&[("id", "POST-1")]))
+        .unwrap();
+    ledger
+        .append("finding", fields(&[("id", "POST-2")]))
+        .unwrap();
 
     let result = ledger.find_latest_checkpoint("audit");
     assert!(result.is_some(), "should find the checkpoint");
 
     let (seq, after) = result.unwrap();
-    assert_eq!(seq, cp_seq, "returned seq should match the checkpoint entry");
+    assert_eq!(
+        seq, cp_seq,
+        "returned seq should match the checkpoint entry"
+    );
 
     // The slice should only contain the two post-checkpoint events
     assert_eq!(after.len(), 2);
@@ -81,7 +90,10 @@ fn test_find_checkpoint_none() {
     ledger.append("finding", fields(&[("id", "X-1")])).unwrap();
 
     let result = ledger.find_latest_checkpoint("any-scope");
-    assert!(result.is_none(), "should return None when no checkpoints exist");
+    assert!(
+        result.is_none(),
+        "should return None when no checkpoints exist"
+    );
 }
 
 // ---- 4. find_latest_checkpoint is scoped — different scopes don't interfere ----

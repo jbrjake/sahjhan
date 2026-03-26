@@ -92,14 +92,17 @@ pub fn cmd_init(config_dir: &str) -> i32 {
     }
 
     // Initialize ledger with genesis block
-    let _ledger =
-        match crate::ledger::chain::Ledger::init(&lp, &config.protocol.name, &config.protocol.version) {
-            Ok(l) => l,
-            Err(e) => {
-                eprintln!("Cannot initialize ledger: {}", e);
-                return EXIT_INTEGRITY_ERROR;
-            }
-        };
+    let _ledger = match crate::ledger::chain::Ledger::init(
+        &lp,
+        &config.protocol.name,
+        &config.protocol.version,
+    ) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("Cannot initialize ledger: {}", e);
+            return EXIT_INTEGRITY_ERROR;
+        }
+    };
 
     // Create ledgers.toml registry with a "default" entry pointing to the new ledger
     {

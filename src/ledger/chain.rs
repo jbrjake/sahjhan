@@ -340,19 +340,9 @@ fn create_genesis(protocol_name: &str, protocol_version: &str) -> LedgerEntry {
 
     let mut fields = BTreeMap::new();
     fields.insert("protocol_name".to_string(), protocol_name.to_string());
-    fields.insert(
-        "protocol_version".to_string(),
-        protocol_version.to_string(),
-    );
+    fields.insert("protocol_version".to_string(), protocol_version.to_string());
 
-    LedgerEntry::new(
-        0,
-        prev,
-        "genesis",
-        ENGINE_NAME,
-        &protocol,
-        fields,
-    )
+    LedgerEntry::new(0, prev, "genesis", ENGINE_NAME, &protocol, fields)
 }
 
 // ---------------------------------------------------------------------------

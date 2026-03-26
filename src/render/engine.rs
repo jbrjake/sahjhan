@@ -91,17 +91,22 @@ impl RenderEngine {
             None => return Ok(None),
         };
 
-        let reg_path = self
-            .registry_path
-            .as_ref()
-            .ok_or_else(|| format!("render '{}' requires ledger '{}' but no registry path was configured", render_cfg.target, ledger_name))?;
+        let reg_path = self.registry_path.as_ref().ok_or_else(|| {
+            format!(
+                "render '{}' requires ledger '{}' but no registry path was configured",
+                render_cfg.target, ledger_name
+            )
+        })?;
 
         let registry = LedgerRegistry::new(reg_path)
             .map_err(|e| format!("cannot load ledger registry: {}", e))?;
 
-        let entry = registry
-            .resolve(Some(ledger_name))
-            .map_err(|e| format!("render '{}': ledger resolution failed: {}", render_cfg.target, e))?;
+        let entry = registry.resolve(Some(ledger_name)).map_err(|e| {
+            format!(
+                "render '{}': ledger resolution failed: {}",
+                render_cfg.target, e
+            )
+        })?;
 
         // Resolve relative paths against the registry file's parent directory.
         let ledger_path = {
@@ -116,8 +121,12 @@ impl RenderEngine {
             }
         };
 
-        let ledger = Ledger::open(&ledger_path)
-            .map_err(|e| format!("render '{}': cannot open ledger '{}': {}", render_cfg.target, ledger_name, e))?;
+        let ledger = Ledger::open(&ledger_path).map_err(|e| {
+            format!(
+                "render '{}': cannot open ledger '{}': {}",
+                render_cfg.target, ledger_name, e
+            )
+        })?;
 
         Ok(Some(ledger))
     }
@@ -306,13 +315,15 @@ impl RenderEngine {
         let events: Vec<EventSummary> = ledger
             .entries()
             .iter()
-            .map(|entry| {
-                EventSummary {
-                    seq: entry.seq,
-                    event_type: entry.event_type.clone(),
-                    timestamp: entry.ts.clone(),
-                    fields: entry.fields.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
-                }
+            .map(|entry| EventSummary {
+                seq: entry.seq,
+                event_type: entry.event_type.clone(),
+                timestamp: entry.ts.clone(),
+                fields: entry
+                    .fields
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect(),
             })
             .collect();
         ctx.insert("events", &events);

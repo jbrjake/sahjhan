@@ -7,7 +7,10 @@ use std::io::Write;
 use tempfile::tempdir;
 
 fn fields(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
-    pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    pairs
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
 }
 
 // ---- 1. Init creates JSONL file with genesis ----
@@ -55,7 +58,12 @@ fn test_append_and_reload() {
     let path = dir.path().join("test.jsonl");
 
     let mut ledger = Ledger::init(&path, "test-proto", "1.0.0").unwrap();
-    ledger.append("state_change", fields(&[("from", "start"), ("to", "running")])).unwrap();
+    ledger
+        .append(
+            "state_change",
+            fields(&[("from", "start"), ("to", "running")]),
+        )
+        .unwrap();
 
     assert_eq!(ledger.len(), 2);
 
@@ -99,7 +107,11 @@ fn test_verify_detects_tampered_hash() {
     let result = Ledger::open(&path);
     assert!(result.is_err(), "opening tampered file should fail");
     let err = result.unwrap_err().to_string();
-    assert!(err.contains("hash mismatch"), "error should mention hash mismatch, got: {}", err);
+    assert!(
+        err.contains("hash mismatch"),
+        "error should mention hash mismatch, got: {}",
+        err
+    );
 }
 
 // ---- 4. Verify detects sequence gap ----
@@ -128,7 +140,8 @@ fn test_verify_detects_sequence_gap() {
     let err = result.unwrap_err().to_string();
     assert!(
         err.contains("sequence gap") || err.contains("chain break"),
-        "error should mention sequence gap or chain break, got: {}", err
+        "error should mention sequence gap or chain break, got: {}",
+        err
     );
 }
 
@@ -178,7 +191,10 @@ fn test_verify_detects_deletion() {
     fs::write(&path, new_contents).unwrap();
 
     let result = Ledger::open(&path);
-    assert!(result.is_err(), "should detect chain break from deleted entry");
+    assert!(
+        result.is_err(),
+        "should detect chain break from deleted entry"
+    );
 }
 
 // ---- 7. Events of type ----
@@ -189,10 +205,18 @@ fn test_events_of_type() {
     let path = dir.path().join("test.jsonl");
 
     let mut ledger = Ledger::init(&path, "test-proto", "1.0.0").unwrap();
-    ledger.append("state_change", fields(&[("to", "a")])).unwrap();
-    ledger.append("gate_eval", fields(&[("gate", "g1")])).unwrap();
-    ledger.append("state_change", fields(&[("to", "b")])).unwrap();
-    ledger.append("gate_eval", fields(&[("gate", "g2")])).unwrap();
+    ledger
+        .append("state_change", fields(&[("to", "a")]))
+        .unwrap();
+    ledger
+        .append("gate_eval", fields(&[("gate", "g1")]))
+        .unwrap();
+    ledger
+        .append("state_change", fields(&[("to", "b")]))
+        .unwrap();
+    ledger
+        .append("gate_eval", fields(&[("gate", "g2")]))
+        .unwrap();
 
     let state_changes = ledger.events_of_type("state_change");
     assert_eq!(state_changes.len(), 2);
@@ -252,7 +276,10 @@ fn test_reload_fixes_external_append() {
     );
 
     // Append directly to file
-    let mut file = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
     writeln!(file, "{}", external_entry.to_jsonl()).unwrap();
     drop(file);
 
@@ -286,7 +313,10 @@ fn test_external_append_causes_stale_chain() {
         BTreeMap::new(),
     );
 
-    let mut file = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
     writeln!(file, "{}", external_entry.to_jsonl()).unwrap();
     drop(file);
 
@@ -301,5 +331,8 @@ fn test_external_append_causes_stale_chain() {
 
     // Verify should fail — either sequence gap or chain break
     let result = ledger.verify();
-    assert!(result.is_err(), "stale append should cause chain verification failure");
+    assert!(
+        result.is_err(),
+        "stale append should cause chain verification failure"
+    );
 }

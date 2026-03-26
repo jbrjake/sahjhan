@@ -16,8 +16,8 @@ use crate::state::machine::StateMachine;
 
 use super::commands::{
     build_state_params, guard_event_only, load_config, load_manifest, open_targeted_ledger,
-    resolve_config_dir, resolve_data_dir, save_manifest, track_ledger_in_manifest,
-    LedgerTargeting, EXIT_GATE_FAILED, EXIT_INTEGRITY_ERROR, EXIT_SUCCESS, EXIT_USAGE_ERROR,
+    resolve_config_dir, resolve_data_dir, save_manifest, track_ledger_in_manifest, LedgerTargeting,
+    EXIT_GATE_FAILED, EXIT_INTEGRITY_ERROR, EXIT_SUCCESS, EXIT_USAGE_ERROR,
 };
 
 // ---------------------------------------------------------------------------
@@ -148,11 +148,7 @@ pub fn cmd_transition(
 // ---------------------------------------------------------------------------
 
 // [cmd-gate-check]
-pub fn cmd_gate_check(
-    config_dir: &str,
-    transition_name: &str,
-    targeting: &LedgerTargeting,
-) -> i32 {
+pub fn cmd_gate_check(config_dir: &str, transition_name: &str, targeting: &LedgerTargeting) -> i32 {
     let config_path = resolve_config_dir(config_dir);
     let config = match load_config(&config_path) {
         Ok(c) => c,

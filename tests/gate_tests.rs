@@ -360,18 +360,8 @@ fn test_ledger_has_event_pass() {
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     let ledger_path = dir.path().join("ledger.jsonl");
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
-    ledger
-        .append(
-            "my_event",
-            BTreeMap::new(),
-        )
-        .unwrap();
-    ledger
-        .append(
-            "my_event",
-            BTreeMap::new(),
-        )
-        .unwrap();
+    ledger.append("my_event", BTreeMap::new()).unwrap();
+    ledger.append("my_event", BTreeMap::new()).unwrap();
 
     let gate = make_gate(
         "ledger_has_event",
@@ -397,12 +387,7 @@ fn test_ledger_has_event_fail_count() {
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     let ledger_path = dir.path().join("ledger.jsonl");
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
-    ledger
-        .append(
-            "my_event",
-            BTreeMap::new(),
-        )
-        .unwrap();
+    ledger.append("my_event", BTreeMap::new()).unwrap();
 
     let gate = make_gate(
         "ledger_has_event",
@@ -504,12 +489,8 @@ fn test_ledger_has_event_since_pass() {
     trans_fields.insert("from".to_string(), "idle".to_string());
     trans_fields.insert("to".to_string(), "working".to_string());
     trans_fields.insert("command".to_string(), "begin".to_string());
-    ledger
-        .append("state_transition", trans_fields)
-        .unwrap();
-    ledger
-        .append("check_done", BTreeMap::new())
-        .unwrap();
+    ledger.append("state_transition", trans_fields).unwrap();
+    ledger.append("check_done", BTreeMap::new()).unwrap();
 
     let gate = make_gate(
         "ledger_has_event_since",
@@ -537,20 +518,13 @@ fn test_ledger_has_event_since_fail() {
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     // Record the event BEFORE the transition — should not count.
-    ledger
-        .append(
-            "check_done",
-            BTreeMap::new(),
-        )
-        .unwrap();
+    ledger.append("check_done", BTreeMap::new()).unwrap();
 
     let mut trans_fields = BTreeMap::new();
     trans_fields.insert("from".to_string(), "idle".to_string());
     trans_fields.insert("to".to_string(), "working".to_string());
     trans_fields.insert("command".to_string(), "begin".to_string());
-    ledger
-        .append("state_transition", trans_fields)
-        .unwrap();
+    ledger.append("state_transition", trans_fields).unwrap();
 
     let gate = make_gate(
         "ledger_has_event_since",
@@ -585,9 +559,7 @@ fn test_set_covered_pass() {
         let mut fields = BTreeMap::new();
         fields.insert("set".to_string(), "check".to_string());
         fields.insert("member".to_string(), member.to_string());
-        ledger
-            .append("set_member_complete", fields)
-            .unwrap();
+        ledger.append("set_member_complete", fields).unwrap();
     }
 
     let gate = make_gate(
@@ -672,12 +644,7 @@ fn test_min_elapsed_fail_just_happened() {
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     let ledger_path = dir.path().join("ledger.jsonl");
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
-    ledger
-        .append(
-            "my_event",
-            BTreeMap::new(),
-        )
-        .unwrap();
+    ledger.append("my_event", BTreeMap::new()).unwrap();
 
     let gate = make_gate(
         "min_elapsed",
@@ -727,10 +694,7 @@ fn test_no_violations_with_violation() {
     let ledger_path = dir.path().join("ledger.jsonl");
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
     ledger
-        .append(
-            "protocol_violation",
-            BTreeMap::new(),
-        )
+        .append("protocol_violation", BTreeMap::new())
         .unwrap();
 
     let gate = make_gate("no_violations", vec![]);
@@ -754,16 +718,10 @@ fn test_no_violations_with_resolved_violation() {
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     ledger
-        .append(
-            "protocol_violation",
-            BTreeMap::new(),
-        )
+        .append("protocol_violation", BTreeMap::new())
         .unwrap();
     ledger
-        .append(
-            "violation_resolved",
-            BTreeMap::new(),
-        )
+        .append("violation_resolved", BTreeMap::new())
         .unwrap();
 
     let gate = make_gate("no_violations", vec![]);
@@ -792,22 +750,13 @@ fn test_no_violations_partial_resolution() {
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     ledger
-        .append(
-            "protocol_violation",
-            BTreeMap::new(),
-        )
+        .append("protocol_violation", BTreeMap::new())
         .unwrap();
     ledger
-        .append(
-            "protocol_violation",
-            BTreeMap::new(),
-        )
+        .append("protocol_violation", BTreeMap::new())
         .unwrap();
     ledger
-        .append(
-            "violation_resolved",
-            BTreeMap::new(),
-        )
+        .append("violation_resolved", BTreeMap::new())
         .unwrap();
 
     let gate = make_gate("no_violations", vec![]);
@@ -1328,9 +1277,7 @@ fn test_query_gate_pass() {
         vec![
             (
                 "sql",
-                toml::Value::String(
-                    "SELECT count(*) < 10 as result FROM events".to_string(),
-                ),
+                toml::Value::String("SELECT count(*) < 10 as result FROM events".to_string()),
             ),
             ("expect", toml::Value::String("true".to_string())),
         ],
@@ -1368,9 +1315,7 @@ fn test_query_gate_fail() {
         vec![
             (
                 "sql",
-                toml::Value::String(
-                    "SELECT count(*) < 2 as result FROM events".to_string(),
-                ),
+                toml::Value::String("SELECT count(*) < 2 as result FROM events".to_string()),
             ),
             ("expect", toml::Value::String("true".to_string())),
         ],
@@ -1389,11 +1334,7 @@ fn test_query_gate_fail() {
         "expected fail (5 events, count < 2 = false)"
     );
     assert!(
-        result
-            .reason
-            .as_ref()
-            .unwrap()
-            .contains("expected 'true'"),
+        result.reason.as_ref().unwrap().contains("expected 'true'"),
         "reason should mention expected value: {:?}",
         result.reason
     );
@@ -1419,11 +1360,7 @@ fn test_query_gate_missing_sql() {
     let result = evaluate_gate(&gate, &ctx);
     assert!(!result.passed, "missing sql param should fail");
     assert!(
-        result
-            .reason
-            .as_ref()
-            .unwrap()
-            .contains("sql"),
+        result.reason.as_ref().unwrap().contains("sql"),
         "reason should mention 'sql': {:?}",
         result.reason
     );

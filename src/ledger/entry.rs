@@ -93,7 +93,6 @@ pub struct LedgerEntry {
     pub fields: BTreeMap<String, String>,
 
     // ----- Legacy shims (serde-skipped, Tasks 3-6 will remove) -----
-
     /// Legacy: SHA-256 as raw bytes. Kept for callers that read `entry.entry_hash`.
     #[serde(skip)]
     pub entry_hash: [u8; 32],
@@ -273,12 +272,7 @@ impl LedgerEntry {
     /// Legacy 4-argument constructor. Panics at runtime.
     /// Exists only so chain.rs and genesis.rs compile during the v0.2 migration.
     #[allow(unused_variables)]
-    pub fn new_binary(
-        seq: u64,
-        prev_hash: [u8; 32],
-        event_type: String,
-        payload: Vec<u8>,
-    ) -> Self {
+    pub fn new_binary(seq: u64, prev_hash: [u8; 32], event_type: String, payload: Vec<u8>) -> Self {
         panic!("binary format removed in v0.2.0 — use LedgerEntry::new()")
     }
 

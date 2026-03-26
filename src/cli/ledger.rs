@@ -62,7 +62,11 @@ pub fn cmd_ledger_create(config_dir: &str, name: &str, path: &str, mode_str: &st
         return EXIT_CONFIG_ERROR;
     }
 
-    match Ledger::init(&ledger_file, &config.protocol.name, &config.protocol.version) {
+    match Ledger::init(
+        &ledger_file,
+        &config.protocol.name,
+        &config.protocol.version,
+    ) {
         Ok(_) => {}
         Err(e) => {
             eprintln!("Cannot initialize ledger: {}", e);
@@ -245,12 +249,7 @@ pub fn cmd_ledger_verify(config_dir: &str, name: Option<&str>, path: Option<&str
 // ---------------------------------------------------------------------------
 
 // [cmd-ledger-checkpoint]
-pub fn cmd_ledger_checkpoint(
-    config_dir: &str,
-    name: &str,
-    scope: &str,
-    snapshot: &str,
-) -> i32 {
+pub fn cmd_ledger_checkpoint(config_dir: &str, name: &str, scope: &str, snapshot: &str) -> i32 {
     let config_path = resolve_config_dir(config_dir);
     let config = match load_config(&config_path) {
         Ok(c) => c,

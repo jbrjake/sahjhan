@@ -133,7 +133,10 @@ fn test_top_level_key_ordering() {
         "\"type\"",
     ]
     .iter()
-    .map(|k| line.find(k).expect(&format!("key {} missing from JSONL", k)))
+    .map(|k| {
+        line.find(k)
+            .expect(&format!("key {} missing from JSONL", k))
+    })
     .collect();
 
     for i in 1..positions.len() {
@@ -184,7 +187,10 @@ fn test_from_jsonl_rejects_tampered_hash() {
     );
     let line = entry.to_jsonl();
     // Tamper: flip last hex char in hash
-    let tampered = line.replace(&entry.hash, &format!("{}ff", &entry.hash[..entry.hash.len() - 2]));
+    let tampered = line.replace(
+        &entry.hash,
+        &format!("{}ff", &entry.hash[..entry.hash.len() - 2]),
+    );
     let err = LedgerEntry::from_jsonl(&tampered).unwrap_err();
     let msg = err.to_string();
     assert!(
@@ -362,15 +368,7 @@ fn test_new_with_ts_deterministic() {
         fields.clone(),
         ts.clone(),
     );
-    let b = LedgerEntry::new_with_ts(
-        0,
-        "prev".to_string(),
-        "test",
-        "eng",
-        "proto",
-        fields,
-        ts,
-    );
+    let b = LedgerEntry::new_with_ts(0, "prev".to_string(), "test", "eng", "proto", fields, ts);
 
     assert_eq!(a.hash, b.hash, "same inputs must produce same hash");
     assert_eq!(a.to_jsonl(), b.to_jsonl());

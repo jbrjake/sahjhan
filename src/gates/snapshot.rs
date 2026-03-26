@@ -200,13 +200,9 @@ pub(super) fn resolve_snapshot_reference(
     // Walk backwards to find the most recent snapshot with matching key.
     for entry in snapshots.iter().rev() {
         if entry.fields.get("key").map(|k| k.as_str()) == Some(snapshot_key) {
-            return entry
-                .fields
-                .get("value")
-                .cloned()
-                .ok_or_else(|| {
-                    format!("snapshot with key '{}' has no 'value' field", snapshot_key)
-                });
+            return entry.fields.get("value").cloned().ok_or_else(|| {
+                format!("snapshot with key '{}' has no 'value' field", snapshot_key)
+            });
         }
     }
 

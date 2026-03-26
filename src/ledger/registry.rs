@@ -59,8 +59,8 @@ impl LedgerRegistry {
         let entries = if file_path.exists() {
             let raw = fs::read_to_string(file_path)
                 .map_err(|e| format!("cannot read registry {}: {e}", file_path.display()))?;
-            let parsed: RegistryFile = toml::from_str(&raw)
-                .map_err(|e| format!("malformed registry TOML: {e}"))?;
+            let parsed: RegistryFile =
+                toml::from_str(&raw).map_err(|e| format!("malformed registry TOML: {e}"))?;
             parsed.ledgers
         } else {
             Vec::new()
@@ -141,10 +141,7 @@ impl LedgerRegistry {
     pub fn save(&self) -> Result<(), String> {
         if let Some(parent) = self.file_path.parent() {
             fs::create_dir_all(parent).map_err(|e| {
-                format!(
-                    "cannot create registry directory {}: {e}",
-                    parent.display()
-                )
+                format!("cannot create registry directory {}: {e}", parent.display())
             })?;
         }
 

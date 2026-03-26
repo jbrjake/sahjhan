@@ -385,11 +385,7 @@ fn main() {
             format,
             json,
         } => {
-            let effective_format = if json {
-                "json".to_string()
-            } else {
-                format
-            };
+            let effective_format = if json { "json".to_string() } else { format };
             // For query, use --path from query subcommand, falling back to global flags
             let query_targeting = commands::LedgerTargeting {
                 ledger_name: cli.ledger,

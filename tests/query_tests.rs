@@ -32,11 +32,7 @@ fn test_events() -> HashMap<String, EventConfig> {
 }
 
 /// Create a temp ledger with some findings.
-fn create_test_ledger(
-    dir: &TempDir,
-    name: &str,
-    findings: &[(&str, &str)],
-) -> std::path::PathBuf {
+fn create_test_ledger(dir: &TempDir, name: &str, findings: &[(&str, &str)]) -> std::path::PathBuf {
     let path = dir.path().join(name);
     let mut ledger = Ledger::init(&path, "test-proto", "1.0.0").unwrap();
 
@@ -99,11 +95,7 @@ async fn test_query_group_by_field() {
     let path = create_test_ledger(
         &dir,
         "ledger.jsonl",
-        &[
-            ("BH-001", "HIGH"),
-            ("BH-002", "HIGH"),
-            ("BH-003", "LOW"),
-        ],
+        &[("BH-001", "HIGH"), ("BH-002", "HIGH"), ("BH-003", "LOW")],
     );
 
     let engine = QueryEngine::from_config(&test_events());
@@ -131,10 +123,7 @@ async fn test_query_null_for_missing_fields() {
 
     // Genesis event doesn't have id/severity fields — they should be NULL
     let results = engine
-        .query_file(
-            &path,
-            "SELECT type, id FROM events WHERE type = 'genesis'",
-        )
+        .query_file(&path, "SELECT type, id FROM events WHERE type = 'genesis'")
         .await
         .unwrap();
 

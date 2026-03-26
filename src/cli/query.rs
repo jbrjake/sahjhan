@@ -112,11 +112,7 @@ fn build_convenience_sql(
 
     for f in field_filters {
         if let Some((key, value)) = f.split_once('=') {
-            conditions.push(format!(
-                "{} = '{}'",
-                key,
-                value.replace('\'', "''")
-            ));
+            conditions.push(format!("{} = '{}'", key, value.replace('\'', "''")));
         }
     }
 
@@ -150,9 +146,18 @@ fn format_output(rows: &[BTreeMap<String, String>], format: &str) {
             }
             // Header from first row's keys
             let keys: Vec<&String> = rows[0].keys().collect();
-            println!("{}", keys.iter().map(|k| k.as_str()).collect::<Vec<_>>().join(","));
+            println!(
+                "{}",
+                keys.iter()
+                    .map(|k| k.as_str())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            );
             for row in rows {
-                let vals: Vec<&str> = keys.iter().map(|k| row.get(*k).map(|v| v.as_str()).unwrap_or("")).collect();
+                let vals: Vec<&str> = keys
+                    .iter()
+                    .map(|k| row.get(*k).map(|v| v.as_str()).unwrap_or(""))
+                    .collect();
                 println!("{}", vals.join(","));
             }
         }

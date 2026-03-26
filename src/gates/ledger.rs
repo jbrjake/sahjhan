@@ -209,15 +209,11 @@ pub(super) fn eval_min_elapsed(gate: &GateConfig, ctx: &GateContext) -> GateResu
         .unwrap_or(0);
 
     // Find the most recent matching event and parse its ISO 8601 timestamp.
-    let last_ts_ms = ctx
-        .ledger
-        .events_of_type(event)
-        .last()
-        .and_then(|e| {
-            chrono::DateTime::parse_from_rfc3339(&e.ts)
-                .ok()
-                .map(|dt| dt.timestamp_millis())
-        });
+    let last_ts_ms = ctx.ledger.events_of_type(event).last().and_then(|e| {
+        chrono::DateTime::parse_from_rfc3339(&e.ts)
+            .ok()
+            .map(|dt| dt.timestamp_millis())
+    });
 
     let description = format!(
         "at least {} second(s) since last '{}' event",

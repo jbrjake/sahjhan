@@ -7,9 +7,7 @@
 
 use std::path::PathBuf;
 
-use super::commands::{
-    load_config, resolve_config_dir, EXIT_CONFIG_ERROR, EXIT_SUCCESS,
-};
+use super::commands::{load_config, resolve_config_dir, EXIT_CONFIG_ERROR, EXIT_SUCCESS};
 
 // ---------------------------------------------------------------------------
 // hook generate

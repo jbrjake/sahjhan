@@ -120,10 +120,7 @@ pub(super) fn validate_template_fields(template: &str, ctx: &GateContext) -> Res
 
 // [entry-matches-filter]
 /// Check whether a ledger entry's fields match all key/value pairs in `filter`.
-pub(super) fn entry_matches_filter(
-    entry: &LedgerEntry,
-    filter: &HashMap<String, String>,
-) -> bool {
+pub(super) fn entry_matches_filter(entry: &LedgerEntry, filter: &HashMap<String, String>) -> bool {
     if filter.is_empty() {
         return true;
     }

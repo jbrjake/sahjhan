@@ -4,41 +4,86 @@
 //! over one or more JSONL ledger files. Each file is parsed into Arrow
 //! RecordBatches and registered as an in-memory table called `events`.
 //!
-//! For glob queries, each matched file is unioned together with a virtual
-//! `_source` column containing the originating file path.
+//! Field columns are derived from the protocol's event definitions (`events.toml`).
+//! Each declared field becomes a native nullable Arrow column, giving DataFusion
+//! full columnar access for filtering, grouping, and aggregation — no runtime
+//! JSON parsing during queries.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Arc;
 
-use datafusion::arrow::array::{Int32Array, Int64Array, RecordBatch, StringArray};
+use datafusion::arrow::array::{
+    BooleanArray, Float64Array, Int32Array, Int64Array, RecordBatch, StringArray,
+};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::datasource::MemTable;
 use datafusion::prelude::*;
 
+use crate::config::EventConfig;
 use crate::ledger::chain::parse_file_entries;
 use crate::ledger::entry::LedgerEntry;
 
 /// SQL query engine over JSONL ledger files, powered by Apache DataFusion.
-pub struct QueryEngine;
+///
+/// Built from the protocol's event definitions so that every declared field
+/// becomes a first-class Arrow column.
+pub struct QueryEngine {
+    /// Unique field names across all event types, sorted for deterministic schema.
+    field_names: Vec<String>,
+    /// Maps field name → declared type ("string", "number", "boolean").
+    field_types: BTreeMap<String, String>,
+}
 
 impl QueryEngine {
-    /// Create a new query engine instance.
-    pub fn new() -> Self {
-        Self
+    /// Create a query engine from the protocol's event definitions.
+    ///
+    /// Collects all unique field names across every event type and creates
+    /// native Arrow columns for each. System event fields (state_transition,
+    /// genesis, _checkpoint) are included automatically.
+    pub fn from_config(events: &std::collections::HashMap<String, EventConfig>) -> Self {
+        let mut field_types = BTreeMap::new();
+
+        // Declared fields from events.toml
+        for event in events.values() {
+            for field in &event.fields {
+                field_types
+                    .entry(field.name.clone())
+                    .or_insert_with(|| field.field_type.clone());
+            }
+        }
+
+        // System event fields (always string)
+        for name in &[
+            "command",
+            "from",
+            "to",
+            "protocol_name",
+            "protocol_version",
+            "scope",
+            "snapshot",
+        ] {
+            field_types
+                .entry(name.to_string())
+                .or_insert_with(|| "string".to_string());
+        }
+
+        let field_names: Vec<String> = field_types.keys().cloned().collect();
+
+        Self {
+            field_names,
+            field_types,
+        }
     }
 
     /// Query a single JSONL ledger file.
-    ///
-    /// The file is registered as an in-memory table called `events` with
-    /// columns: schema, seq, prev, hash, ts, type, engine, protocol, fields.
     pub async fn query_file(
         &self,
         path: &Path,
         sql: &str,
     ) -> Result<Vec<BTreeMap<String, String>>, Box<dyn std::error::Error>> {
         let entries = parse_file_entries(path)?;
-        let batch = entries_to_batch(&entries, None)?;
+        let batch = self.entries_to_batch(&entries, None)?;
         let schema = batch.schema();
 
         let ctx = SessionContext::new();
@@ -50,16 +95,13 @@ impl QueryEngine {
 
     /// Query multiple JSONL files matching a glob pattern (UNION ALL).
     ///
-    /// Each file is loaded and combined with a virtual `_source` column
-    /// containing the file path. The unified table is called `events`.
+    /// A virtual `_source` column contains the originating file path.
     pub async fn query_glob(
         &self,
         pattern: &str,
         sql: &str,
     ) -> Result<Vec<BTreeMap<String, String>>, Box<dyn std::error::Error>> {
-        let paths: Vec<_> = glob::glob(pattern)?
-            .filter_map(|r| r.ok())
-            .collect();
+        let paths: Vec<_> = glob::glob(pattern)?.filter_map(|r| r.ok()).collect();
 
         if paths.is_empty() {
             return Err(format!("no files matched pattern: {}", pattern).into());
@@ -71,7 +113,7 @@ impl QueryEngine {
         for (i, path) in paths.iter().enumerate() {
             let entries = parse_file_entries(path)?;
             let source_str = path.to_string_lossy().to_string();
-            let batch = entries_to_batch(&entries, Some(&source_str))?;
+            let batch = self.entries_to_batch(&entries, Some(&source_str))?;
             let schema = batch.schema();
 
             let table_name = format!("_events_{}", i);
@@ -81,92 +123,122 @@ impl QueryEngine {
             union_parts.push(format!("SELECT * FROM {}", table_name));
         }
 
-        // Create a UNION ALL view called `events`
         let union_sql = union_parts.join(" UNION ALL ");
         let create_view = format!("CREATE VIEW events AS {}", union_sql);
         ctx.sql(&create_view).await?;
 
         execute_sql(&ctx, sql).await
     }
-}
 
-impl Default for QueryEngine {
-    fn default() -> Self {
-        Self::new()
+    /// Build the Arrow schema: 8 envelope columns + one column per declared field.
+    fn build_schema(&self, with_source: bool) -> Schema {
+        let mut fields = vec![
+            Field::new("schema", DataType::Int32, false),
+            Field::new("seq", DataType::Int64, false),
+            Field::new("prev", DataType::Utf8, false),
+            Field::new("hash", DataType::Utf8, false),
+            Field::new("ts", DataType::Utf8, false),
+            Field::new("type", DataType::Utf8, false),
+            Field::new("engine", DataType::Utf8, false),
+            Field::new("protocol", DataType::Utf8, false),
+        ];
+
+        // One nullable column per declared field
+        for name in &self.field_names {
+            let dt = match self.field_types.get(name).map(|s| s.as_str()) {
+                Some("number") => DataType::Float64,
+                Some("boolean") => DataType::Boolean,
+                _ => DataType::Utf8, // "string" or unknown → Utf8
+            };
+            fields.push(Field::new(name, dt, true)); // nullable
+        }
+
+        if with_source {
+            fields.push(Field::new("_source", DataType::Utf8, false));
+        }
+
+        Schema::new(fields)
+    }
+
+    /// Convert ledger entries to an Arrow RecordBatch with native field columns.
+    fn entries_to_batch(
+        &self,
+        entries: &[LedgerEntry],
+        source: Option<&str>,
+    ) -> Result<RecordBatch, Box<dyn std::error::Error>> {
+        let len = entries.len();
+
+        // Envelope columns
+        let schema_col: Vec<i32> = entries.iter().map(|e| e.schema as i32).collect();
+        let seq_col: Vec<i64> = entries.iter().map(|e| e.seq as i64).collect();
+        let prev_col: Vec<&str> = entries.iter().map(|e| e.prev.as_str()).collect();
+        let hash_col: Vec<&str> = entries.iter().map(|e| e.hash.as_str()).collect();
+        let ts_col: Vec<&str> = entries.iter().map(|e| e.ts.as_str()).collect();
+        let type_col: Vec<&str> = entries.iter().map(|e| e.event_type.as_str()).collect();
+        let engine_col: Vec<&str> = entries.iter().map(|e| e.engine.as_str()).collect();
+        let protocol_col: Vec<&str> = entries.iter().map(|e| e.protocol.as_str()).collect();
+
+        let arrow_schema = Arc::new(self.build_schema(source.is_some()));
+
+        let mut columns: Vec<Arc<dyn datafusion::arrow::array::Array>> = vec![
+            Arc::new(Int32Array::from(schema_col)),
+            Arc::new(Int64Array::from(seq_col)),
+            Arc::new(StringArray::from(prev_col)),
+            Arc::new(StringArray::from(hash_col)),
+            Arc::new(StringArray::from(ts_col)),
+            Arc::new(StringArray::from(type_col)),
+            Arc::new(StringArray::from(engine_col)),
+            Arc::new(StringArray::from(protocol_col)),
+        ];
+
+        // Field columns — one per declared field name
+        for name in &self.field_names {
+            let dt = self.field_types.get(name).map(|s| s.as_str());
+            match dt {
+                Some("number") => {
+                    let vals: Vec<Option<f64>> = entries
+                        .iter()
+                        .map(|e| e.fields.get(name).and_then(|v| v.parse::<f64>().ok()))
+                        .collect();
+                    columns.push(Arc::new(Float64Array::from(vals)));
+                }
+                Some("boolean") => {
+                    let vals: Vec<Option<bool>> = entries
+                        .iter()
+                        .map(|e| {
+                            e.fields.get(name).and_then(|v| match v.as_str() {
+                                "true" => Some(true),
+                                "false" => Some(false),
+                                _ => None,
+                            })
+                        })
+                        .collect();
+                    columns.push(Arc::new(BooleanArray::from(vals)));
+                }
+                _ => {
+                    // String (default)
+                    let vals: Vec<Option<&str>> = entries
+                        .iter()
+                        .map(|e| e.fields.get(name).map(|v| v.as_str()))
+                        .collect();
+                    columns.push(Arc::new(StringArray::from(vals)));
+                }
+            }
+        }
+
+        if let Some(src) = source {
+            let source_col: Vec<&str> = vec![src; len];
+            columns.push(Arc::new(StringArray::from(source_col)));
+        }
+
+        let batch = RecordBatch::try_new(arrow_schema, columns)?;
+        Ok(batch)
     }
 }
 
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
-
-/// Arrow schema for the `events` table.
-fn events_schema(with_source: bool) -> Schema {
-    let mut fields = vec![
-        Field::new("schema", DataType::Int32, false),
-        Field::new("seq", DataType::Int64, false),
-        Field::new("prev", DataType::Utf8, false),
-        Field::new("hash", DataType::Utf8, false),
-        Field::new("ts", DataType::Utf8, false),
-        Field::new("type", DataType::Utf8, false),
-        Field::new("engine", DataType::Utf8, false),
-        Field::new("protocol", DataType::Utf8, false),
-        Field::new("fields", DataType::Utf8, false),
-    ];
-    if with_source {
-        fields.push(Field::new("_source", DataType::Utf8, false));
-    }
-    Schema::new(fields)
-}
-
-/// Convert ledger entries to an Arrow RecordBatch.
-///
-/// If `source` is Some, a `_source` column is appended with the given value
-/// repeated for every row.
-fn entries_to_batch(
-    entries: &[LedgerEntry],
-    source: Option<&str>,
-) -> Result<RecordBatch, Box<dyn std::error::Error>> {
-    let len = entries.len();
-
-    let schema_col: Vec<i32> = entries.iter().map(|e| e.schema as i32).collect();
-    let seq_col: Vec<i64> = entries.iter().map(|e| e.seq as i64).collect();
-    let prev_col: Vec<&str> = entries.iter().map(|e| e.prev.as_str()).collect();
-    let hash_col: Vec<&str> = entries.iter().map(|e| e.hash.as_str()).collect();
-    let ts_col: Vec<&str> = entries.iter().map(|e| e.ts.as_str()).collect();
-    let type_col: Vec<&str> = entries.iter().map(|e| e.event_type.as_str()).collect();
-    let engine_col: Vec<&str> = entries.iter().map(|e| e.engine.as_str()).collect();
-    let protocol_col: Vec<&str> = entries.iter().map(|e| e.protocol.as_str()).collect();
-
-    // Serialize the fields BTreeMap as a JSON string
-    let fields_col: Vec<String> = entries
-        .iter()
-        .map(|e| serde_json::to_string(&e.fields).unwrap_or_default())
-        .collect();
-    let fields_refs: Vec<&str> = fields_col.iter().map(|s| s.as_str()).collect();
-
-    let arrow_schema = Arc::new(events_schema(source.is_some()));
-
-    let mut columns: Vec<Arc<dyn datafusion::arrow::array::Array>> = vec![
-        Arc::new(Int32Array::from(schema_col)),
-        Arc::new(Int64Array::from(seq_col)),
-        Arc::new(StringArray::from(prev_col)),
-        Arc::new(StringArray::from(hash_col)),
-        Arc::new(StringArray::from(ts_col)),
-        Arc::new(StringArray::from(type_col)),
-        Arc::new(StringArray::from(engine_col)),
-        Arc::new(StringArray::from(protocol_col)),
-        Arc::new(StringArray::from(fields_refs)),
-    ];
-
-    if let Some(src) = source {
-        let source_col: Vec<&str> = vec![src; len];
-        columns.push(Arc::new(StringArray::from(source_col)));
-    }
-
-    let batch = RecordBatch::try_new(arrow_schema, columns)?;
-    Ok(batch)
-}
 
 /// Execute SQL against a SessionContext and collect results as stringified
 /// BTreeMaps.
@@ -198,59 +270,28 @@ async fn execute_sql(
 }
 
 /// Convert a single cell in an Arrow array to a String.
-fn array_value_to_string(
-    array: &dyn datafusion::arrow::array::Array,
-    index: usize,
-) -> String {
-    use datafusion::arrow::array::{
-        BooleanArray, Float32Array, Float64Array, Int8Array, Int16Array,
-        Int32Array as I32, Int64Array as I64, UInt8Array, UInt16Array, UInt32Array,
-        UInt64Array,
-    };
-
+fn array_value_to_string(array: &dyn datafusion::arrow::array::Array, index: usize) -> String {
     if array.is_null(index) {
         return "NULL".to_string();
     }
 
-    // Try common types in order of likelihood
     if let Some(a) = array.as_any().downcast_ref::<StringArray>() {
         return a.value(index).to_string();
     }
-    if let Some(a) = array.as_any().downcast_ref::<I64>() {
+    if let Some(a) = array.as_any().downcast_ref::<Int64Array>() {
         return a.value(index).to_string();
     }
-    if let Some(a) = array.as_any().downcast_ref::<I32>() {
+    if let Some(a) = array.as_any().downcast_ref::<Int32Array>() {
         return a.value(index).to_string();
     }
     if let Some(a) = array.as_any().downcast_ref::<Float64Array>() {
         return a.value(index).to_string();
     }
-    if let Some(a) = array.as_any().downcast_ref::<Float32Array>() {
-        return a.value(index).to_string();
-    }
     if let Some(a) = array.as_any().downcast_ref::<BooleanArray>() {
         return a.value(index).to_string();
     }
-    if let Some(a) = array.as_any().downcast_ref::<UInt64Array>() {
-        return a.value(index).to_string();
-    }
-    if let Some(a) = array.as_any().downcast_ref::<UInt32Array>() {
-        return a.value(index).to_string();
-    }
-    if let Some(a) = array.as_any().downcast_ref::<UInt16Array>() {
-        return a.value(index).to_string();
-    }
-    if let Some(a) = array.as_any().downcast_ref::<UInt8Array>() {
-        return a.value(index).to_string();
-    }
-    if let Some(a) = array.as_any().downcast_ref::<Int16Array>() {
-        return a.value(index).to_string();
-    }
-    if let Some(a) = array.as_any().downcast_ref::<Int8Array>() {
-        return a.value(index).to_string();
-    }
 
-    // Fallback: use Arrow's display formatting
+    // Fallback
     datafusion::arrow::util::display::array_value_to_string(array, index)
         .unwrap_or_else(|_| "<unsupported>".to_string())
 }

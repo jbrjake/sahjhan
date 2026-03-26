@@ -790,8 +790,9 @@ fn eval_query_gate(gate: &GateConfig, ctx: &GateContext) -> GateResult {
 
     let ledger_path = ctx.ledger.path().to_path_buf();
     let sql_clone = sql.clone();
+    let events_config = ctx.config.events.clone();
     let results = rt.block_on(async {
-        let engine = crate::query::QueryEngine::new();
+        let engine = crate::query::QueryEngine::from_config(&events_config);
         engine.query_file(&ledger_path, &sql_clone).await
     });
 

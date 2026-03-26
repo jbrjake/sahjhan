@@ -1,0 +1,52 @@
+# Generated hook: bash_guard.py
+# Post-execution manifest verification — PostToolUse hook
+import os, sys, json, subprocess, platform
+
+def sahjhan_binary():
+    env = os.environ.get("SAHJHAN_BIN")
+    if env:
+        return env
+    arch = platform.machine()
+    system = platform.system().lower()
+    if arch == "arm64":
+        arch = "aarch64"
+    if system == "darwin":
+        triple = f"{arch}-apple-darwin"
+    else:
+        triple = f"{arch}-unknown-linux-gnu"
+    root = os.environ.get("CLAUDE_PLUGIN_ROOT",
+           os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return os.path.join(root, "bin", f"sahjhan-{triple}")
+
+CONFIG_DIR = "{{ config_dir }}"  # Injected from protocol config
+
+def main():
+    event = json.loads(sys.stdin.read())
+    tool_name = event.get("tool_name", "")
+    if tool_name != "Bash":
+        print(json.dumps({"decision": "allow"}))
+        return
+
+    cwd = event.get("cwd", os.getcwd())
+    result = subprocess.run(
+        [sahjhan_binary(), "--config-dir", CONFIG_DIR, "manifest", "verify"],
+        capture_output=True, text=True, cwd=cwd, timeout=30,
+    )
+    if result.returncode != 0:
+        # Record violation
+        subprocess.run(
+            [sahjhan_binary(), "--config-dir", CONFIG_DIR, "event",
+             "protocol_violation", "--field", f"detail={result.stdout.strip()}"],
+            cwd=cwd, timeout=10,
+        )
+        print(json.dumps({
+            "decision": "allow",  # PostToolUse can only warn, not block
+            "message": f"UNAUTHORIZED MODIFICATION DETECTED:\n{result.stdout.strip()}\n"
+                       f"This violation has been recorded in the ledger."
+        }))
+        return
+
+    print(json.dumps({"decision": "allow"}))
+
+if __name__ == "__main__":
+    main()

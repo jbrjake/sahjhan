@@ -157,6 +157,10 @@ enum HookAction {
         /// Harness type (e.g. "cc" for claude code)
         #[arg(long)]
         harness: Option<String>,
+
+        /// Output directory for generated hook files
+        #[arg(long)]
+        output_dir: Option<String>,
     },
 }
 
@@ -215,8 +219,8 @@ fn main() {
             commands::cmd_reset(&cli.config_dir, confirm, &token)
         }
         Commands::Hook { action } => match action {
-            HookAction::Generate { harness } => {
-                commands::cmd_hook_generate(&cli.config_dir, &harness)
+            HookAction::Generate { harness, output_dir } => {
+                commands::cmd_hook_generate(&cli.config_dir, &harness, &output_dir)
             }
         },
     };

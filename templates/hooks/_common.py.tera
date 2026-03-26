@@ -1,0 +1,24 @@
+# _common.py — shared helpers for sahjhan hook scripts
+import os, sys, json
+
+def read_event():
+    """Read and parse the hook event from stdin."""
+    return json.loads(sys.stdin.read())
+
+def allow():
+    """Emit an allow decision and exit."""
+    print(json.dumps({"decision": "allow"}))
+
+def block(reason):
+    """Emit a block decision with a reason and exit."""
+    print(json.dumps({"decision": "block", "reason": reason}))
+
+def warn(message):
+    """Emit an allow decision with a warning message."""
+    print(json.dumps({"decision": "allow", "message": message}))
+
+def resolve_path(file_path, cwd=None):
+    """Resolve a file path relative to cwd."""
+    if cwd is None:
+        cwd = os.getcwd()
+    return os.path.realpath(os.path.join(cwd, file_path))

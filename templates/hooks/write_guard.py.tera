@@ -1,0 +1,33 @@
+# Generated hook: write_guard.py
+# Write protection for managed paths — PreToolUse hook
+import os, sys, json
+
+MANAGED = {{ managed_paths }}  # Injected from protocol.toml at generation time
+
+def main():
+    event = json.loads(sys.stdin.read())
+    tool_name = event.get("tool_name", "")
+    if tool_name not in ("Write", "Edit"):
+        print(json.dumps({"decision": "allow"}))
+        return
+
+    tool_input = event.get("tool_input", {})
+    file_path = tool_input.get("file_path", "")
+    cwd = event.get("cwd", os.getcwd())
+    resolved = os.path.realpath(os.path.join(cwd, file_path))
+
+    for prefix in MANAGED:
+        managed_abs = os.path.realpath(os.path.join(cwd, prefix))
+        if resolved.startswith(managed_abs + os.sep) or resolved == managed_abs:
+            print(json.dumps({
+                "decision": "block",
+                "reason": f"WRITE BLOCKED: {file_path} is managed by sahjhan. "
+                          f"Use CLI commands to modify protocol state. "
+                          f"Direct writes are not permitted."
+            }))
+            return
+
+    print(json.dumps({"decision": "allow"}))
+
+if __name__ == "__main__":
+    main()

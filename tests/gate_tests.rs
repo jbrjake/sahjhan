@@ -1306,3 +1306,125 @@ fn test_evaluate_gates_continues_after_failure() {
     assert!(!results[0].passed);
     assert!(results[1].passed);
 }
+
+// ---------------------------------------------------------------------------
+// query gate
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_query_gate_pass() {
+    // Ledger with a few events — count(*) < 10 should be true.
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    for _ in 0..3 {
+        ledger.append("some_event", BTreeMap::new()).unwrap();
+    }
+
+    let gate = make_gate(
+        "query",
+        vec![
+            (
+                "sql",
+                toml::Value::String(
+                    "SELECT count(*) < 10 as result FROM events".to_string(),
+                ),
+            ),
+            ("expect", toml::Value::String("true".to_string())),
+        ],
+    );
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(
+        result.passed,
+        "expected pass but reason: {:?}",
+        result.reason
+    );
+}
+
+#[test]
+fn test_query_gate_fail() {
+    // Ledger with many events — count(*) < 2 should be false.
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    for _ in 0..5 {
+        ledger.append("some_event", BTreeMap::new()).unwrap();
+    }
+
+    let gate = make_gate(
+        "query",
+        vec![
+            (
+                "sql",
+                toml::Value::String(
+                    "SELECT count(*) < 2 as result FROM events".to_string(),
+                ),
+            ),
+            ("expect", toml::Value::String("true".to_string())),
+        ],
+    );
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(
+        !result.passed,
+        "expected fail (5 events, count < 2 = false)"
+    );
+    assert!(
+        result
+            .reason
+            .as_ref()
+            .unwrap()
+            .contains("expected 'true'"),
+        "reason should mention expected value: {:?}",
+        result.reason
+    );
+}
+
+#[test]
+fn test_query_gate_missing_sql() {
+    // Gate with no sql param — should return a failed result with an error message.
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let gate = make_gate("query", vec![]);
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(!result.passed, "missing sql param should fail");
+    assert!(
+        result
+            .reason
+            .as_ref()
+            .unwrap()
+            .contains("sql"),
+        "reason should mention 'sql': {:?}",
+        result.reason
+    );
+}

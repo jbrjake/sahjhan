@@ -46,8 +46,10 @@ fn setup_initialized_dir() -> tempfile::TempDir {
 #[test]
 fn test_init_creates_ledger() {
     let dir = setup_initialized_dir();
-    assert!(dir.path().join("output/.sahjhan/ledger.bin").exists());
+    assert!(dir.path().join("output/.sahjhan/ledger.jsonl").exists());
     assert!(dir.path().join("output/.sahjhan/manifest.json").exists());
+    // Registry should also be created by init
+    assert!(dir.path().join("output/.sahjhan/ledgers.toml").exists());
 }
 
 #[test]
@@ -290,7 +292,7 @@ fn test_manifest_list() {
         .current_dir(dir.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("ledger.bin"));
+        .stdout(predicate::str::contains("ledger.jsonl"));
 }
 
 #[test]
@@ -1025,6 +1027,7 @@ label = "Orphan"
 
 #[test]
 fn test_ledger_list_empty() {
+    // After init, the registry has a "default" entry created automatically.
     let dir = setup_initialized_dir();
     Command::cargo_bin("sahjhan")
         .unwrap()
@@ -1032,7 +1035,7 @@ fn test_ledger_list_empty() {
         .current_dir(dir.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("No ledgers registered"));
+        .stdout(predicate::str::contains("default"));
 }
 
 #[test]
@@ -1407,7 +1410,7 @@ fn test_ledger_path_targeting_log_verify() {
     // Verify the default ledger via --ledger-path
     let ledger_file = dir
         .path()
-        .join("output/.sahjhan/ledger.bin")
+        .join("output/.sahjhan/ledger.jsonl")
         .to_str()
         .unwrap()
         .to_string();
@@ -1425,7 +1428,7 @@ fn test_ledger_path_targeting_log_verify() {
         .current_dir(dir.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("Chain valid"));
+        .stdout(predicate::str::contains("OK:"));
 }
 
 #[test]

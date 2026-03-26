@@ -13,6 +13,7 @@ use tera::Tera;
 
 use crate::config::ProtocolConfig;
 use crate::ledger::chain::Ledger;
+use crate::ledger::registry::LedgerRegistry;
 use crate::manifest::tracker::Manifest;
 
 /// A single event formatted for template rendering.
@@ -43,6 +44,8 @@ pub struct SetSummary {
 pub struct RenderEngine {
     tera: Tera,
     config: ProtocolConfig,
+    /// Path to `ledgers.toml`, used to resolve per-render ledger overrides.
+    registry_path: Option<std::path::PathBuf>,
 }
 
 impl RenderEngine {
@@ -65,7 +68,58 @@ impl RenderEngine {
         Ok(RenderEngine {
             tera,
             config: config.clone(),
+            registry_path: None,
         })
+    }
+
+    /// Set the path to `ledgers.toml` so per-render ledger overrides can be resolved.
+    pub fn with_registry(mut self, registry_path: std::path::PathBuf) -> Self {
+        self.registry_path = Some(registry_path);
+        self
+    }
+
+    /// Resolve the ledger for a render config.
+    ///
+    /// If the render has a `ledger` field, load that ledger from the registry.
+    /// Otherwise return `None` (caller uses the default ledger).
+    fn resolve_render_ledger(
+        &self,
+        render_cfg: &crate::config::RenderConfig,
+    ) -> Result<Option<Ledger>, String> {
+        let ledger_name = match &render_cfg.ledger {
+            Some(n) => n,
+            None => return Ok(None),
+        };
+
+        let reg_path = self
+            .registry_path
+            .as_ref()
+            .ok_or_else(|| format!("render '{}' requires ledger '{}' but no registry path was configured", render_cfg.target, ledger_name))?;
+
+        let registry = LedgerRegistry::new(reg_path)
+            .map_err(|e| format!("cannot load ledger registry: {}", e))?;
+
+        let entry = registry
+            .resolve(Some(ledger_name))
+            .map_err(|e| format!("render '{}': ledger resolution failed: {}", render_cfg.target, e))?;
+
+        // Resolve relative paths against the registry file's parent directory.
+        let ledger_path = {
+            let p = std::path::PathBuf::from(&entry.path);
+            if p.is_absolute() {
+                p
+            } else {
+                reg_path
+                    .parent()
+                    .unwrap_or_else(|| std::path::Path::new("."))
+                    .join(p)
+            }
+        };
+
+        let ledger = Ledger::open(&ledger_path)
+            .map_err(|e| format!("render '{}': cannot open ledger '{}': {}", render_cfg.target, ledger_name, e))?;
+
+        Ok(Some(ledger))
     }
 
     /// Render all configured templates and write them to `render_dir`.
@@ -79,10 +133,18 @@ impl RenderEngine {
         manifest: &mut Manifest,
         ledger_seq: u64,
     ) -> Result<Vec<String>, String> {
-        let ctx = self.build_context(ledger)?;
+        let default_ctx = self.build_context(ledger)?;
         let mut rendered = Vec::new();
 
         for render_cfg in &self.config.renders {
+            // Use per-render ledger override if specified, otherwise use default.
+            let override_ledger = self.resolve_render_ledger(render_cfg)?;
+            let ctx = if let Some(ref ol) = override_ledger {
+                self.build_context(ol)?
+            } else {
+                default_ctx.clone()
+            };
+
             let output = self
                 .tera
                 .render(&render_cfg.template, &ctx)
@@ -134,7 +196,7 @@ impl RenderEngine {
         manifest: &mut Manifest,
         ledger_seq: u64,
     ) -> Result<Vec<String>, String> {
-        let ctx = self.build_context(ledger)?;
+        let default_ctx = self.build_context(ledger)?;
         let mut rendered = Vec::new();
 
         for render_cfg in &self.config.renders {
@@ -155,6 +217,14 @@ impl RenderEngine {
                     continue;
                 }
             }
+
+            // Use per-render ledger override if specified, otherwise use default.
+            let override_ledger = self.resolve_render_ledger(render_cfg)?;
+            let ctx = if let Some(ref ol) = override_ledger {
+                self.build_context(ol)?
+            } else {
+                default_ctx.clone()
+            };
 
             let output = self
                 .tera

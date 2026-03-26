@@ -13,4 +13,7 @@ pub struct RenderConfig {
     pub template: String,
     pub trigger: String,
     pub event_types: Option<Vec<String>>,
+    /// Optional: which named ledger (from ledgers.toml) to read from.
+    /// If absent, the default ledger is used.
+    pub ledger: Option<String>,
 }

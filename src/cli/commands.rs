@@ -89,7 +89,7 @@ fn resolve_data_dir(data_dir: &str) -> PathBuf {
 }
 
 fn ledger_path(data_dir: &Path) -> PathBuf {
-    data_dir.join("ledger.bin")
+    data_dir.join("ledger.jsonl")
 }
 
 fn manifest_path(data_dir: &Path) -> PathBuf {
@@ -147,7 +147,7 @@ fn pathdiff(target: &Path, base: &Path) -> String {
 ///
 /// 1. If --ledger-path given, use that file directly.
 /// 2. If --ledger given, resolve from registry.
-/// 3. If neither, try registry first entry; else fall back to config data_dir/ledger.bin.
+/// 3. If neither, try registry first entry; else fall back to config data_dir/ledger.jsonl.
 fn resolve_ledger_from_targeting(
     config: &ProtocolConfig,
     targeting: &LedgerTargeting,
@@ -174,7 +174,7 @@ fn resolve_ledger_from_targeting(
         return Ok((resolved, Some(entry.mode.clone())));
     }
 
-    // 3. Default: try registry first, else fall back to data_dir/ledger.bin
+    // 3. Default: try registry first, else fall back to data_dir/ledger.jsonl
     let reg_path = registry_path_from_config(config);
     if reg_path.exists() {
         if let Ok(registry) = LedgerRegistry::new(&reg_path) {
@@ -312,6 +312,34 @@ pub fn cmd_init(config_dir: &str) -> i32 {
             return EXIT_INTEGRITY_ERROR;
         }
     };
+
+    // Create ledgers.toml registry with a "default" entry pointing to the new ledger
+    {
+        let reg_path = data_dir.join("ledgers.toml");
+        // Relative path from data_dir to ledger (just the filename)
+        let ledger_rel_to_data = lp
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "ledger.jsonl".to_string());
+        let mut registry = match crate::ledger::registry::LedgerRegistry::new(&reg_path) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("Cannot create ledger registry: {}", e);
+                return EXIT_INTEGRITY_ERROR;
+            }
+        };
+        if let Err(e) = registry.create(
+            "default",
+            &ledger_rel_to_data,
+            crate::ledger::registry::LedgerMode::Stateful,
+        ) {
+            // If the registry already has a "default" entry, skip — idempotent.
+            if !e.contains("already exists") {
+                eprintln!("Cannot register default ledger: {}", e);
+                return EXIT_INTEGRITY_ERROR;
+            }
+        }
+    }
 
     // Initialize manifest
     let mut manifest = match Manifest::init(&config.paths.data_dir, config.paths.managed.clone()) {
@@ -1020,10 +1048,7 @@ pub fn cmd_log_verify(config_dir: &str, targeting: &LedgerTargeting) -> i32 {
 
     match ledger.verify() {
         Ok(()) => {
-            println!(
-                "Chain valid. {} entries, all hashes check out.",
-                ledger.len()
-            );
+            println!("OK: {} events, chain intact.", ledger.len());
             EXIT_SUCCESS
         }
         Err(e) => {
@@ -1522,7 +1547,7 @@ pub fn cmd_reset(config_dir: &str, confirm: bool, token: &Option<String>) -> i32
 
             // Archive current ledger and manifest
             let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
-            let ledger_archive = data_dir.join(format!("ledger.{}.bin", timestamp));
+            let ledger_archive = data_dir.join(format!("ledger.{}.jsonl", timestamp));
             let manifest_archive = data_dir.join(format!("manifest.{}.json", timestamp));
 
             let lp = ledger_path(&data_dir);
@@ -2097,33 +2122,18 @@ fn format_output(rows: &[BTreeMap<String, String>], format: &str) {
 
 fn print_entries(entries: &[crate::ledger::entry::LedgerEntry]) {
     for entry in entries {
-        let ts = chrono::DateTime::from_timestamp_millis(entry.timestamp)
-            .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
-            .unwrap_or_else(|| format!("{}ms", entry.timestamp));
+        // Use the JSONL ts field directly (ISO 8601); trim to readable form.
+        let ts = &entry.ts;
 
         print!(
             "[{}] seq={} type={} hash={}",
             ts,
             entry.seq,
             entry.event_type,
-            &hex_encode_full(&entry.entry_hash)[..12],
+            &entry.hash[..12],
         );
 
-        // Try to deserialize MessagePack payload
-        if !entry.payload.is_empty() {
-            if let Ok(fields) = rmp_serde::from_slice::<HashMap<String, String>>(&entry.payload) {
-                if !fields.is_empty() {
-                    let pairs: Vec<String> =
-                        fields.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
-                    print!(" {{{}}}", pairs.join(", "));
-                }
-            } else if let Ok(value) = rmp_serde::from_slice::<serde_json::Value>(&entry.payload) {
-                // Try generic msgpack -> json for structured payloads like genesis
-                print!(" {}", value);
-            }
-        }
-
-        // Show JSONL fields if populated
+        // Print JSONL fields.
         if !entry.fields.is_empty() {
             let pairs: Vec<String> = entry
                 .fields
@@ -2143,10 +2153,6 @@ fn hex_encode_short(bytes: &[u8; 32], len: usize) -> String {
         .map(|b| format!("{:02x}", b))
         .collect::<String>()[..len]
         .to_string()
-}
-
-fn hex_encode_full(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
 /// Check if stdin is a TTY (rough heuristic).

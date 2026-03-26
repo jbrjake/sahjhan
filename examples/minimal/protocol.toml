@@ -15,3 +15,6 @@ values = ["tests", "lint"]
 [aliases]
 "start" = "transition begin"
 "finish" = "transition complete"
+
+[checkpoints]
+interval = 100

@@ -41,6 +41,8 @@ pub struct StateMachine {
     config: ProtocolConfig,
     ledger: Ledger,
     current_state: String,
+    /// Working directory for shell command gates.
+    working_dir: PathBuf,
 }
 
 impl StateMachine {
@@ -49,13 +51,27 @@ impl StateMachine {
     /// The current state is determined by scanning the ledger for the most
     /// recent `state_transition` event.  If none exists, the config's initial
     /// state is used.
+    ///
+    /// `working_dir` defaults to `std::env::current_dir()`.
     pub fn new(config: &ProtocolConfig, ledger: Ledger) -> Self {
         let current_state = Self::derive_state_from_ledger(config, &ledger);
+        let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         StateMachine {
             config: config.clone(),
             ledger,
             current_state,
+            working_dir,
         }
+    }
+
+    /// Set the working directory for shell command execution.
+    pub fn set_working_dir(&mut self, dir: PathBuf) {
+        self.working_dir = dir;
+    }
+
+    /// Return the current working directory.
+    pub fn working_dir(&self) -> &PathBuf {
+        &self.working_dir
     }
 
     /// Return the name of the current state.
@@ -90,9 +106,12 @@ impl StateMachine {
             })?
             .clone(); // clone so we release the borrow on self.config
 
+        // Build state_params from the target state's param definitions.
+        let state_params = self.build_state_params(&transition.to);
+
         // Evaluate gates.
         for gate in &transition.gates {
-            self.evaluate_gate(gate)?;
+            self.evaluate_gate(gate, &state_params)?;
         }
 
         // Record the transition event.
@@ -180,14 +199,41 @@ impl StateMachine {
             .to_string()
     }
 
+    /// Build state_params from a state's param definitions.
+    ///
+    /// For each `StateParam` in the target state config, the param name is
+    /// mapped to the comma-joined values of the referenced set.
+    fn build_state_params(&self, state_name: &str) -> HashMap<String, String> {
+        let mut params = HashMap::new();
+
+        if let Some(state_config) = self.config.states.get(state_name) {
+            if let Some(state_params) = &state_config.params {
+                for param in state_params {
+                    if let Some(set_config) = self.config.sets.get(&param.set) {
+                        params.insert(
+                            param.name.clone(),
+                            set_config.values.join(","),
+                        );
+                    }
+                }
+            }
+        }
+
+        params
+    }
+
     /// Evaluate a single gate using the full gate evaluator.
-    fn evaluate_gate(&self, gate: &crate::config::GateConfig) -> Result<(), StateError> {
+    fn evaluate_gate(
+        &self,
+        gate: &crate::config::GateConfig,
+        state_params: &HashMap<String, String>,
+    ) -> Result<(), StateError> {
         let ctx = GateContext {
             ledger: &self.ledger,
             config: &self.config,
             current_state: &self.current_state,
-            state_params: HashMap::new(),
-            working_dir: PathBuf::from("."),
+            state_params: state_params.clone(),
+            working_dir: self.working_dir.clone(),
             event_fields: None,
         };
 

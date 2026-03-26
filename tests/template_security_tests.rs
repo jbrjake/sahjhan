@@ -83,15 +83,8 @@ fn test_shell_metacharacters_escaped() {
             .collect(),
     );
     // The injected value should be wrapped in single quotes, neutralizing the
-    // attempt to break out of the argument.  The shell_escape function wraps
-    // the value in single-quotes and replaces interior `'` with `'\''`, so the
-    // dangerous sequences are inside the literal argument, not shell metacharacters.
-    // Verify that the unsafe shell metacharacters `;` and the closing `'` used
-    // to escape the quoting context are NOT present as bare characters outside
-    // of the single-quoted wrapper.  The simplest invariant: the resolved string
-    // must start with a single-quote-wrapped form.
+    // attempt to break out of the argument.
     assert!(result.contains("'\\''"), "single-quote escape should be present");
-    // Also verify the overall structure: our resolved value is single-quoted.
     let expected_value = shell_escape("'; rm -rf /; echo '");
     assert!(result.contains(&expected_value));
 }

@@ -1,8 +1,10 @@
 // tests/gate_tests.rs
 //
-// Integration tests for the gate evaluator — one test per gate type.
+// Integration tests for the gate evaluator — one test per gate type,
+// plus additional tests for timeout enforcement, snapshot resolution,
+// violation resolution, and field validation.
 
-use sahjhan::gates::evaluator::{evaluate_gate, GateContext};
+use sahjhan::gates::evaluator::{evaluate_gate, evaluate_gates, GateContext};
 use sahjhan::config::{GateConfig, ProtocolConfig};
 use sahjhan::ledger::chain::Ledger;
 use tempfile::tempdir;
@@ -176,6 +178,49 @@ fn test_command_succeeds_fail() {
 }
 
 // ---------------------------------------------------------------------------
+// command_succeeds — timeout enforcement (Issue #1)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_command_succeeds_timeout() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.bin");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    // Command that sleeps for 30 seconds, but timeout is 1 second.
+    let gate = make_gate("command_succeeds", vec![
+        ("cmd", toml::Value::String("sleep 30".to_string())),
+        ("timeout", toml::Value::Integer(1)),
+    ]);
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+
+    let start = std::time::Instant::now();
+    let result = evaluate_gate(&gate, &ctx);
+    let elapsed = start.elapsed();
+
+    assert!(!result.passed, "timed-out command should not pass");
+    assert!(
+        result.reason.as_ref().unwrap().contains("timed out"),
+        "reason should mention timeout: {:?}",
+        result.reason
+    );
+    // Should complete in roughly 1-3 seconds, not 30.
+    assert!(
+        elapsed.as_secs() < 5,
+        "timeout should have been enforced, but took {:?}",
+        elapsed
+    );
+}
+
+// ---------------------------------------------------------------------------
 // command_output
 // ---------------------------------------------------------------------------
 
@@ -221,6 +266,48 @@ fn test_command_output_mismatch() {
         event_fields: None,
     };
     assert!(!evaluate_gate(&gate, &ctx).passed);
+}
+
+// ---------------------------------------------------------------------------
+// command_output — timeout enforcement (Issue #6)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_command_output_timeout() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.bin");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let gate = make_gate("command_output", vec![
+        ("cmd", toml::Value::String("sleep 30 && echo done".to_string())),
+        ("expect", toml::Value::String("done".to_string())),
+        ("timeout", toml::Value::Integer(1)),
+    ]);
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+
+    let start = std::time::Instant::now();
+    let result = evaluate_gate(&gate, &ctx);
+    let elapsed = start.elapsed();
+
+    assert!(!result.passed, "timed-out command should not pass");
+    assert!(
+        result.reason.as_ref().unwrap().contains("timed out"),
+        "reason should mention timeout: {:?}",
+        result.reason
+    );
+    assert!(
+        elapsed.as_secs() < 5,
+        "timeout should have been enforced, but took {:?}",
+        elapsed
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -512,7 +599,7 @@ fn test_min_elapsed_fail_just_happened() {
 }
 
 // ---------------------------------------------------------------------------
-// no_violations
+// no_violations (Issue #3: Resolved violations are accounted for)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -552,6 +639,56 @@ fn test_no_violations_with_violation() {
         event_fields: None,
     };
     assert!(!evaluate_gate(&gate, &ctx).passed);
+}
+
+#[test]
+fn test_no_violations_with_resolved_violation() {
+    // A violation that has been resolved should not block.
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.bin");
+    let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    ledger.append("protocol_violation", rmp_serde::to_vec(&HashMap::<String,String>::new()).unwrap()).unwrap();
+    ledger.append("violation_resolved", rmp_serde::to_vec(&HashMap::<String,String>::new()).unwrap()).unwrap();
+
+    let gate = make_gate("no_violations", vec![]);
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(result.passed, "resolved violation should not block: {:?}", result.reason);
+}
+
+#[test]
+fn test_no_violations_partial_resolution() {
+    // Two violations, one resolved — still one unresolved.
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.bin");
+    let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    ledger.append("protocol_violation", rmp_serde::to_vec(&HashMap::<String,String>::new()).unwrap()).unwrap();
+    ledger.append("protocol_violation", rmp_serde::to_vec(&HashMap::<String,String>::new()).unwrap()).unwrap();
+    ledger.append("violation_resolved", rmp_serde::to_vec(&HashMap::<String,String>::new()).unwrap()).unwrap();
+
+    let gate = make_gate("no_violations", vec![]);
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(!result.passed, "should still have 1 unresolved violation");
+    assert!(result.reason.as_ref().unwrap().contains("1 unresolved"));
 }
 
 // ---------------------------------------------------------------------------
@@ -707,13 +844,204 @@ fn test_snapshot_compare_fail() {
 }
 
 // ---------------------------------------------------------------------------
+// snapshot_compare — resolve "snapshot:key" from ledger (Issue #2)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_snapshot_compare_with_ledger_reference() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.bin");
+    let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    // Store a snapshot in the ledger with key "baseline" and value "5".
+    let mut snapshot_fields = HashMap::new();
+    snapshot_fields.insert("key".to_string(), "baseline".to_string());
+    snapshot_fields.insert("value".to_string(), "5".to_string());
+    ledger.append("snapshot", rmp_serde::to_vec(&snapshot_fields).unwrap()).unwrap();
+
+    // Command outputs count=10, compare > snapshot:baseline (which resolves to 5).
+    let gate = make_gate("snapshot_compare", vec![
+        ("cmd", toml::Value::String(r#"echo '{"count": 10}'"#.to_string())),
+        ("extract", toml::Value::String("count".to_string())),
+        ("compare", toml::Value::String("gt".to_string())),
+        ("reference", toml::Value::String("snapshot:baseline".to_string())),
+    ]);
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(result.passed, "should resolve snapshot:baseline to 5 and pass: {:?}", result.reason);
+}
+
+#[test]
+fn test_snapshot_compare_missing_snapshot_fails() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.bin");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    // Reference a snapshot that does not exist.
+    let gate = make_gate("snapshot_compare", vec![
+        ("cmd", toml::Value::String(r#"echo '{"count": 10}'"#.to_string())),
+        ("extract", toml::Value::String("count".to_string())),
+        ("compare", toml::Value::String("gt".to_string())),
+        ("reference", toml::Value::String("snapshot:nonexistent".to_string())),
+    ]);
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(!result.passed, "missing snapshot should fail");
+    assert!(
+        result.reason.as_ref().unwrap().contains("no snapshot found"),
+        "reason should explain missing snapshot: {:?}",
+        result.reason
+    );
+}
+
+#[test]
+fn test_snapshot_compare_uses_most_recent_snapshot() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.bin");
+    let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    // Two snapshots with the same key — should use the more recent one.
+    let mut snap1 = HashMap::new();
+    snap1.insert("key".to_string(), "baseline".to_string());
+    snap1.insert("value".to_string(), "100".to_string());
+    ledger.append("snapshot", rmp_serde::to_vec(&snap1).unwrap()).unwrap();
+
+    let mut snap2 = HashMap::new();
+    snap2.insert("key".to_string(), "baseline".to_string());
+    snap2.insert("value".to_string(), "5".to_string());
+    ledger.append("snapshot", rmp_serde::to_vec(&snap2).unwrap()).unwrap();
+
+    // count=10 > snapshot:baseline. If it uses the first snapshot (100), it would fail.
+    // If it uses the most recent (5), it should pass.
+    let gate = make_gate("snapshot_compare", vec![
+        ("cmd", toml::Value::String(r#"echo '{"count": 10}'"#.to_string())),
+        ("extract", toml::Value::String("count".to_string())),
+        ("compare", toml::Value::String("gt".to_string())),
+        ("reference", toml::Value::String("snapshot:baseline".to_string())),
+    ]);
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(result.passed, "should use most recent snapshot (value=5): {:?}", result.reason);
+}
+
+// ---------------------------------------------------------------------------
+// field validation before template interpolation (Issue #4)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_field_validation_rejects_invalid_pattern() {
+    let dir = tempdir().unwrap();
+
+    // Build a config that has a field pattern for "member".
+    let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+
+    // Add an event definition with a pattern-validated field.
+    use sahjhan::config::{EventConfig, EventFieldConfig};
+    config.events.insert("test_event".to_string(), EventConfig {
+        description: "test".to_string(),
+        fields: vec![EventFieldConfig {
+            name: "member".to_string(),
+            field_type: "string".to_string(),
+            pattern: Some(r"^[a-zA-Z0-9_-]+$".to_string()),
+            values: None,
+        }],
+    });
+
+    let ledger_path = dir.path().join("ledger.bin");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    // state_params contains "member" with a value that violates the pattern.
+    let mut state_params = HashMap::new();
+    state_params.insert("member".to_string(), "'; rm -rf /".to_string());
+
+    let gate = make_gate("command_succeeds", vec![
+        ("cmd", toml::Value::String("echo {{member}}".to_string())),
+    ]);
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params,
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(!result.passed, "invalid field value should be rejected");
+    assert!(
+        result.reason.as_ref().unwrap().contains("does not match pattern"),
+        "reason should explain pattern mismatch: {:?}",
+        result.reason
+    );
+}
+
+#[test]
+fn test_field_validation_accepts_valid_pattern() {
+    let dir = tempdir().unwrap();
+
+    let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+
+    use sahjhan::config::{EventConfig, EventFieldConfig};
+    config.events.insert("test_event".to_string(), EventConfig {
+        description: "test".to_string(),
+        fields: vec![EventFieldConfig {
+            name: "member".to_string(),
+            field_type: "string".to_string(),
+            pattern: Some(r"^[a-zA-Z0-9_-]+$".to_string()),
+            values: None,
+        }],
+    });
+
+    let ledger_path = dir.path().join("ledger.bin");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let mut state_params = HashMap::new();
+    state_params.insert("member".to_string(), "valid-value_123".to_string());
+
+    let gate = make_gate("command_succeeds", vec![
+        ("cmd", toml::Value::String("echo {{member}}".to_string())),
+    ]);
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params,
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(result.passed, "valid field value should pass: {:?}", result.reason);
+}
+
+// ---------------------------------------------------------------------------
 // evaluate_gates (batch)
 // ---------------------------------------------------------------------------
 
 #[test]
 fn test_evaluate_gates_all_pass() {
-    use sahjhan::gates::evaluator::evaluate_gates;
-
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     let ledger_path = dir.path().join("ledger.bin");
@@ -738,8 +1066,6 @@ fn test_evaluate_gates_all_pass() {
 
 #[test]
 fn test_evaluate_gates_continues_after_failure() {
-    use sahjhan::gates::evaluator::evaluate_gates;
-
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     let ledger_path = dir.path().join("ledger.bin");

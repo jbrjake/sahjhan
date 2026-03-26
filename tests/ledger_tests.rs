@@ -135,7 +135,7 @@ fn test_top_level_key_ordering() {
     .iter()
     .map(|k| {
         line.find(k)
-            .expect(&format!("key {} missing from JSONL", k))
+            .unwrap_or_else(|| panic!("key {} missing from JSONL", k))
     })
     .collect();
 

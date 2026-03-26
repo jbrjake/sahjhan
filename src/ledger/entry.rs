@@ -26,6 +26,20 @@ pub enum LedgerError {
     #[error("truncated data: expected at least {expected_min} bytes, got {actual}")]
     Truncated { expected_min: usize, actual: usize },
 
+    #[error("timestamp regression at seq {seq}: previous {prev_ts}, current {curr_ts}")]
+    TimestampRegression {
+        seq: u64,
+        prev_ts: i64,
+        curr_ts: i64,
+    },
+
+    #[error("chain mismatch at seq {seq}: expected prev_hash {expected}, found {found}")]
+    ChainMismatch {
+        seq: u64,
+        expected: String,
+        found: String,
+    },
+
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -175,6 +189,81 @@ impl LedgerEntry {
             payload,
             entry_hash: stored_hash,
         })
+    }
+
+    /// Deserialize a `LedgerEntry` from a byte slice that may contain trailing data.
+    ///
+    /// Returns the parsed entry and the number of bytes consumed. Unlike
+    /// `from_bytes`, this does **not** fail if there is data remaining after
+    /// the entry — it is intended for reading a stream of concatenated entries.
+    pub fn from_bytes_partial(data: &[u8]) -> Result<(Self, usize), LedgerError> {
+        let mut cur = Cursor::new(data);
+
+        // magic (4 bytes)
+        let magic = cur.read_bytes(4)?;
+        if magic != MAGIC {
+            return Err(LedgerError::InvalidMagic);
+        }
+
+        // format_version (1 byte)
+        let version = cur.read_u8()?;
+        if version != FORMAT_VERSION {
+            return Err(LedgerError::UnsupportedVersion(version));
+        }
+
+        // seq (8 bytes LE)
+        let seq = u64::from_le_bytes(cur.read_bytes(8)?.try_into().unwrap());
+
+        // timestamp (8 bytes LE)
+        let timestamp = i64::from_le_bytes(cur.read_bytes(8)?.try_into().unwrap());
+
+        // prev_hash (32 bytes)
+        let prev_hash_slice = cur.read_bytes(32)?;
+        let mut prev_hash = [0u8; 32];
+        prev_hash.copy_from_slice(prev_hash_slice);
+
+        // event_type_len (2 bytes LE)
+        let et_len = u16::from_le_bytes(cur.read_bytes(2)?.try_into().unwrap()) as usize;
+
+        // event_type (et_len bytes)
+        let et_bytes = cur.read_bytes(et_len)?.to_vec();
+        let event_type =
+            String::from_utf8(et_bytes).map_err(|_| LedgerError::InvalidUtf8)?;
+
+        // payload_len (4 bytes LE)
+        let pl_len = u32::from_le_bytes(cur.read_bytes(4)?.try_into().unwrap()) as usize;
+
+        // payload (pl_len bytes)
+        let payload = cur.read_bytes(pl_len)?.to_vec();
+
+        // entry_hash (32 bytes)
+        let stored_hash_slice = cur.read_bytes(32)?;
+        let mut stored_hash = [0u8; 32];
+        stored_hash.copy_from_slice(stored_hash_slice);
+
+        let bytes_consumed = cur.pos;
+
+        // Verify hash
+        let computed_hash = compute_hash(seq, timestamp, &prev_hash, &event_type, &payload);
+        if computed_hash != stored_hash {
+            return Err(LedgerError::HashMismatch {
+                seq,
+                expected: hex_encode(&stored_hash),
+                computed: hex_encode(&computed_hash),
+            });
+        }
+
+        Ok((
+            LedgerEntry {
+                seq,
+                timestamp,
+                prev_hash,
+                event_type,
+                payload,
+                entry_hash: stored_hash,
+            },
+            bytes_consumed,
+        ))
     }
 }
 

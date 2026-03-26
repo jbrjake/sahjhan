@@ -56,19 +56,10 @@ impl RenderEngine {
         for render_cfg in &config.renders {
             let template_path = config_dir.join(&render_cfg.template);
             let template_src = std::fs::read_to_string(&template_path).map_err(|e| {
-                format!(
-                    "cannot read template '{}': {}",
-                    template_path.display(),
-                    e
-                )
+                format!("cannot read template '{}': {}", template_path.display(), e)
             })?;
             tera.add_raw_template(&render_cfg.template, &template_src)
-                .map_err(|e| {
-                    format!(
-                        "cannot parse template '{}': {}",
-                        render_cfg.template, e
-                    )
-                })?;
+                .map_err(|e| format!("cannot parse template '{}': {}", render_cfg.template, e))?;
         }
 
         Ok(RenderEngine {
@@ -95,24 +86,14 @@ impl RenderEngine {
             let output = self
                 .tera
                 .render(&render_cfg.template, &ctx)
-                .map_err(|e| {
-                    format!(
-                        "render error for '{}': {}",
-                        render_cfg.template, e
-                    )
-                })?;
+                .map_err(|e| format!("render error for '{}': {}", render_cfg.template, e))?;
 
             let target_path = render_dir.join(&render_cfg.target);
 
             // Ensure parent directory exists
             if let Some(parent) = target_path.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| {
-                    format!(
-                        "cannot create directory {}: {}",
-                        parent.display(),
-                        e
-                    )
-                })?;
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("cannot create directory {}: {}", parent.display(), e))?;
             }
 
             std::fs::write(&target_path, &output).map_err(|e| {
@@ -124,8 +105,7 @@ impl RenderEngine {
             })?;
 
             // Track in manifest
-            let cwd =
-                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
             let rel = target_path
                 .strip_prefix(&cwd)
                 .map(|p| p.to_string_lossy().to_string())
@@ -179,23 +159,13 @@ impl RenderEngine {
             let output = self
                 .tera
                 .render(&render_cfg.template, &ctx)
-                .map_err(|e| {
-                    format!(
-                        "render error for '{}': {}",
-                        render_cfg.template, e
-                    )
-                })?;
+                .map_err(|e| format!("render error for '{}': {}", render_cfg.template, e))?;
 
             let target_path = render_dir.join(&render_cfg.target);
 
             if let Some(parent) = target_path.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| {
-                    format!(
-                        "cannot create directory {}: {}",
-                        parent.display(),
-                        e
-                    )
-                })?;
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("cannot create directory {}: {}", parent.display(), e))?;
             }
 
             std::fs::write(&target_path, &output).map_err(|e| {
@@ -206,8 +176,7 @@ impl RenderEngine {
                 )
             })?;
 
-            let cwd =
-                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
             let rel = target_path
                 .strip_prefix(&cwd)
                 .map(|p| p.to_string_lossy().to_string())
@@ -326,10 +295,7 @@ fn derive_current_state(config: &ProtocolConfig, ledger: &Ledger) -> String {
             }
         }
     }
-    config
-        .initial_state()
-        .unwrap_or("idle")
-        .to_string()
+    config.initial_state().unwrap_or("idle").to_string()
 }
 
 /// Find all completed members for a given set by scanning set_member_complete events.

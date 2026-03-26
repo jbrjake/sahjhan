@@ -262,9 +262,7 @@ impl HookGenerator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{
-        PathsConfig, ProtocolConfig, ProtocolMeta,
-    };
+    use crate::config::{PathsConfig, ProtocolConfig, ProtocolMeta};
     use std::collections::HashMap;
 
     fn test_config() -> ProtocolConfig {
@@ -315,7 +313,10 @@ mod tests {
         let config = test_config();
         let hooks = gen.generate(&config, "cc", None).unwrap();
 
-        let write_guard = hooks.iter().find(|h| h.filename == "write_guard.py").unwrap();
+        let write_guard = hooks
+            .iter()
+            .find(|h| h.filename == "write_guard.py")
+            .unwrap();
         assert!(
             write_guard.content.contains("\"output\""),
             "write_guard should contain managed path 'output'"
@@ -332,9 +333,7 @@ mod tests {
         let config = test_config();
         let hooks = gen.generate(&config, "cc", None).unwrap();
 
-        let bootstrap = hooks
-            .iter()
-            .find(|h| h.filename == "_sahjhan_bootstrap.py");
+        let bootstrap = hooks.iter().find(|h| h.filename == "_sahjhan_bootstrap.py");
         assert!(bootstrap.is_some(), "Bootstrap hook should be included");
 
         let bs = bootstrap.unwrap();
@@ -349,7 +348,10 @@ mod tests {
         let config = test_config();
         let hooks = gen.generate(&config, "cc", None).unwrap();
 
-        let bash_guard = hooks.iter().find(|h| h.filename == "bash_guard.py").unwrap();
+        let bash_guard = hooks
+            .iter()
+            .find(|h| h.filename == "bash_guard.py")
+            .unwrap();
         assert!(
             bash_guard.content.contains("CONFIG_DIR = \"enforcement\""),
             "bash_guard should reference config dir 'enforcement'"
@@ -362,10 +364,16 @@ mod tests {
         let config = test_config();
         let hooks = gen.generate(&config, "cc", None).unwrap();
 
-        let write_guard = hooks.iter().find(|h| h.filename == "write_guard.py").unwrap();
+        let write_guard = hooks
+            .iter()
+            .find(|h| h.filename == "write_guard.py")
+            .unwrap();
         assert_eq!(write_guard.hook_type, "PreToolUse");
 
-        let bash_guard = hooks.iter().find(|h| h.filename == "bash_guard.py").unwrap();
+        let bash_guard = hooks
+            .iter()
+            .find(|h| h.filename == "bash_guard.py")
+            .unwrap();
         assert_eq!(bash_guard.hook_type, "PostToolUse");
     }
 

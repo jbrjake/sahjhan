@@ -5,11 +5,11 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
+use super::sets::{MemberStatus, SetStatus};
 use crate::config::ProtocolConfig;
+use crate::gates::evaluator::{evaluate_gate, GateContext};
 use crate::ledger::chain::Ledger;
 use crate::ledger::entry::LedgerError;
-use crate::gates::evaluator::{evaluate_gate, GateContext};
-use super::sets::{MemberStatus, SetStatus};
 
 // ---------------------------------------------------------------------------
 // Error type
@@ -157,7 +157,8 @@ impl StateMachine {
             .get(set_name)
             .expect("set_status called with unknown set name");
 
-        let completed_members = self.completed_members_for_set(set_name, "set_member_complete", "member");
+        let completed_members =
+            self.completed_members_for_set(set_name, "set_member_complete", "member");
 
         let members: Vec<MemberStatus> = set_config
             .values
@@ -193,10 +194,7 @@ impl StateMachine {
                 }
             }
         }
-        config
-            .initial_state()
-            .unwrap_or("idle")
-            .to_string()
+        config.initial_state().unwrap_or("idle").to_string()
     }
 
     /// Build state_params from a state's param definitions.
@@ -210,10 +208,7 @@ impl StateMachine {
             if let Some(state_params) = &state_config.params {
                 for param in state_params {
                     if let Some(set_config) = self.config.sets.get(&param.set) {
-                        params.insert(
-                            param.name.clone(),
-                            set_config.values.join(","),
-                        );
+                        params.insert(param.name.clone(), set_config.values.join(","));
                     }
                 }
             }

@@ -451,11 +451,7 @@ fn eval_min_elapsed(gate: &GateConfig, ctx: &GateContext) -> GateResult {
         .unwrap_or(0);
 
     // Find the most recent matching event.
-    let last_ts_ms = ctx
-        .ledger
-        .events_of_type(event)
-        .last()
-        .map(|e| e.timestamp);
+    let last_ts_ms = ctx.ledger.events_of_type(event).last().map(|e| e.timestamp);
 
     let description = format!(
         "at least {} second(s) since last '{}' event",
@@ -549,7 +545,7 @@ fn eval_field_not_empty(gate: &GateConfig, ctx: &GateContext) -> GateResult {
             description,
             reason: Some(format!("field '{}' not present in event payload", field)),
         },
-        Some(v) if v.is_empty() => GateResult {
+        Some("") => GateResult {
             passed: false,
             gate_type: "field_not_empty".to_string(),
             description,
@@ -602,7 +598,10 @@ fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> GateResult {
 
     let vars = build_template_vars(ctx);
     let cmd = resolve_template(raw_cmd, &vars);
-    let description = format!("snapshot_compare: {} {} {}", extract, compare, reference_raw);
+    let description = format!(
+        "snapshot_compare: {} {} {}",
+        extract, compare, reference_raw
+    );
 
     // Resolve reference — if it starts with "snapshot:", look up in ledger.
     let reference = if let Some(snapshot_key) = reference_raw.strip_prefix("snapshot:") {
@@ -704,10 +703,7 @@ fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> GateResult {
                 passed: false,
                 gate_type: "snapshot_compare".to_string(),
                 description,
-                reason: Some(format!(
-                    "reference '{}' is not a number: {}",
-                    reference, e
-                )),
+                reason: Some(format!("reference '{}' is not a number: {}", reference, e)),
             }
         }
     };
@@ -766,10 +762,7 @@ pub(super) fn build_template_vars(ctx: &GateContext) -> HashMap<String, String> 
 
     // Inject set names as "sets.<name>" => comma-joined values.
     for (set_name, set_config) in &ctx.config.sets {
-        vars.insert(
-            format!("sets.{}", set_name),
-            set_config.values.join(","),
-        );
+        vars.insert(format!("sets.{}", set_name), set_config.values.join(","));
     }
 
     vars
@@ -787,15 +780,9 @@ fn resolve_snapshot_reference(ctx: &GateContext, snapshot_key: &str) -> Result<S
     for entry in snapshots.iter().rev() {
         if let Ok(fields) = deserialize_payload(&entry.payload) {
             if fields.get("key").map(|k| k.as_str()) == Some(snapshot_key) {
-                return fields
-                    .get("value")
-                    .cloned()
-                    .ok_or_else(|| {
-                        format!(
-                            "snapshot with key '{}' has no 'value' field",
-                            snapshot_key
-                        )
-                    });
+                return fields.get("value").cloned().ok_or_else(|| {
+                    format!("snapshot with key '{}' has no 'value' field", snapshot_key)
+                });
             }
         }
     }
@@ -981,6 +968,8 @@ fn entry_matches_filter(entry: &LedgerEntry, filter: &HashMap<String, String>) -
 }
 
 /// Deserialize a MessagePack payload into a `HashMap<String, String>`.
-fn deserialize_payload(payload: &[u8]) -> Result<HashMap<String, String>, rmp_serde::decode::Error> {
+fn deserialize_payload(
+    payload: &[u8],
+) -> Result<HashMap<String, String>, rmp_serde::decode::Error> {
     rmp_serde::from_slice(payload)
 }

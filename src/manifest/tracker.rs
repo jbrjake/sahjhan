@@ -33,18 +33,11 @@ pub struct Manifest {
 #[derive(Debug, Clone, PartialEq)]
 pub enum RestoreAction {
     /// File was produced by the render engine; re-render from ledger state.
-    ReRender {
-        path: String,
-        ledger_seq: u64,
-    },
+    ReRender { path: String, ledger_seq: u64 },
     /// File was agent-authored; restore via `git checkout`.
-    GitCheckout {
-        path: String,
-    },
+    GitCheckout { path: String },
     /// Path is not tracked in the manifest.
-    NotTracked {
-        path: String,
-    },
+    NotTracked { path: String },
 }
 
 impl Manifest {
@@ -57,8 +50,7 @@ impl Manifest {
         let data_dir_normalized = normalize_path(data_dir);
         let is_under_managed = managed_paths.iter().any(|mp| {
             let mp_normalized = normalize_path(mp);
-            data_dir_normalized.starts_with(&mp_normalized)
-                || data_dir_normalized == mp_normalized
+            data_dir_normalized.starts_with(&mp_normalized) || data_dir_normalized == mp_normalized
         });
 
         if !is_under_managed {
@@ -171,8 +163,8 @@ impl Manifest {
 
 /// Compute SHA-256 of a file on disk, returning the hex-encoded hash.
 pub fn compute_file_sha256(path: &Path) -> Result<String, String> {
-    let content = fs::read(path)
-        .map_err(|e| format!("cannot read file {}: {}", path.display(), e))?;
+    let content =
+        fs::read(path).map_err(|e| format!("cannot read file {}: {}", path.display(), e))?;
     let mut hasher = Sha256::new();
     hasher.update(&content);
     let result = hasher.finalize();

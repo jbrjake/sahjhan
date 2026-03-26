@@ -132,13 +132,22 @@ fn hook_types_are_correct() {
     let config = make_config(vec!["output"]);
     let hooks = gen.generate(&config, "cc", None).unwrap();
 
-    let wg = hooks.iter().find(|h| h.filename == "write_guard.py").unwrap();
+    let wg = hooks
+        .iter()
+        .find(|h| h.filename == "write_guard.py")
+        .unwrap();
     assert_eq!(wg.hook_type, "PreToolUse");
 
-    let bg = hooks.iter().find(|h| h.filename == "bash_guard.py").unwrap();
+    let bg = hooks
+        .iter()
+        .find(|h| h.filename == "bash_guard.py")
+        .unwrap();
     assert_eq!(bg.hook_type, "PostToolUse");
 
-    let bs = hooks.iter().find(|h| h.filename == "_sahjhan_bootstrap.py").unwrap();
+    let bs = hooks
+        .iter()
+        .find(|h| h.filename == "_sahjhan_bootstrap.py")
+        .unwrap();
     assert_eq!(bs.hook_type, "PreToolUse");
 }
 
@@ -162,12 +171,18 @@ fn write_guard_blocks_write_and_edit() {
     let config = make_config(vec!["output"]);
     let hooks = gen.generate(&config, "cc", None).unwrap();
 
-    let wg = hooks.iter().find(|h| h.filename == "write_guard.py").unwrap();
+    let wg = hooks
+        .iter()
+        .find(|h| h.filename == "write_guard.py")
+        .unwrap();
     // Should check for Write and Edit tool names
     assert!(wg.content.contains("\"Write\""));
     assert!(wg.content.contains("\"Edit\""));
     // Should have block decision logic
-    assert!(wg.content.contains("\"decision\": \"block\"") || wg.content.contains("\"decision\": \"block\""));
+    assert!(
+        wg.content.contains("\"decision\": \"block\"")
+            || wg.content.contains("\"decision\": \"block\"")
+    );
     assert!(wg.content.contains("WRITE BLOCKED"));
 }
 
@@ -177,7 +192,10 @@ fn bash_guard_runs_manifest_verify() {
     let config = make_config(vec!["output"]);
     let hooks = gen.generate(&config, "cc", None).unwrap();
 
-    let bg = hooks.iter().find(|h| h.filename == "bash_guard.py").unwrap();
+    let bg = hooks
+        .iter()
+        .find(|h| h.filename == "bash_guard.py")
+        .unwrap();
     assert!(bg.content.contains("manifest"));
     assert!(bg.content.contains("verify"));
     assert!(bg.content.contains("UNAUTHORIZED MODIFICATION DETECTED"));

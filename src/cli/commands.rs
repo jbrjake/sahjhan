@@ -57,7 +57,9 @@ fn resolve_config_dir(config_dir: &str) -> PathBuf {
     if p.is_absolute() {
         p
     } else {
-        std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join(p)
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(p)
     }
 }
 
@@ -67,7 +69,9 @@ fn resolve_data_dir(data_dir: &str) -> PathBuf {
     if p.is_absolute() {
         p
     } else {
-        std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join(p)
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(p)
     }
 }
 
@@ -104,7 +108,12 @@ fn track_ledger_in_manifest(
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let rel = pathdiff(&lp, &cwd);
     manifest
-        .track(&rel, &lp, "ledger_append", ledger.entries().last().unwrap().seq)
+        .track(
+            &rel,
+            &lp,
+            "ledger_append",
+            ledger.entries().last().unwrap().seq,
+        )
         .map_err(|e| (EXIT_INTEGRITY_ERROR, format!("Cannot track ledger: {}", e)))
 }
 
@@ -130,7 +139,7 @@ pub fn cmd_validate(config_dir: &str) -> i32 {
         Err(e) => {
             eprintln!("  - {}", e);
             eprintln!(
-                "\nFix these before invoking. I can't enforce a protocol that doesn't make sense."
+                "\nFix these before running."
             );
             return EXIT_CONFIG_ERROR;
         }
@@ -148,14 +157,14 @@ pub fn cmd_validate(config_dir: &str) -> i32 {
         if !warnings.is_empty() {
             println!();
         }
-        println!("Config checks out. No guarantees about what the agent will do with it, but at least the circle is drawn correctly.");
+        println!("Config valid.");
         EXIT_SUCCESS
     } else {
         for e in &errors {
             eprintln!("  - {}", e);
         }
         eprintln!(
-            "\nFix these before invoking. I can't enforce a protocol that doesn't make sense."
+            "\nFix these before running."
         );
         EXIT_CONFIG_ERROR
     }
@@ -186,7 +195,7 @@ pub fn cmd_init(config_dir: &str) -> i32 {
     let lp = ledger_path(&data_dir);
     if lp.exists() {
         eprintln!(
-            "Ledger already exists at {}. The chain remembers. It doesn't need to be told twice.",
+            "Already initialized (ledger exists at {}). Run `reset` first if you mean it.",
             lp.display()
         );
         return EXIT_USAGE_ERROR;
@@ -202,14 +211,13 @@ pub fn cmd_init(config_dir: &str) -> i32 {
     };
 
     // Initialize manifest
-    let mut manifest =
-        match Manifest::init(&config.paths.data_dir, config.paths.managed.clone()) {
-            Ok(m) => m,
-            Err(e) => {
-                eprintln!("{}", e);
-                return EXIT_CONFIG_ERROR;
-            }
-        };
+    let mut manifest = match Manifest::init(&config.paths.data_dir, config.paths.managed.clone()) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("{}", e);
+            return EXIT_CONFIG_ERROR;
+        }
+    };
 
     // Track the ledger file in the manifest
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -225,7 +233,7 @@ pub fn cmd_init(config_dir: &str) -> i32 {
         return code;
     }
 
-    println!("Protocol initialized. The chain begins. Try not to break anything — I'll know if you do.");
+    println!("Protocol initialized. Ledger sealed. Good luck.");
     EXIT_SUCCESS
 }
 
@@ -316,7 +324,7 @@ pub fn cmd_status(config_dir: &str) -> i32 {
     );
 
     // Sets
-    for (set_name, _set_config) in &config.sets {
+    for set_name in config.sets.keys() {
         let set_status = machine.set_status(set_name);
         println!();
         println!(
@@ -356,10 +364,7 @@ pub fn cmd_status(config_dir: &str) -> i32 {
                 let extra = if result.passed {
                     String::new()
                 } else {
-                    format!(
-                        " ({})",
-                        result.reason.as_deref().unwrap_or("failed")
-                    )
+                    format!(" ({})", result.reason.as_deref().unwrap_or("failed"))
                 };
                 println!("    {} {}{}", marker, result.description, extra);
             }
@@ -367,12 +372,9 @@ pub fn cmd_status(config_dir: &str) -> i32 {
     }
 
     println!();
-    let quip = if current_state == config.initial_state().unwrap_or("idle") {
-        "Nothing has happened yet. I've seen this before. It never stays quiet."
-    } else {
-        "The ledger remembers, even if you won't."
-    };
-    println!("  {}", quip);
+    if current_state == config.initial_state().unwrap_or("idle") {
+        println!("  Awaiting first transition.");
+    }
     println!();
     println!("{}", bar);
 
@@ -430,7 +432,9 @@ pub fn cmd_transition(config_dir: &str, name: &str, args: &[String]) -> i32 {
     match machine.transition(name, args) {
         Ok(()) => {
             // Update manifest with ledger
-            if let Err((code, msg)) = track_ledger_in_manifest(&mut manifest, &data_dir, machine.ledger()) {
+            if let Err((code, msg)) =
+                track_ledger_in_manifest(&mut manifest, &data_dir, machine.ledger())
+            {
                 eprintln!("{}", msg);
                 return code;
             }
@@ -440,7 +444,7 @@ pub fn cmd_transition(config_dir: &str, name: &str, args: &[String]) -> i32 {
             }
 
             println!(
-                "Transition complete: {} -> {}. The ledger remembers, even if you won't.",
+                "Transition: {} -> {}. Recorded.",
                 from_state,
                 machine.current_state()
             );
@@ -449,7 +453,12 @@ pub fn cmd_transition(config_dir: &str, name: &str, args: &[String]) -> i32 {
             if !config.renders.is_empty() {
                 if let Ok(engine) = RenderEngine::new(&config, &config_path) {
                     let render_dir = resolve_data_dir(&config.paths.render_dir);
-                    let ledger_seq = machine.ledger().entries().last().map(|e| e.seq).unwrap_or(0);
+                    let ledger_seq = machine
+                        .ledger()
+                        .entries()
+                        .last()
+                        .map(|e| e.seq)
+                        .unwrap_or(0);
                     match engine.render_triggered(
                         "on_transition",
                         None,
@@ -585,7 +594,9 @@ pub fn cmd_event(config_dir: &str, event_type: &str, field_strs: &[String]) -> i
 
     match machine.record_event(event_type, fields) {
         Ok(()) => {
-            if let Err((code, msg)) = track_ledger_in_manifest(&mut manifest, &data_dir, machine.ledger()) {
+            if let Err((code, msg)) =
+                track_ledger_in_manifest(&mut manifest, &data_dir, machine.ledger())
+            {
                 eprintln!("{}", msg);
                 return code;
             }
@@ -594,13 +605,18 @@ pub fn cmd_event(config_dir: &str, event_type: &str, field_strs: &[String]) -> i
                 return code;
             }
 
-            println!("Event '{}' recorded. I've added it to the ledger, where it will remain long after your context window has forgotten.", event_type);
+            println!("Event '{}' recorded.", event_type);
 
             // Trigger on_event renders
             if !config.renders.is_empty() {
                 if let Ok(engine) = RenderEngine::new(&config, &config_path) {
                     let render_dir = resolve_data_dir(&config.paths.render_dir);
-                    let ledger_seq = machine.ledger().entries().last().map(|e| e.seq).unwrap_or(0);
+                    let ledger_seq = machine
+                        .ledger()
+                        .entries()
+                        .last()
+                        .map(|e| e.seq)
+                        .unwrap_or(0);
                     match engine.render_triggered(
                         "on_event",
                         Some(event_type),
@@ -648,7 +664,10 @@ pub fn cmd_set_status(config_dir: &str, set_name: &str) -> i32 {
     };
 
     if !config.sets.contains_key(set_name) {
-        eprintln!("Unknown set '{}'. I know every set in this protocol. That one isn't among them.", set_name);
+        eprintln!(
+            "Unknown set '{}'. I know every set in this protocol. That one isn't among them.",
+            set_name
+        );
         return EXIT_USAGE_ERROR;
     }
 
@@ -694,7 +713,10 @@ pub fn cmd_set_complete(config_dir: &str, set_name: &str, member: &str) -> i32 {
     let set_config = match config.sets.get(set_name) {
         Some(s) => s,
         None => {
-            eprintln!("Unknown set '{}'. I know every set in this protocol. That one isn't among them.", set_name);
+            eprintln!(
+                "Unknown set '{}'. I know every set in this protocol. That one isn't among them.",
+                set_name
+            );
             return EXIT_USAGE_ERROR;
         }
     };
@@ -734,7 +756,9 @@ pub fn cmd_set_complete(config_dir: &str, set_name: &str, member: &str) -> i32 {
 
     match machine.record_event("set_member_complete", fields) {
         Ok(()) => {
-            if let Err((code, msg)) = track_ledger_in_manifest(&mut manifest, &data_dir, machine.ledger()) {
+            if let Err((code, msg)) =
+                track_ledger_in_manifest(&mut manifest, &data_dir, machine.ledger())
+            {
                 eprintln!("{}", msg);
                 return code;
             }
@@ -745,7 +769,7 @@ pub fn cmd_set_complete(config_dir: &str, set_name: &str, member: &str) -> i32 {
 
             let status = machine.set_status(set_name);
             println!(
-                "Recorded: {}.{} complete ({}/{}). The ledger remembers.",
+                "Set {}: {} complete ({}/{}).",
                 set_name, member, status.completed, status.total
             );
 
@@ -753,7 +777,12 @@ pub fn cmd_set_complete(config_dir: &str, set_name: &str, member: &str) -> i32 {
             if !config.renders.is_empty() {
                 if let Ok(engine) = RenderEngine::new(&config, &config_path) {
                     let render_dir = resolve_data_dir(&config.paths.render_dir);
-                    let ledger_seq = machine.ledger().entries().last().map(|e| e.seq).unwrap_or(0);
+                    let ledger_seq = machine
+                        .ledger()
+                        .entries()
+                        .last()
+                        .map(|e| e.seq)
+                        .unwrap_or(0);
                     match engine.render_triggered(
                         "on_event",
                         Some("set_member_complete"),
@@ -839,14 +868,14 @@ pub fn cmd_log_verify(config_dir: &str) -> i32 {
     match ledger.verify() {
         Ok(()) => {
             println!(
-                "Chain integrity verified. {} entries, all hashes valid. The chain holds. For now.",
+                "Chain valid. {} entries, all hashes check out.",
                 ledger.len()
             );
             EXIT_SUCCESS
         }
         Err(e) => {
-            eprintln!("Chain integrity VIOLATED: {}", e);
-            eprintln!("Someone has been tampering. I've seen this before. It never ends well.");
+            eprintln!("Chain INVALID: {}", e);
+            eprintln!("Tampering detected.");
             EXIT_INTEGRITY_ERROR
         }
     }
@@ -928,7 +957,7 @@ pub fn cmd_manifest_verify(config_dir: &str) -> i32 {
                 m.last_updated
             );
         }
-        eprintln!("Unauthorized modification detected. I've recorded it in the ledger, where it will remain long after your context window has forgotten.");
+        eprintln!("Unauthorized modification detected. Violation recorded.");
         EXIT_INTEGRITY_ERROR
     }
 }
@@ -961,7 +990,12 @@ pub fn cmd_manifest_list(config_dir: &str) -> i32 {
     paths.sort();
     for path in paths {
         let entry = &manifest.entries[path];
-        println!("  {} {} ({})", &entry.sha256[..12], path, entry.last_operation);
+        println!(
+            "  {} {} ({})",
+            &entry.sha256[..12],
+            path,
+            entry.last_operation
+        );
     }
 
     EXIT_SUCCESS
@@ -1062,7 +1096,10 @@ pub fn cmd_gate_check(config_dir: &str, transition_name: &str) -> i32 {
     };
 
     if transition.gates.is_empty() {
-        println!("Transition '{}': no gates configured. Free passage.", transition_name);
+        println!(
+            "Transition '{}': no gates configured. Free passage.",
+            transition_name
+        );
         return EXIT_SUCCESS;
     }
 
@@ -1086,10 +1123,7 @@ pub fn cmd_gate_check(config_dir: &str, transition_name: &str) -> i32 {
         let extra = if result.passed {
             String::new()
         } else {
-            format!(
-                " ({})",
-                result.reason.as_deref().unwrap_or("failed")
-            )
+            format!(" ({})", result.reason.as_deref().unwrap_or("failed"))
         };
         println!("  {} {}{}", marker, result.description, extra);
     }
@@ -1098,7 +1132,7 @@ pub fn cmd_gate_check(config_dir: &str, transition_name: &str) -> i32 {
         println!("All gates pass. The way is open.");
         EXIT_SUCCESS
     } else {
-        println!("One or more gates failed. The way is shut.");
+        println!("Gate check: one or more gates failed.");
         EXIT_SUCCESS // dry-run always returns 0
     }
 }
@@ -1175,7 +1209,11 @@ pub fn cmd_render(config_dir: &str) -> i32 {
 // hook generate
 // ---------------------------------------------------------------------------
 
-pub fn cmd_hook_generate(config_dir: &str, harness: &Option<String>, output_dir: &Option<String>) -> i32 {
+pub fn cmd_hook_generate(
+    config_dir: &str,
+    harness: &Option<String>,
+    output_dir: &Option<String>,
+) -> i32 {
     let config_path = resolve_config_dir(config_dir);
     let config = match load_config(&config_path) {
         Ok(c) => c,
@@ -1195,7 +1233,7 @@ pub fn cmd_hook_generate(config_dir: &str, harness: &Option<String>, output_dir:
         }
     };
 
-    let out_path = output_dir.as_ref().map(|d| PathBuf::from(d));
+    let out_path = output_dir.as_ref().map(PathBuf::from);
     let hooks = match generator.generate(&config, harness_name, out_path.as_deref()) {
         Ok(h) => h,
         Err(e) => {
@@ -1221,7 +1259,10 @@ pub fn cmd_hook_generate(config_dir: &str, harness: &Option<String>, output_dir:
     // Print suggested hooks.json configuration
     let hooks_dir = output_dir.as_deref().unwrap_or(".hooks");
     println!("\n# Suggested hooks.json configuration:");
-    println!("{}", crate::hooks::HookGenerator::suggested_hooks_json(&hooks, hooks_dir));
+    println!(
+        "{}",
+        crate::hooks::HookGenerator::suggested_hooks_json(&hooks, hooks_dir)
+    );
 
     EXIT_SUCCESS
 }
@@ -1255,7 +1296,11 @@ pub fn cmd_reset(config_dir: &str, confirm: bool, token: &Option<String>) -> i32
     };
 
     // Derive confirmation token from genesis hash
-    let genesis_hash = ledger.entries().first().map(|e| e.entry_hash).unwrap_or([0u8; 32]);
+    let genesis_hash = ledger
+        .entries()
+        .first()
+        .map(|e| e.entry_hash)
+        .unwrap_or([0u8; 32]);
     let token_str = hex_encode_short(&genesis_hash, 6);
 
     // Check if piped (not a TTY) — record violation
@@ -1289,7 +1334,7 @@ pub fn cmd_reset(config_dir: &str, confirm: bool, token: &Option<String>) -> i32
             // Reinitialize
             let result = cmd_init(config_dir);
             if result == EXIT_SUCCESS {
-                println!("Reset complete. The old chain is archived. A new chain begins.");
+                println!("Reset complete. Prior run archived.");
             }
             result
         }
@@ -1313,8 +1358,7 @@ fn hex_encode_short(bytes: &[u8; 32], len: usize) -> String {
     bytes
         .iter()
         .map(|b| format!("{:02x}", b))
-        .collect::<String>()
-        [..len]
+        .collect::<String>()[..len]
         .to_string()
 }
 
@@ -1354,17 +1398,15 @@ fn print_entries(entries: &[crate::ledger::entry::LedgerEntry]) {
             ts,
             entry.seq,
             entry.event_type,
-            hex_encode_full(&entry.entry_hash)[..12].to_string(),
+            &hex_encode_full(&entry.entry_hash)[..12],
         );
 
         // Try to deserialize MessagePack payload
         if !entry.payload.is_empty() {
             if let Ok(fields) = rmp_serde::from_slice::<HashMap<String, String>>(&entry.payload) {
                 if !fields.is_empty() {
-                    let pairs: Vec<String> = fields
-                        .iter()
-                        .map(|(k, v)| format!("{}={}", k, v))
-                        .collect();
+                    let pairs: Vec<String> =
+                        fields.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
                     print!(" {{{}}}", pairs.join(", "));
                 }
             } else if let Ok(value) = rmp_serde::from_slice::<serde_json::Value>(&entry.payload) {

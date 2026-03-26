@@ -149,8 +149,7 @@ impl LedgerEntry {
 
         // event_type (et_len bytes)
         let et_bytes = cur.read_bytes(et_len)?.to_vec();
-        let event_type =
-            String::from_utf8(et_bytes).map_err(|_| LedgerError::InvalidUtf8)?;
+        let event_type = String::from_utf8(et_bytes).map_err(|_| LedgerError::InvalidUtf8)?;
 
         // payload_len (4 bytes LE)
         let pl_len = u32::from_le_bytes(cur.read_bytes(4)?.try_into().unwrap()) as usize;
@@ -227,8 +226,7 @@ impl LedgerEntry {
 
         // event_type (et_len bytes)
         let et_bytes = cur.read_bytes(et_len)?.to_vec();
-        let event_type =
-            String::from_utf8(et_bytes).map_err(|_| LedgerError::InvalidUtf8)?;
+        let event_type = String::from_utf8(et_bytes).map_err(|_| LedgerError::InvalidUtf8)?;
 
         // payload_len (4 bytes LE)
         let pl_len = u32::from_le_bytes(cur.read_bytes(4)?.try_into().unwrap()) as usize;

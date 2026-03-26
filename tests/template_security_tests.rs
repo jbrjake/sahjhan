@@ -84,7 +84,10 @@ fn test_shell_metacharacters_escaped() {
     );
     // The injected value should be wrapped in single quotes, neutralizing the
     // attempt to break out of the argument.
-    assert!(result.contains("'\\''"), "single-quote escape should be present");
+    assert!(
+        result.contains("'\\''"),
+        "single-quote escape should be present"
+    );
     let expected_value = shell_escape("'; rm -rf /; echo '");
     assert!(result.contains(&expected_value));
 }
@@ -122,9 +125,7 @@ fn test_resolve_unknown_placeholder_unchanged() {
 
 #[test]
 fn test_resolve_empty_value() {
-    let vars = [("key".to_string(), "".to_string())]
-        .into_iter()
-        .collect();
+    let vars = [("key".to_string(), "".to_string())].into_iter().collect();
     let result = resolve_template("cmd {{key}}", &vars);
     assert_eq!(result, "cmd ''");
 }
@@ -135,12 +136,12 @@ fn test_resolve_empty_value() {
 
 #[test]
 fn test_command_gate_with_injection_attempt() {
-    use sahjhan::gates::evaluator::{evaluate_gate, GateContext};
     use sahjhan::config::{GateConfig, ProtocolConfig};
+    use sahjhan::gates::evaluator::{evaluate_gate, GateContext};
     use sahjhan::ledger::chain::Ledger;
-    use tempfile::tempdir;
     use std::collections::HashMap;
     use std::path::Path;
+    use tempfile::tempdir;
 
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
@@ -159,9 +160,12 @@ fn test_command_gate_with_injection_attempt() {
 
     let gate = GateConfig {
         gate_type: "command_succeeds".to_string(),
-        params: [("cmd".to_string(), toml::Value::String("echo {{id}}".to_string()))]
-            .into_iter()
-            .collect(),
+        params: [(
+            "cmd".to_string(),
+            toml::Value::String("echo {{id}}".to_string()),
+        )]
+        .into_iter()
+        .collect(),
     };
 
     let ctx = GateContext {
@@ -183,12 +187,12 @@ fn test_command_gate_with_injection_attempt() {
 
 #[test]
 fn test_injection_via_semicolon() {
-    use sahjhan::gates::evaluator::{evaluate_gate, GateContext};
     use sahjhan::config::{GateConfig, ProtocolConfig};
+    use sahjhan::gates::evaluator::{evaluate_gate, GateContext};
     use sahjhan::ledger::chain::Ledger;
-    use tempfile::tempdir;
     use std::collections::HashMap;
     use std::path::Path;
+    use tempfile::tempdir;
 
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
@@ -198,16 +202,16 @@ fn test_injection_via_semicolon() {
     let marker = dir.path().join("injected");
 
     let mut state_params = HashMap::new();
-    state_params.insert(
-        "val".to_string(),
-        format!("x; touch {}", marker.display()),
-    );
+    state_params.insert("val".to_string(), format!("x; touch {}", marker.display()));
 
     let gate = GateConfig {
         gate_type: "command_succeeds".to_string(),
-        params: [("cmd".to_string(), toml::Value::String("echo {{val}}".to_string()))]
-            .into_iter()
-            .collect(),
+        params: [(
+            "cmd".to_string(),
+            toml::Value::String("echo {{val}}".to_string()),
+        )]
+        .into_iter()
+        .collect(),
     };
 
     let ctx = GateContext {
@@ -228,12 +232,12 @@ fn test_injection_via_semicolon() {
 
 #[test]
 fn test_injection_via_backtick() {
-    use sahjhan::gates::evaluator::{evaluate_gate, GateContext};
     use sahjhan::config::{GateConfig, ProtocolConfig};
+    use sahjhan::gates::evaluator::{evaluate_gate, GateContext};
     use sahjhan::ledger::chain::Ledger;
-    use tempfile::tempdir;
     use std::collections::HashMap;
     use std::path::Path;
+    use tempfile::tempdir;
 
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
@@ -243,16 +247,16 @@ fn test_injection_via_backtick() {
     let marker = dir.path().join("backtick_injected");
 
     let mut state_params = HashMap::new();
-    state_params.insert(
-        "val".to_string(),
-        format!("`touch {}`", marker.display()),
-    );
+    state_params.insert("val".to_string(), format!("`touch {}`", marker.display()));
 
     let gate = GateConfig {
         gate_type: "command_succeeds".to_string(),
-        params: [("cmd".to_string(), toml::Value::String("echo {{val}}".to_string()))]
-            .into_iter()
-            .collect(),
+        params: [(
+            "cmd".to_string(),
+            toml::Value::String("echo {{val}}".to_string()),
+        )]
+        .into_iter()
+        .collect(),
     };
 
     let ctx = GateContext {
@@ -273,12 +277,12 @@ fn test_injection_via_backtick() {
 
 #[test]
 fn test_injection_via_dollar_parens() {
-    use sahjhan::gates::evaluator::{evaluate_gate, GateContext};
     use sahjhan::config::{GateConfig, ProtocolConfig};
+    use sahjhan::gates::evaluator::{evaluate_gate, GateContext};
     use sahjhan::ledger::chain::Ledger;
-    use tempfile::tempdir;
     use std::collections::HashMap;
     use std::path::Path;
+    use tempfile::tempdir;
 
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
@@ -288,16 +292,16 @@ fn test_injection_via_dollar_parens() {
     let marker = dir.path().join("dollar_injected");
 
     let mut state_params = HashMap::new();
-    state_params.insert(
-        "val".to_string(),
-        format!("$(touch {})", marker.display()),
-    );
+    state_params.insert("val".to_string(), format!("$(touch {})", marker.display()));
 
     let gate = GateConfig {
         gate_type: "command_succeeds".to_string(),
-        params: [("cmd".to_string(), toml::Value::String("echo {{val}}".to_string()))]
-            .into_iter()
-            .collect(),
+        params: [(
+            "cmd".to_string(),
+            toml::Value::String("echo {{val}}".to_string()),
+        )]
+        .into_iter()
+        .collect(),
     };
 
     let ctx = GateContext {

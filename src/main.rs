@@ -215,17 +215,15 @@ fn main() {
                 commands::cmd_gate_check(&cli.config_dir, &transition)
             }
         },
-        Commands::Event {
-            event_type,
-            fields,
-        } => commands::cmd_event(&cli.config_dir, &event_type, &fields),
-        Commands::Reset { confirm, token } => {
-            commands::cmd_reset(&cli.config_dir, confirm, &token)
+        Commands::Event { event_type, fields } => {
+            commands::cmd_event(&cli.config_dir, &event_type, &fields)
         }
+        Commands::Reset { confirm, token } => commands::cmd_reset(&cli.config_dir, confirm, &token),
         Commands::Hook { action } => match action {
-            HookAction::Generate { harness, output_dir } => {
-                commands::cmd_hook_generate(&cli.config_dir, &harness, &output_dir)
-            }
+            HookAction::Generate {
+                harness,
+                output_dir,
+            } => commands::cmd_hook_generate(&cli.config_dir, &harness, &output_dir),
         },
     };
 

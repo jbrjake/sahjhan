@@ -18,11 +18,7 @@ fn setup_initialized_dir() -> tempfile::TempDir {
         "events.toml",
         "renders.toml",
     ] {
-        std::fs::copy(
-            format!("examples/minimal/{}", file),
-            config_dir.join(file),
-        )
-        .unwrap();
+        std::fs::copy(format!("examples/minimal/{}", file), config_dir.join(file)).unwrap();
     }
     // Copy templates directory
     let templates_dir = config_dir.join("templates");
@@ -526,9 +522,12 @@ fn test_hook_generate_with_output_dir() {
     Command::cargo_bin("sahjhan")
         .unwrap()
         .args([
-            "--config-dir", "enforcement",
-            "hook", "generate",
-            "--output-dir", hooks_dir.to_str().unwrap(),
+            "--config-dir",
+            "enforcement",
+            "hook",
+            "generate",
+            "--output-dir",
+            hooks_dir.to_str().unwrap(),
         ])
         .current_dir(dir.path())
         .assert()
@@ -672,11 +671,7 @@ fn setup_config_only_dir() -> tempfile::TempDir {
         "events.toml",
         "renders.toml",
     ] {
-        std::fs::copy(
-            format!("examples/minimal/{}", file),
-            config_dir.join(file),
-        )
-        .unwrap();
+        std::fs::copy(format!("examples/minimal/{}", file), config_dir.join(file)).unwrap();
     }
     // Copy templates directory
     let templates_dir = config_dir.join("templates");
@@ -700,7 +695,7 @@ fn test_validate_clean_config() {
         .current_dir(dir.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("Config checks out"));
+        .stdout(predicate::str::contains("Config valid"));
 }
 
 #[test]
@@ -729,7 +724,9 @@ gates = [
         .current_dir(dir.path())
         .assert()
         .code(3)
-        .stderr(predicate::str::contains("unknown gate type 'nonexistent_gate'"));
+        .stderr(predicate::str::contains(
+            "unknown gate type 'nonexistent_gate'",
+        ));
 }
 
 #[test]
@@ -758,7 +755,9 @@ gates = [
         .current_dir(dir.path())
         .assert()
         .code(3)
-        .stderr(predicate::str::contains("missing required parameter 'path'"));
+        .stderr(predicate::str::contains(
+            "missing required parameter 'path'",
+        ));
 }
 
 #[test]
@@ -784,7 +783,9 @@ trigger = "on_transition"
         .current_dir(dir.path())
         .assert()
         .code(3)
-        .stderr(predicate::str::contains("template 'templates/nonexistent.tera' does not exist"));
+        .stderr(predicate::str::contains(
+            "template 'templates/nonexistent.tera' does not exist",
+        ));
 }
 
 #[test]
@@ -823,7 +824,9 @@ values = ["tests", "lint"]
         .current_dir(dir.path())
         .assert()
         .code(3)
-        .stderr(predicate::str::contains("alias 'bogus' targets transition 'does_not_exist' which is not defined"));
+        .stderr(predicate::str::contains(
+            "alias 'bogus' targets transition 'does_not_exist' which is not defined",
+        ));
 }
 
 #[test]
@@ -855,7 +858,9 @@ event_types = ["totally_fake_event"]
         .current_dir(dir.path())
         .assert()
         .code(3)
-        .stderr(predicate::str::contains("undefined event type 'totally_fake_event'"));
+        .stderr(predicate::str::contains(
+            "undefined event type 'totally_fake_event'",
+        ));
 }
 
 #[test]
@@ -896,7 +901,9 @@ gates = []
         .current_dir(dir.path())
         .assert()
         .success() // warnings don't cause failure
-        .stderr(predicate::str::contains("terminal state 'done' has outgoing transition"));
+        .stderr(predicate::str::contains(
+            "terminal state 'done' has outgoing transition",
+        ));
 }
 
 #[test]

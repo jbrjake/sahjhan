@@ -1,9 +1,9 @@
 // src/lib.rs
-pub mod ledger;
-pub mod state;
-pub mod gates;
-pub mod manifest;
-pub mod config;
-pub mod render;
 pub mod cli;
+pub mod config;
+pub mod gates;
 pub mod hooks;
+pub mod ledger;
+pub mod manifest;
+pub mod render;
+pub mod state;

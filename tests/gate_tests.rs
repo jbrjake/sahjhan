@@ -4,12 +4,12 @@
 // plus additional tests for timeout enforcement, snapshot resolution,
 // violation resolution, and field validation.
 
-use sahjhan::gates::evaluator::{evaluate_gate, evaluate_gates, GateContext};
 use sahjhan::config::{GateConfig, ProtocolConfig};
+use sahjhan::gates::evaluator::{evaluate_gate, evaluate_gates, GateContext};
 use sahjhan::ledger::chain::Ledger;
-use tempfile::tempdir;
 use std::collections::HashMap;
 use std::path::Path;
+use tempfile::tempdir;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -18,7 +18,10 @@ use std::path::Path;
 fn make_gate(gate_type: &str, params: Vec<(&str, toml::Value)>) -> GateConfig {
     GateConfig {
         gate_type: gate_type.to_string(),
-        params: params.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+        params: params
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect(),
     }
 }
 
@@ -36,9 +39,13 @@ fn test_file_exists_pass() {
     let test_file = dir.path().join("existing.txt");
     std::fs::write(&test_file, "content").unwrap();
 
-    let gate = make_gate("file_exists", vec![
-        ("path", toml::Value::String(test_file.to_str().unwrap().to_string())),
-    ]);
+    let gate = make_gate(
+        "file_exists",
+        vec![(
+            "path",
+            toml::Value::String(test_file.to_str().unwrap().to_string()),
+        )],
+    );
     let ctx = GateContext {
         ledger: &ledger,
         config: &config,
@@ -48,7 +55,11 @@ fn test_file_exists_pass() {
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
-    assert!(result.passed, "expected pass but reason: {:?}", result.reason);
+    assert!(
+        result.passed,
+        "expected pass but reason: {:?}",
+        result.reason
+    );
 }
 
 #[test]
@@ -58,9 +69,13 @@ fn test_file_exists_fail() {
     let ledger_path = dir.path().join("ledger.bin");
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
-    let gate = make_gate("file_exists", vec![
-        ("path", toml::Value::String("/nonexistent/path/xyz123".to_string())),
-    ]);
+    let gate = make_gate(
+        "file_exists",
+        vec![(
+            "path",
+            toml::Value::String("/nonexistent/path/xyz123".to_string()),
+        )],
+    );
     let ctx = GateContext {
         ledger: &ledger,
         config: &config,
@@ -87,12 +102,16 @@ fn test_files_exist_pass() {
     std::fs::write(dir.path().join("a.txt"), "").unwrap();
     std::fs::write(dir.path().join("b.txt"), "").unwrap();
 
-    let gate = make_gate("files_exist", vec![
-        ("paths", toml::Value::Array(vec![
-            toml::Value::String(dir.path().join("a.txt").to_str().unwrap().to_string()),
-            toml::Value::String(dir.path().join("b.txt").to_str().unwrap().to_string()),
-        ])),
-    ]);
+    let gate = make_gate(
+        "files_exist",
+        vec![(
+            "paths",
+            toml::Value::Array(vec![
+                toml::Value::String(dir.path().join("a.txt").to_str().unwrap().to_string()),
+                toml::Value::String(dir.path().join("b.txt").to_str().unwrap().to_string()),
+            ]),
+        )],
+    );
     let ctx = GateContext {
         ledger: &ledger,
         config: &config,
@@ -114,12 +133,16 @@ fn test_files_exist_fail_missing_one() {
     std::fs::write(dir.path().join("a.txt"), "").unwrap();
     // b.txt intentionally missing
 
-    let gate = make_gate("files_exist", vec![
-        ("paths", toml::Value::Array(vec![
-            toml::Value::String(dir.path().join("a.txt").to_str().unwrap().to_string()),
-            toml::Value::String(dir.path().join("b.txt").to_str().unwrap().to_string()),
-        ])),
-    ]);
+    let gate = make_gate(
+        "files_exist",
+        vec![(
+            "paths",
+            toml::Value::Array(vec![
+                toml::Value::String(dir.path().join("a.txt").to_str().unwrap().to_string()),
+                toml::Value::String(dir.path().join("b.txt").to_str().unwrap().to_string()),
+            ]),
+        )],
+    );
     let ctx = GateContext {
         ledger: &ledger,
         config: &config,
@@ -142,9 +165,10 @@ fn test_command_succeeds_pass() {
     let ledger_path = dir.path().join("ledger.bin");
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
-    let gate = make_gate("command_succeeds", vec![
-        ("cmd", toml::Value::String("true".to_string())),
-    ]);
+    let gate = make_gate(
+        "command_succeeds",
+        vec![("cmd", toml::Value::String("true".to_string()))],
+    );
     let ctx = GateContext {
         ledger: &ledger,
         config: &config,
@@ -163,9 +187,10 @@ fn test_command_succeeds_fail() {
     let ledger_path = dir.path().join("ledger.bin");
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
-    let gate = make_gate("command_succeeds", vec![
-        ("cmd", toml::Value::String("false".to_string())),
-    ]);
+    let gate = make_gate(
+        "command_succeeds",
+        vec![("cmd", toml::Value::String("false".to_string()))],
+    );
     let ctx = GateContext {
         ledger: &ledger,
         config: &config,
@@ -189,10 +214,13 @@ fn test_command_succeeds_timeout() {
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     // Command that sleeps for 30 seconds, but timeout is 1 second.
-    let gate = make_gate("command_succeeds", vec![
-        ("cmd", toml::Value::String("sleep 30".to_string())),
-        ("timeout", toml::Value::Integer(1)),
-    ]);
+    let gate = make_gate(
+        "command_succeeds",
+        vec![
+            ("cmd", toml::Value::String("sleep 30".to_string())),
+            ("timeout", toml::Value::Integer(1)),
+        ],
+    );
     let ctx = GateContext {
         ledger: &ledger,
         config: &config,
@@ -231,10 +259,13 @@ fn test_command_output_match() {
     let ledger_path = dir.path().join("ledger.bin");
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
-    let gate = make_gate("command_output", vec![
-        ("cmd", toml::Value::String("echo hello".to_string())),
-        ("expect", toml::Value::String("hello".to_string())),
-    ]);
+    let gate = make_gate(
+        "command_output",
+        vec![
+            ("cmd", toml::Value::String("echo hello".to_string())),
+            ("expect", toml::Value::String("hello".to_string())),
+        ],
+    );
     let ctx = GateContext {
         ledger: &ledger,
         config: &config,
@@ -253,10 +284,13 @@ fn test_command_output_mismatch() {
     let ledger_path = dir.path().join("ledger.bin");
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
-    let gate = make_gate("command_output", vec![
-        ("cmd", toml::Value::String("echo hello".to_string())),
-        ("expect", toml::Value::String("world".to_string())),
-    ]);
+    let gate = make_gate(
+        "command_output",
+        vec![
+            ("cmd", toml::Value::String("echo hello".to_string())),
+            ("expect", toml::Value::String("world".to_string())),
+        ],
+    );
     let ctx = GateContext {
         ledger: &ledger,
         config: &config,
@@ -279,11 +313,17 @@ fn test_command_output_timeout() {
     let ledger_path = dir.path().join("ledger.bin");
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
-    let gate = make_gate("command_output", vec![
-        ("cmd", toml::Value::String("sleep 30 && echo done".to_string())),
-        ("expect", toml::Value::String("done".to_string())),
-        ("timeout", toml::Value::Integer(1)),
-    ]);
+    let gate = make_gate(
+        "command_output",
+        vec![
+            (
+                "cmd",
+                toml::Value::String("sleep 30 && echo done".to_string()),
+            ),
+            ("expect", toml::Value::String("done".to_string())),
+            ("timeout", toml::Value::Integer(1)),
+        ],
+    );
     let ctx = GateContext {
         ledger: &ledger,
         config: &config,
@@ -320,13 +360,26 @@ fn test_ledger_has_event_pass() {
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     let ledger_path = dir.path().join("ledger.bin");
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
-    ledger.append("my_event", rmp_serde::to_vec(&HashMap::<String,String>::new()).unwrap()).unwrap();
-    ledger.append("my_event", rmp_serde::to_vec(&HashMap::<String,String>::new()).unwrap()).unwrap();
+    ledger
+        .append(
+            "my_event",
+            rmp_serde::to_vec(&HashMap::<String, String>::new()).unwrap(),
+        )
+        .unwrap();
+    ledger
+        .append(
+            "my_event",
+            rmp_serde::to_vec(&HashMap::<String, String>::new()).unwrap(),
+        )
+        .unwrap();
 
-    let gate = make_gate("ledger_has_event", vec![
-        ("event", toml::Value::String("my_event".to_string())),
-        ("min_count", toml::Value::Integer(2)),
-    ]);
+    let gate = make_gate(
+        "ledger_has_event",
+        vec![
+            ("event", toml::Value::String("my_event".to_string())),
+            ("min_count", toml::Value::Integer(2)),
+        ],
+    );
     let ctx = GateContext {
         ledger: &ledger,
         config: &config,
@@ -344,12 +397,20 @@ fn test_ledger_has_event_fail_count() {
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     let ledger_path = dir.path().join("ledger.bin");
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
-    ledger.append("my_event", rmp_serde::to_vec(&HashMap::<String,String>::new()).unwrap()).unwrap();
+    ledger
+        .append(
+            "my_event",
+            rmp_serde::to_vec(&HashMap::<String, String>::new()).unwrap(),
+        )
+        .unwrap();
 
-    let gate = make_gate("ledger_has_event", vec![
-        ("event", toml::Value::String("my_event".to_string())),
-        ("min_count", toml::Value::Integer(2)),
-    ]);
+    let gate = make_gate(
+        "ledger_has_event",
+        vec![
+            ("event", toml::Value::String("my_event".to_string())),
+            ("min_count", toml::Value::Integer(2)),
+        ],
+    );
     let ctx = GateContext {
         ledger: &ledger,
         config: &config,
@@ -370,16 +431,21 @@ fn test_ledger_has_event_with_filter_pass() {
 
     let mut payload = HashMap::new();
     payload.insert("status".to_string(), "ok".to_string());
-    ledger.append("my_event", rmp_serde::to_vec(&payload).unwrap()).unwrap();
+    ledger
+        .append("my_event", rmp_serde::to_vec(&payload).unwrap())
+        .unwrap();
 
     let mut filter = toml::value::Table::new();
     filter.insert("status".to_string(), toml::Value::String("ok".to_string()));
 
-    let gate = make_gate("ledger_has_event", vec![
-        ("event", toml::Value::String("my_event".to_string())),
-        ("min_count", toml::Value::Integer(1)),
-        ("filter", toml::Value::Table(filter)),
-    ]);
+    let gate = make_gate(
+        "ledger_has_event",
+        vec![
+            ("event", toml::Value::String("my_event".to_string())),
+            ("min_count", toml::Value::Integer(1)),
+            ("filter", toml::Value::Table(filter)),
+        ],
+    );
     let ctx = GateContext {
         ledger: &ledger,
         config: &config,
@@ -400,16 +466,21 @@ fn test_ledger_has_event_with_filter_fail() {
 
     let mut payload = HashMap::new();
     payload.insert("status".to_string(), "error".to_string());
-    ledger.append("my_event", rmp_serde::to_vec(&payload).unwrap()).unwrap();
+    ledger
+        .append("my_event", rmp_serde::to_vec(&payload).unwrap())
+        .unwrap();
 
     let mut filter = toml::value::Table::new();
     filter.insert("status".to_string(), toml::Value::String("ok".to_string()));
 
-    let gate = make_gate("ledger_has_event", vec![
-        ("event", toml::Value::String("my_event".to_string())),
-        ("min_count", toml::Value::Integer(1)),
-        ("filter", toml::Value::Table(filter)),
-    ]);
+    let gate = make_gate(
+        "ledger_has_event",
+        vec![
+            ("event", toml::Value::String("my_event".to_string())),
+            ("min_count", toml::Value::Integer(1)),
+            ("filter", toml::Value::Table(filter)),
+        ],
+    );
     let ctx = GateContext {
         ledger: &ledger,
         config: &config,
@@ -437,13 +508,26 @@ fn test_ledger_has_event_since_pass() {
     trans_fields.insert("from".to_string(), "idle".to_string());
     trans_fields.insert("to".to_string(), "working".to_string());
     trans_fields.insert("command".to_string(), "begin".to_string());
-    ledger.append("state_transition", rmp_serde::to_vec(&trans_fields).unwrap()).unwrap();
-    ledger.append("check_done", rmp_serde::to_vec(&HashMap::<String,String>::new()).unwrap()).unwrap();
+    ledger
+        .append(
+            "state_transition",
+            rmp_serde::to_vec(&trans_fields).unwrap(),
+        )
+        .unwrap();
+    ledger
+        .append(
+            "check_done",
+            rmp_serde::to_vec(&HashMap::<String, String>::new()).unwrap(),
+        )
+        .unwrap();
 
-    let gate = make_gate("ledger_has_event_since", vec![
-        ("event", toml::Value::String("check_done".to_string())),
-        ("since", toml::Value::String("last_transition".to_string())),
-    ]);
+    let gate = make_gate(
+        "ledger_has_event_since",
+        vec![
+            ("event", toml::Value::String("check_done".to_string())),
+            ("since", toml::Value::String("last_transition".to_string())),
+        ],
+    );
     let ctx = GateContext {
         ledger: &ledger,
         config: &config,
@@ -463,18 +547,31 @@ fn test_ledger_has_event_since_fail() {
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     // Record the event BEFORE the transition — should not count.
-    ledger.append("check_done", rmp_serde::to_vec(&HashMap::<String,String>::new()).unwrap()).unwrap();
+    ledger
+        .append(
+            "check_done",
+            rmp_serde::to_vec(&HashMap::<String, String>::new()).unwrap(),
+        )
+        .unwrap();
 
     let mut trans_fields = HashMap::new();
     trans_fields.insert("from".to_string(), "idle".to_string());
     trans_fields.insert("to".to_string(), "working".to_string());
     trans_fields.insert("command".to_string(), "begin".to_string());
-    ledger.append("state_transition", rmp_serde::to_vec(&trans_fields).unwrap()).unwrap();
+    ledger
+        .append(
+            "state_transition",
+            rmp_serde::to_vec(&trans_fields).unwrap(),
+        )
+        .unwrap();
 
-    let gate = make_gate("ledger_has_event_since", vec![
-        ("event", toml::Value::String("check_done".to_string())),
-        ("since", toml::Value::String("last_transition".to_string())),
-    ]);
+    let gate = make_gate(
+        "ledger_has_event_since",
+        vec![
+            ("event", toml::Value::String("check_done".to_string())),
+            ("since", toml::Value::String("last_transition".to_string())),
+        ],
+    );
     let ctx = GateContext {
         ledger: &ledger,
         config: &config,
@@ -501,12 +598,15 @@ fn test_set_covered_pass() {
         let mut fields = HashMap::new();
         fields.insert("set".to_string(), "check".to_string());
         fields.insert("member".to_string(), member.to_string());
-        ledger.append("set_member_complete", rmp_serde::to_vec(&fields).unwrap()).unwrap();
+        ledger
+            .append("set_member_complete", rmp_serde::to_vec(&fields).unwrap())
+            .unwrap();
     }
 
-    let gate = make_gate("set_covered", vec![
-        ("set", toml::Value::String("check".to_string())),
-    ]);
+    let gate = make_gate(
+        "set_covered",
+        vec![("set", toml::Value::String("check".to_string()))],
+    );
     let ctx = GateContext {
         ledger: &ledger,
         config: &config,
@@ -529,11 +629,14 @@ fn test_set_covered_fail_partial() {
     let mut fields = HashMap::new();
     fields.insert("set".to_string(), "check".to_string());
     fields.insert("member".to_string(), "tests".to_string());
-    ledger.append("set_member_complete", rmp_serde::to_vec(&fields).unwrap()).unwrap();
+    ledger
+        .append("set_member_complete", rmp_serde::to_vec(&fields).unwrap())
+        .unwrap();
 
-    let gate = make_gate("set_covered", vec![
-        ("set", toml::Value::String("check".to_string())),
-    ]);
+    let gate = make_gate(
+        "set_covered",
+        vec![("set", toml::Value::String("check".to_string()))],
+    );
     let ctx = GateContext {
         ledger: &ledger,
         config: &config,
@@ -559,10 +662,13 @@ fn test_min_elapsed_pass_no_event() {
     let ledger_path = dir.path().join("ledger.bin");
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
-    let gate = make_gate("min_elapsed", vec![
-        ("event", toml::Value::String("my_event".to_string())),
-        ("seconds", toml::Value::Integer(3600)),
-    ]);
+    let gate = make_gate(
+        "min_elapsed",
+        vec![
+            ("event", toml::Value::String("my_event".to_string())),
+            ("seconds", toml::Value::Integer(3600)),
+        ],
+    );
     let ctx = GateContext {
         ledger: &ledger,
         config: &config,
@@ -581,12 +687,20 @@ fn test_min_elapsed_fail_just_happened() {
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     let ledger_path = dir.path().join("ledger.bin");
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
-    ledger.append("my_event", rmp_serde::to_vec(&HashMap::<String,String>::new()).unwrap()).unwrap();
+    ledger
+        .append(
+            "my_event",
+            rmp_serde::to_vec(&HashMap::<String, String>::new()).unwrap(),
+        )
+        .unwrap();
 
-    let gate = make_gate("min_elapsed", vec![
-        ("event", toml::Value::String("my_event".to_string())),
-        ("seconds", toml::Value::Integer(3600)),
-    ]);
+    let gate = make_gate(
+        "min_elapsed",
+        vec![
+            ("event", toml::Value::String("my_event".to_string())),
+            ("seconds", toml::Value::Integer(3600)),
+        ],
+    );
     let ctx = GateContext {
         ledger: &ledger,
         config: &config,
@@ -627,7 +741,12 @@ fn test_no_violations_with_violation() {
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     let ledger_path = dir.path().join("ledger.bin");
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
-    ledger.append("protocol_violation", rmp_serde::to_vec(&HashMap::<String,String>::new()).unwrap()).unwrap();
+    ledger
+        .append(
+            "protocol_violation",
+            rmp_serde::to_vec(&HashMap::<String, String>::new()).unwrap(),
+        )
+        .unwrap();
 
     let gate = make_gate("no_violations", vec![]);
     let ctx = GateContext {
@@ -649,8 +768,18 @@ fn test_no_violations_with_resolved_violation() {
     let ledger_path = dir.path().join("ledger.bin");
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
-    ledger.append("protocol_violation", rmp_serde::to_vec(&HashMap::<String,String>::new()).unwrap()).unwrap();
-    ledger.append("violation_resolved", rmp_serde::to_vec(&HashMap::<String,String>::new()).unwrap()).unwrap();
+    ledger
+        .append(
+            "protocol_violation",
+            rmp_serde::to_vec(&HashMap::<String, String>::new()).unwrap(),
+        )
+        .unwrap();
+    ledger
+        .append(
+            "violation_resolved",
+            rmp_serde::to_vec(&HashMap::<String, String>::new()).unwrap(),
+        )
+        .unwrap();
 
     let gate = make_gate("no_violations", vec![]);
     let ctx = GateContext {
@@ -662,7 +791,11 @@ fn test_no_violations_with_resolved_violation() {
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
-    assert!(result.passed, "resolved violation should not block: {:?}", result.reason);
+    assert!(
+        result.passed,
+        "resolved violation should not block: {:?}",
+        result.reason
+    );
 }
 
 #[test]
@@ -673,9 +806,24 @@ fn test_no_violations_partial_resolution() {
     let ledger_path = dir.path().join("ledger.bin");
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
-    ledger.append("protocol_violation", rmp_serde::to_vec(&HashMap::<String,String>::new()).unwrap()).unwrap();
-    ledger.append("protocol_violation", rmp_serde::to_vec(&HashMap::<String,String>::new()).unwrap()).unwrap();
-    ledger.append("violation_resolved", rmp_serde::to_vec(&HashMap::<String,String>::new()).unwrap()).unwrap();
+    ledger
+        .append(
+            "protocol_violation",
+            rmp_serde::to_vec(&HashMap::<String, String>::new()).unwrap(),
+        )
+        .unwrap();
+    ledger
+        .append(
+            "protocol_violation",
+            rmp_serde::to_vec(&HashMap::<String, String>::new()).unwrap(),
+        )
+        .unwrap();
+    ledger
+        .append(
+            "violation_resolved",
+            rmp_serde::to_vec(&HashMap::<String, String>::new()).unwrap(),
+        )
+        .unwrap();
 
     let gate = make_gate("no_violations", vec![]);
     let ctx = GateContext {
@@ -705,9 +853,10 @@ fn test_field_not_empty_pass() {
     let mut fields = HashMap::new();
     fields.insert("summary".to_string(), "not empty".to_string());
 
-    let gate = make_gate("field_not_empty", vec![
-        ("field", toml::Value::String("summary".to_string())),
-    ]);
+    let gate = make_gate(
+        "field_not_empty",
+        vec![("field", toml::Value::String("summary".to_string()))],
+    );
     let ctx = GateContext {
         ledger: &ledger,
         config: &config,
@@ -729,9 +878,10 @@ fn test_field_not_empty_fail_empty_value() {
     let mut fields = HashMap::new();
     fields.insert("summary".to_string(), "".to_string());
 
-    let gate = make_gate("field_not_empty", vec![
-        ("field", toml::Value::String("summary".to_string())),
-    ]);
+    let gate = make_gate(
+        "field_not_empty",
+        vec![("field", toml::Value::String("summary".to_string()))],
+    );
     let ctx = GateContext {
         ledger: &ledger,
         config: &config,
@@ -752,9 +902,10 @@ fn test_field_not_empty_fail_missing_field() {
 
     let fields = HashMap::new();
 
-    let gate = make_gate("field_not_empty", vec![
-        ("field", toml::Value::String("summary".to_string())),
-    ]);
+    let gate = make_gate(
+        "field_not_empty",
+        vec![("field", toml::Value::String("summary".to_string()))],
+    );
     let ctx = GateContext {
         ledger: &ledger,
         config: &config,
@@ -778,12 +929,18 @@ fn test_snapshot_compare_gt_pass() {
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     // Command outputs JSON; we extract "count" and compare > 5.
-    let gate = make_gate("snapshot_compare", vec![
-        ("cmd", toml::Value::String(r#"echo '{"count": 10}'"#.to_string())),
-        ("extract", toml::Value::String("count".to_string())),
-        ("compare", toml::Value::String("gt".to_string())),
-        ("reference", toml::Value::String("5".to_string())),
-    ]);
+    let gate = make_gate(
+        "snapshot_compare",
+        vec![
+            (
+                "cmd",
+                toml::Value::String(r#"echo '{"count": 10}'"#.to_string()),
+            ),
+            ("extract", toml::Value::String("count".to_string())),
+            ("compare", toml::Value::String("gt".to_string())),
+            ("reference", toml::Value::String("5".to_string())),
+        ],
+    );
     let ctx = GateContext {
         ledger: &ledger,
         config: &config,
@@ -802,12 +959,18 @@ fn test_snapshot_compare_eq_pass() {
     let ledger_path = dir.path().join("ledger.bin");
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
-    let gate = make_gate("snapshot_compare", vec![
-        ("cmd", toml::Value::String(r#"echo '{"value": 42}'"#.to_string())),
-        ("extract", toml::Value::String("value".to_string())),
-        ("compare", toml::Value::String("eq".to_string())),
-        ("reference", toml::Value::String("42".to_string())),
-    ]);
+    let gate = make_gate(
+        "snapshot_compare",
+        vec![
+            (
+                "cmd",
+                toml::Value::String(r#"echo '{"value": 42}'"#.to_string()),
+            ),
+            ("extract", toml::Value::String("value".to_string())),
+            ("compare", toml::Value::String("eq".to_string())),
+            ("reference", toml::Value::String("42".to_string())),
+        ],
+    );
     let ctx = GateContext {
         ledger: &ledger,
         config: &config,
@@ -826,12 +989,18 @@ fn test_snapshot_compare_fail() {
     let ledger_path = dir.path().join("ledger.bin");
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
-    let gate = make_gate("snapshot_compare", vec![
-        ("cmd", toml::Value::String(r#"echo '{"count": 3}'"#.to_string())),
-        ("extract", toml::Value::String("count".to_string())),
-        ("compare", toml::Value::String("gt".to_string())),
-        ("reference", toml::Value::String("5".to_string())),
-    ]);
+    let gate = make_gate(
+        "snapshot_compare",
+        vec![
+            (
+                "cmd",
+                toml::Value::String(r#"echo '{"count": 3}'"#.to_string()),
+            ),
+            ("extract", toml::Value::String("count".to_string())),
+            ("compare", toml::Value::String("gt".to_string())),
+            ("reference", toml::Value::String("5".to_string())),
+        ],
+    );
     let ctx = GateContext {
         ledger: &ledger,
         config: &config,
@@ -858,15 +1027,26 @@ fn test_snapshot_compare_with_ledger_reference() {
     let mut snapshot_fields = HashMap::new();
     snapshot_fields.insert("key".to_string(), "baseline".to_string());
     snapshot_fields.insert("value".to_string(), "5".to_string());
-    ledger.append("snapshot", rmp_serde::to_vec(&snapshot_fields).unwrap()).unwrap();
+    ledger
+        .append("snapshot", rmp_serde::to_vec(&snapshot_fields).unwrap())
+        .unwrap();
 
     // Command outputs count=10, compare > snapshot:baseline (which resolves to 5).
-    let gate = make_gate("snapshot_compare", vec![
-        ("cmd", toml::Value::String(r#"echo '{"count": 10}'"#.to_string())),
-        ("extract", toml::Value::String("count".to_string())),
-        ("compare", toml::Value::String("gt".to_string())),
-        ("reference", toml::Value::String("snapshot:baseline".to_string())),
-    ]);
+    let gate = make_gate(
+        "snapshot_compare",
+        vec![
+            (
+                "cmd",
+                toml::Value::String(r#"echo '{"count": 10}'"#.to_string()),
+            ),
+            ("extract", toml::Value::String("count".to_string())),
+            ("compare", toml::Value::String("gt".to_string())),
+            (
+                "reference",
+                toml::Value::String("snapshot:baseline".to_string()),
+            ),
+        ],
+    );
     let ctx = GateContext {
         ledger: &ledger,
         config: &config,
@@ -876,7 +1056,11 @@ fn test_snapshot_compare_with_ledger_reference() {
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
-    assert!(result.passed, "should resolve snapshot:baseline to 5 and pass: {:?}", result.reason);
+    assert!(
+        result.passed,
+        "should resolve snapshot:baseline to 5 and pass: {:?}",
+        result.reason
+    );
 }
 
 #[test]
@@ -887,12 +1071,21 @@ fn test_snapshot_compare_missing_snapshot_fails() {
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     // Reference a snapshot that does not exist.
-    let gate = make_gate("snapshot_compare", vec![
-        ("cmd", toml::Value::String(r#"echo '{"count": 10}'"#.to_string())),
-        ("extract", toml::Value::String("count".to_string())),
-        ("compare", toml::Value::String("gt".to_string())),
-        ("reference", toml::Value::String("snapshot:nonexistent".to_string())),
-    ]);
+    let gate = make_gate(
+        "snapshot_compare",
+        vec![
+            (
+                "cmd",
+                toml::Value::String(r#"echo '{"count": 10}'"#.to_string()),
+            ),
+            ("extract", toml::Value::String("count".to_string())),
+            ("compare", toml::Value::String("gt".to_string())),
+            (
+                "reference",
+                toml::Value::String("snapshot:nonexistent".to_string()),
+            ),
+        ],
+    );
     let ctx = GateContext {
         ledger: &ledger,
         config: &config,
@@ -904,7 +1097,11 @@ fn test_snapshot_compare_missing_snapshot_fails() {
     let result = evaluate_gate(&gate, &ctx);
     assert!(!result.passed, "missing snapshot should fail");
     assert!(
-        result.reason.as_ref().unwrap().contains("no snapshot found"),
+        result
+            .reason
+            .as_ref()
+            .unwrap()
+            .contains("no snapshot found"),
         "reason should explain missing snapshot: {:?}",
         result.reason
     );
@@ -921,21 +1118,34 @@ fn test_snapshot_compare_uses_most_recent_snapshot() {
     let mut snap1 = HashMap::new();
     snap1.insert("key".to_string(), "baseline".to_string());
     snap1.insert("value".to_string(), "100".to_string());
-    ledger.append("snapshot", rmp_serde::to_vec(&snap1).unwrap()).unwrap();
+    ledger
+        .append("snapshot", rmp_serde::to_vec(&snap1).unwrap())
+        .unwrap();
 
     let mut snap2 = HashMap::new();
     snap2.insert("key".to_string(), "baseline".to_string());
     snap2.insert("value".to_string(), "5".to_string());
-    ledger.append("snapshot", rmp_serde::to_vec(&snap2).unwrap()).unwrap();
+    ledger
+        .append("snapshot", rmp_serde::to_vec(&snap2).unwrap())
+        .unwrap();
 
     // count=10 > snapshot:baseline. If it uses the first snapshot (100), it would fail.
     // If it uses the most recent (5), it should pass.
-    let gate = make_gate("snapshot_compare", vec![
-        ("cmd", toml::Value::String(r#"echo '{"count": 10}'"#.to_string())),
-        ("extract", toml::Value::String("count".to_string())),
-        ("compare", toml::Value::String("gt".to_string())),
-        ("reference", toml::Value::String("snapshot:baseline".to_string())),
-    ]);
+    let gate = make_gate(
+        "snapshot_compare",
+        vec![
+            (
+                "cmd",
+                toml::Value::String(r#"echo '{"count": 10}'"#.to_string()),
+            ),
+            ("extract", toml::Value::String("count".to_string())),
+            ("compare", toml::Value::String("gt".to_string())),
+            (
+                "reference",
+                toml::Value::String("snapshot:baseline".to_string()),
+            ),
+        ],
+    );
     let ctx = GateContext {
         ledger: &ledger,
         config: &config,
@@ -945,7 +1155,11 @@ fn test_snapshot_compare_uses_most_recent_snapshot() {
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
-    assert!(result.passed, "should use most recent snapshot (value=5): {:?}", result.reason);
+    assert!(
+        result.passed,
+        "should use most recent snapshot (value=5): {:?}",
+        result.reason
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -961,15 +1175,18 @@ fn test_field_validation_rejects_invalid_pattern() {
 
     // Add an event definition with a pattern-validated field.
     use sahjhan::config::{EventConfig, EventFieldConfig};
-    config.events.insert("test_event".to_string(), EventConfig {
-        description: "test".to_string(),
-        fields: vec![EventFieldConfig {
-            name: "member".to_string(),
-            field_type: "string".to_string(),
-            pattern: Some(r"^[a-zA-Z0-9_-]+$".to_string()),
-            values: None,
-        }],
-    });
+    config.events.insert(
+        "test_event".to_string(),
+        EventConfig {
+            description: "test".to_string(),
+            fields: vec![EventFieldConfig {
+                name: "member".to_string(),
+                field_type: "string".to_string(),
+                pattern: Some(r"^[a-zA-Z0-9_-]+$".to_string()),
+                values: None,
+            }],
+        },
+    );
 
     let ledger_path = dir.path().join("ledger.bin");
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
@@ -978,9 +1195,10 @@ fn test_field_validation_rejects_invalid_pattern() {
     let mut state_params = HashMap::new();
     state_params.insert("member".to_string(), "'; rm -rf /".to_string());
 
-    let gate = make_gate("command_succeeds", vec![
-        ("cmd", toml::Value::String("echo {{member}}".to_string())),
-    ]);
+    let gate = make_gate(
+        "command_succeeds",
+        vec![("cmd", toml::Value::String("echo {{member}}".to_string()))],
+    );
     let ctx = GateContext {
         ledger: &ledger,
         config: &config,
@@ -992,7 +1210,11 @@ fn test_field_validation_rejects_invalid_pattern() {
     let result = evaluate_gate(&gate, &ctx);
     assert!(!result.passed, "invalid field value should be rejected");
     assert!(
-        result.reason.as_ref().unwrap().contains("does not match pattern"),
+        result
+            .reason
+            .as_ref()
+            .unwrap()
+            .contains("does not match pattern"),
         "reason should explain pattern mismatch: {:?}",
         result.reason
     );
@@ -1005,15 +1227,18 @@ fn test_field_validation_accepts_valid_pattern() {
     let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
 
     use sahjhan::config::{EventConfig, EventFieldConfig};
-    config.events.insert("test_event".to_string(), EventConfig {
-        description: "test".to_string(),
-        fields: vec![EventFieldConfig {
-            name: "member".to_string(),
-            field_type: "string".to_string(),
-            pattern: Some(r"^[a-zA-Z0-9_-]+$".to_string()),
-            values: None,
-        }],
-    });
+    config.events.insert(
+        "test_event".to_string(),
+        EventConfig {
+            description: "test".to_string(),
+            fields: vec![EventFieldConfig {
+                name: "member".to_string(),
+                field_type: "string".to_string(),
+                pattern: Some(r"^[a-zA-Z0-9_-]+$".to_string()),
+                values: None,
+            }],
+        },
+    );
 
     let ledger_path = dir.path().join("ledger.bin");
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
@@ -1021,9 +1246,10 @@ fn test_field_validation_accepts_valid_pattern() {
     let mut state_params = HashMap::new();
     state_params.insert("member".to_string(), "valid-value_123".to_string());
 
-    let gate = make_gate("command_succeeds", vec![
-        ("cmd", toml::Value::String("echo {{member}}".to_string())),
-    ]);
+    let gate = make_gate(
+        "command_succeeds",
+        vec![("cmd", toml::Value::String("echo {{member}}".to_string()))],
+    );
     let ctx = GateContext {
         ledger: &ledger,
         config: &config,
@@ -1033,7 +1259,11 @@ fn test_field_validation_accepts_valid_pattern() {
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
-    assert!(result.passed, "valid field value should pass: {:?}", result.reason);
+    assert!(
+        result.passed,
+        "valid field value should pass: {:?}",
+        result.reason
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1048,7 +1278,10 @@ fn test_evaluate_gates_all_pass() {
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     let gates = vec![
-        make_gate("command_succeeds", vec![("cmd", toml::Value::String("true".to_string()))]),
+        make_gate(
+            "command_succeeds",
+            vec![("cmd", toml::Value::String("true".to_string()))],
+        ),
         make_gate("no_violations", vec![]),
     ];
     let ctx = GateContext {
@@ -1072,8 +1305,14 @@ fn test_evaluate_gates_continues_after_failure() {
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     let gates = vec![
-        make_gate("command_succeeds", vec![("cmd", toml::Value::String("false".to_string()))]),
-        make_gate("command_succeeds", vec![("cmd", toml::Value::String("true".to_string()))]),
+        make_gate(
+            "command_succeeds",
+            vec![("cmd", toml::Value::String("false".to_string()))],
+        ),
+        make_gate(
+            "command_succeeds",
+            vec![("cmd", toml::Value::String("true".to_string()))],
+        ),
     ];
     let ctx = GateContext {
         ledger: &ledger,

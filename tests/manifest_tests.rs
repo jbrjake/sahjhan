@@ -174,19 +174,13 @@ fn test_manifest_hash_changes_on_update() {
 #[test]
 fn test_data_dir_must_be_under_managed_path() {
     // E12: data_dir outside managed paths should fail
-    let result = Manifest::init(
-        "/tmp/outside/.sahjhan",
-        vec!["docs/holtz".to_string()],
-    );
+    let result = Manifest::init("/tmp/outside/.sahjhan", vec!["docs/holtz".to_string()]);
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(err.contains("E12"));
 
     // data_dir under a managed path should succeed
-    let result = Manifest::init(
-        "docs/holtz/.sahjhan",
-        vec!["docs/holtz".to_string()],
-    );
+    let result = Manifest::init("docs/holtz/.sahjhan", vec!["docs/holtz".to_string()]);
     assert!(result.is_ok());
 
     // data_dir that IS the managed path should succeed
@@ -242,12 +236,7 @@ fn test_restore_placeholder() {
     let mut manifest =
         Manifest::init("docs/holtz/.sahjhan", vec!["docs/holtz".to_string()]).unwrap();
     manifest
-        .track(
-            "docs/holtz/rendered.md",
-            &rendered,
-            "render punchlist",
-            10,
-        )
+        .track("docs/holtz/rendered.md", &rendered, "render punchlist", 10)
         .unwrap();
     manifest
         .track(

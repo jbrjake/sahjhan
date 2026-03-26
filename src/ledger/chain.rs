@@ -33,10 +33,7 @@ impl Ledger {
         let bytes = genesis.to_bytes();
 
         // Create (exclusive) — fail if the file already exists.
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(path)?;
+        let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
 
         file.lock_exclusive()?;
         file.write_all(&bytes)?;
@@ -74,7 +71,10 @@ impl Ledger {
     /// The entry's `seq` is `last_seq + 1` and its `prev_hash` is the
     /// `entry_hash` of the current tail.
     pub fn append(&mut self, event_type: &str, payload: Vec<u8>) -> Result<(), LedgerError> {
-        let prev = self.entries.last().expect("ledger must have at least one entry (genesis)");
+        let prev = self
+            .entries
+            .last()
+            .expect("ledger must have at least one entry (genesis)");
         let seq = prev.seq + 1;
         let prev_hash = prev.entry_hash;
 
@@ -157,12 +157,18 @@ impl Ledger {
 
     /// The `entry_hash` of the most recent entry.
     pub fn last_hash(&self) -> [u8; 32] {
-        self.entries.last().expect("ledger must have genesis entry").entry_hash
+        self.entries
+            .last()
+            .expect("ledger must have genesis entry")
+            .entry_hash
     }
 
     /// All entries whose `event_type` equals `kind`.
     pub fn events_of_type(&self, kind: &str) -> Vec<&LedgerEntry> {
-        self.entries.iter().filter(|e| e.event_type == kind).collect()
+        self.entries
+            .iter()
+            .filter(|e| e.event_type == kind)
+            .collect()
     }
 
     /// The last `n` entries (or fewer if the ledger is shorter).

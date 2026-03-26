@@ -37,7 +37,7 @@ fn test_from_bytes_rejects_truncated_data() {
     // Truncate at various points
     assert!(LedgerEntry::from_bytes(&bytes[..3]).is_err()); // before magic complete
     assert!(LedgerEntry::from_bytes(&bytes[..10]).is_err()); // mid-header
-    assert!(LedgerEntry::from_bytes(&bytes[..bytes.len()-1]).is_err()); // missing last byte
+    assert!(LedgerEntry::from_bytes(&bytes[..bytes.len() - 1]).is_err()); // missing last byte
 }
 
 #[test]

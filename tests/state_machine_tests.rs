@@ -1,9 +1,9 @@
 use sahjhan::config::ProtocolConfig;
-use sahjhan::state::machine::StateMachine;
 use sahjhan::ledger::chain::Ledger;
-use tempfile::tempdir;
-use std::path::Path;
+use sahjhan::state::machine::StateMachine;
 use std::collections::HashMap;
+use std::path::Path;
+use tempfile::tempdir;
 
 #[test]
 fn test_initial_state() {
@@ -97,6 +97,6 @@ fn test_set_status() {
 
     let status = sm.set_status("check");
     assert_eq!(status.completed, 1);
-    assert!(status.members[0].done);  // "tests" is first in order
+    assert!(status.members[0].done); // "tests" is first in order
     assert!(!status.members[1].done); // "lint" is not done
 }

@@ -337,7 +337,7 @@ impl ProtocolConfig {
         for t in &self.transitions {
             reachable.insert(t.to.as_str());
         }
-        for (name, _) in &self.states {
+        for name in self.states.keys() {
             if !reachable.contains(name.as_str()) {
                 warnings.push(format!(
                     "states.toml: state '{}' is unreachable (no incoming transitions and not initial)",

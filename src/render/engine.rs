@@ -191,6 +191,17 @@ impl RenderEngine {
         Ok(rendered)
     }
 
+    /// Return the template render context as a JSON value.
+    ///
+    /// This is the complete set of variables available to Tera templates.
+    /// Useful for template authors to discover what's available without
+    /// trial-and-error.
+    pub fn dump_context(&self, ledger: &Ledger) -> Result<serde_json::Value, String> {
+        let ctx = self.build_context(ledger)?;
+        serde_json::to_value(ctx.into_json())
+            .map_err(|e| format!("failed to serialize render context: {}", e))
+    }
+
     /// Build the Tera context from ledger state and config.
     fn build_context(&self, ledger: &Ledger) -> Result<tera::Context, String> {
         let current_state = derive_current_state(&self.config, ledger);

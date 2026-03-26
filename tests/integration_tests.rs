@@ -655,6 +655,84 @@ fn test_finish_alias() {
 }
 
 // ---------------------------------------------------------------------------
+// render --dump-context (issue #4)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_render_dump_context_outputs_json() {
+    let dir = setup_initialized_dir();
+    let output = Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "render", "--dump-context"])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: serde_json::Value =
+        serde_json::from_slice(&output).expect("--dump-context output should be valid JSON");
+
+    // Verify all documented context variables are present
+    assert!(json.get("protocol").is_some(), "missing 'protocol'");
+    assert!(json.get("state").is_some(), "missing 'state'");
+    assert!(json.get("events").is_some(), "missing 'events'");
+    assert!(json.get("sets").is_some(), "missing 'sets'");
+    assert!(json.get("ledger_len").is_some(), "missing 'ledger_len'");
+    assert!(json.get("violations").is_some(), "missing 'violations'");
+
+    // Verify protocol sub-fields
+    let protocol = json.get("protocol").unwrap();
+    assert!(protocol.get("name").is_some(), "missing 'protocol.name'");
+    assert!(
+        protocol.get("version").is_some(),
+        "missing 'protocol.version'"
+    );
+
+    // Verify state sub-fields
+    let state = json.get("state").unwrap();
+    assert!(state.get("name").is_some(), "missing 'state.name'");
+    assert!(state.get("label").is_some(), "missing 'state.label'");
+}
+
+#[test]
+fn test_render_dump_context_reflects_state_changes() {
+    let dir = setup_initialized_dir();
+
+    // Transition to working state
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "transition", "begin"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    let output = Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "render", "--dump-context"])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+
+    // State should reflect the transition
+    assert_eq!(json["state"]["name"].as_str().unwrap(), "working");
+    assert_eq!(json["state"]["label"].as_str().unwrap(), "Working");
+
+    // Events should include the genesis + transition
+    let events = json["events"].as_array().unwrap();
+    assert!(events.len() >= 2);
+
+    // ledger_len should match
+    assert_eq!(json["ledger_len"].as_u64().unwrap(), events.len() as u64);
+}
+
+// ---------------------------------------------------------------------------
 // validate command tests
 // ---------------------------------------------------------------------------
 

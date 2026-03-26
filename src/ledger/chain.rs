@@ -91,6 +91,22 @@ impl Ledger {
         Ok(())
     }
 
+    /// Re-read the ledger file from disk, replacing the in-memory entries.
+    ///
+    /// Call this after any operation that may have let an external process
+    /// append to the ledger file (e.g. a gate command that records events).
+    pub fn reload(&mut self) -> Result<(), LedgerError> {
+        let mut file = File::open(&self.path)?;
+        file.lock_shared()?;
+
+        let mut raw = Vec::new();
+        file.read_to_end(&mut raw)?;
+        file.unlock()?;
+
+        self.entries = parse_entries(&raw)?;
+        Ok(())
+    }
+
     // -----------------------------------------------------------------------
     // Verification
     // -----------------------------------------------------------------------

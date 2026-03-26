@@ -151,6 +151,72 @@ fn test_events_of_type() {
     assert_eq!(type_b.len(), 1);
 }
 
+// Reproduces issue #3: external process appends to ledger file while
+// our in-memory Ledger is stale, causing a duplicate sequence number.
+#[test]
+fn test_external_append_causes_sequence_gap() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("ledger.bin");
+    let mut ledger = Ledger::init(&path, "test-protocol", "1.0.0").unwrap();
+
+    // Append some events (simulating recon_step events etc.)
+    ledger.append("event_a", b"a".to_vec()).unwrap();
+    ledger.append("event_b", b"b".to_vec()).unwrap();
+    // In-memory ledger now has seq 0,1,2
+
+    // Simulate external process (gate command) appending to ledger file
+    // by opening the file separately and appending an entry.
+    {
+        let mut external = Ledger::open(&path).unwrap();
+        external.append("external_event", b"ext".to_vec()).unwrap();
+        // File now has seq 0,1,2,3 — but our `ledger` still thinks tail is seq 2
+    }
+
+    // Without reload, this append uses stale state: it thinks prev is seq 2,
+    // so it writes seq 3 again — creating a duplicate.
+    ledger.append("post_gate_event", b"pg".to_vec()).unwrap();
+    // File now has: 0,1,2,3,3 — seq 3 appears twice
+
+    // Re-open and verify — this should detect the sequence gap
+    let reopened = Ledger::open(&path).unwrap();
+    assert!(
+        reopened.verify().is_err(),
+        "chain should be INVALID due to duplicate seq from stale append"
+    );
+}
+
+// Verifies the fix: reload() picks up external changes before appending.
+#[test]
+fn test_reload_fixes_external_append() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("ledger.bin");
+    let mut ledger = Ledger::init(&path, "test-protocol", "1.0.0").unwrap();
+
+    ledger.append("event_a", b"a".to_vec()).unwrap();
+    ledger.append("event_b", b"b".to_vec()).unwrap();
+
+    // External process appends
+    {
+        let mut external = Ledger::open(&path).unwrap();
+        external.append("external_event", b"ext".to_vec()).unwrap();
+    }
+
+    // Reload picks up the external entry
+    ledger.reload().unwrap();
+    assert_eq!(ledger.len(), 4); // genesis + 3
+
+    // Now our append uses the correct prev_hash and seq
+    ledger.append("post_gate_event", b"pg".to_vec()).unwrap();
+
+    // Re-open and verify — chain should be valid
+    let reopened = Ledger::open(&path).unwrap();
+    assert_eq!(reopened.len(), 5);
+    assert!(
+        reopened.verify().is_ok(),
+        "chain should be valid after reload"
+    );
+}
+
 #[test]
 fn test_tail() {
     let dir = tempdir().unwrap();

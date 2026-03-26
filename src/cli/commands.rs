@@ -138,9 +138,7 @@ pub fn cmd_validate(config_dir: &str) -> i32 {
         Ok(c) => c,
         Err(e) => {
             eprintln!("  - {}", e);
-            eprintln!(
-                "\nFix these before running."
-            );
+            eprintln!("\nFix these before running.");
             return EXIT_CONFIG_ERROR;
         }
     };
@@ -163,9 +161,7 @@ pub fn cmd_validate(config_dir: &str) -> i32 {
         for e in &errors {
             eprintln!("  - {}", e);
         }
-        eprintln!(
-            "\nFix these before running."
-        );
+        eprintln!("\nFix these before running.");
         EXIT_CONFIG_ERROR
     }
 }
@@ -1200,6 +1196,52 @@ pub fn cmd_render(config_dir: &str) -> i32 {
         }
         Err(e) => {
             eprintln!("Render failed: {}", e);
+            EXIT_INTEGRITY_ERROR
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// render --dump-context
+// ---------------------------------------------------------------------------
+
+pub fn cmd_render_dump_context(config_dir: &str) -> i32 {
+    let config_path = resolve_config_dir(config_dir);
+    let config = match load_config(&config_path) {
+        Ok(c) => c,
+        Err((code, msg)) => {
+            eprintln!("{}", msg);
+            return code;
+        }
+    };
+
+    let data_dir = resolve_data_dir(&config.paths.data_dir);
+    let ledger = match open_ledger(&data_dir) {
+        Ok(l) => l,
+        Err((code, msg)) => {
+            eprintln!("{}", msg);
+            return code;
+        }
+    };
+
+    let engine = match RenderEngine::new(&config, &config_path) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("Cannot create render engine: {}", e);
+            return EXIT_CONFIG_ERROR;
+        }
+    };
+
+    match engine.dump_context(&ledger) {
+        Ok(ctx) => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&ctx).unwrap_or_else(|_| ctx.to_string())
+            );
+            EXIT_SUCCESS
+        }
+        Err(e) => {
+            eprintln!("Cannot build render context: {}", e);
             EXIT_INTEGRITY_ERROR
         }
     }

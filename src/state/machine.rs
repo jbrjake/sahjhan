@@ -114,6 +114,11 @@ impl StateMachine {
             self.evaluate_gate(gate, &state_params)?;
         }
 
+        // Reload ledger from disk in case gate commands (e.g. command_succeeds
+        // running `sahjhan event ...`) appended entries via a subprocess.
+        // Without this, our in-memory seq/prev_hash would be stale. (Issue #3)
+        self.ledger.reload().map_err(StateError::Ledger)?;
+
         // Record the transition event.
         let mut fields = HashMap::new();
         fields.insert("from".to_string(), self.current_state.clone());

@@ -48,7 +48,11 @@ enum Commands {
     },
 
     /// Regenerate all markdown views
-    Render,
+    Render {
+        /// Dump the template render context as JSON instead of rendering
+        #[arg(long)]
+        dump_context: bool,
+    },
 
     /// Set operations
     Set {
@@ -200,7 +204,13 @@ fn main() {
                 commands::cmd_manifest_restore(&cli.config_dir, &path)
             }
         },
-        Commands::Render => commands::cmd_render(&cli.config_dir),
+        Commands::Render { dump_context } => {
+            if dump_context {
+                commands::cmd_render_dump_context(&cli.config_dir)
+            } else {
+                commands::cmd_render(&cli.config_dir)
+            }
+        }
         Commands::Set { action } => match action {
             SetAction::Status { set } => commands::cmd_set_status(&cli.config_dir, &set),
             SetAction::Complete { set, member } => {

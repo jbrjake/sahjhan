@@ -1,3 +1,3 @@
 pub mod chain;
 pub mod entry;
-pub mod genesis;
+mod genesis; // kept as empty placeholder; genesis logic lives in chain.rs

@@ -1,6 +1,6 @@
 // src/state/machine.rs
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
 use thiserror::Error;
@@ -125,9 +125,10 @@ impl StateMachine {
         fields.insert("to".to_string(), transition.to.clone());
         fields.insert("command".to_string(), command.to_string());
 
-        let payload = serialize_fields(&fields)?;
+        // TODO(Task 4): clean up — convert HashMap to BTreeMap for new append API
+        let btree_fields: BTreeMap<String, String> = fields.into_iter().collect();
         self.ledger
-            .append("state_transition", payload)
+            .append("state_transition", btree_fields)
             .map_err(StateError::Ledger)?;
 
         self.current_state = transition.to.clone();
@@ -144,9 +145,10 @@ impl StateMachine {
         event_type: &str,
         fields: HashMap<String, String>,
     ) -> Result<(), StateError> {
-        let payload = serialize_fields(&fields)?;
+        // TODO(Task 4): clean up — convert HashMap to BTreeMap for new append API
+        let btree_fields: BTreeMap<String, String> = fields.into_iter().collect();
         self.ledger
-            .append(event_type, payload)
+            .append(event_type, btree_fields)
             .map_err(StateError::Ledger)
     }
 

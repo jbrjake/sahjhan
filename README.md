@@ -81,13 +81,25 @@ And because protocols are just TOML, I'm not writing a new bespoke enforcement s
 
 ## What a protocol looks like
 
-Here's the TDD protocol from that enforcement example. Three states, two transitions, gates on each.
+A protocol is a directory of TOML files. Here's one for TDD enforcement:
+
+```
+tdd-protocol/
+  protocol.toml
+  states.toml
+  transitions.toml
+  events.toml        # optional
+  renders.toml       # optional
+```
 
 ```toml
-# states.toml
+# tdd-protocol/states.toml
+[states.idle]
+label = "Idle"
+initial = true
+
 [states.writing-tests]
 label = "Writing tests"
-initial = true
 
 [states.implementing]
 label = "Implementing"
@@ -98,7 +110,13 @@ terminal = true
 ```
 
 ```toml
-# transitions.toml
+# tdd-protocol/transitions.toml
+[[transitions]]
+from = "idle"
+to = "writing-tests"
+command = "start"
+gates = []
+
 [[transitions]]
 from = "writing-tests"
 to = "implementing"
@@ -123,7 +141,7 @@ Every gate is something Sahjhan checks itself. `file_exists` looks at the disk. 
 
 ## What enforcement actually looks like
 
-Timing gates prove the agent can tell time. I learned this the hard way. Sahjhan's gates check evidence instead.
+`--config-dir` points at that directory. Sahjhan reads the TOML, enforces the gates.
 
 ```bash
 sahjhan --config-dir tdd-protocol init

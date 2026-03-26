@@ -254,6 +254,45 @@ impl Ledger {
             .clone()
     }
 
+    // -----------------------------------------------------------------------
+    // Checkpoints
+    // -----------------------------------------------------------------------
+
+    /// Write an explicit `_checkpoint` event to the ledger.
+    ///
+    /// Checkpoints mark a logical position in the event stream. The `scope`
+    /// identifies the checkpoint domain (e.g. "phase-1") and `snapshot` is a
+    /// freeform label for the state at that point.
+    pub fn write_checkpoint(
+        &mut self,
+        scope: &str,
+        snapshot: &str,
+    ) -> Result<&LedgerEntry, LedgerError> {
+        let mut fields = BTreeMap::new();
+        fields.insert("scope".to_string(), scope.to_string());
+        fields.insert("snapshot".to_string(), snapshot.to_string());
+        self.append("_checkpoint", fields)?;
+        Ok(self.entries.last().expect("entry just appended"))
+    }
+
+    /// Find the latest `_checkpoint` event for the given `scope` and return
+    /// the events that follow it.
+    ///
+    /// Returns `Some((checkpoint_seq, &[entries_after_checkpoint]))` or
+    /// `None` if no matching checkpoint exists.
+    pub fn find_latest_checkpoint(&self, scope: &str) -> Option<(u64, &[LedgerEntry])> {
+        for (i, entry) in self.entries.iter().enumerate().rev() {
+            if entry.event_type == "_checkpoint" {
+                if let Some(s) = entry.fields.get("scope") {
+                    if s == scope {
+                        return Some((entry.seq, &self.entries[i + 1..]));
+                    }
+                }
+            }
+        }
+        None
+    }
+
     /// All entries whose `event_type` equals `kind`.
     pub fn events_of_type(&self, kind: &str) -> Vec<&LedgerEntry> {
         self.entries

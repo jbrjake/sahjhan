@@ -283,6 +283,7 @@ mod tests {
             transitions: vec![],
             events: HashMap::new(),
             renders: vec![],
+            checkpoints: Default::default(),
         }
     }
 

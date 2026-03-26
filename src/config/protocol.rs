@@ -10,6 +10,21 @@ pub struct ProtocolFile {
     pub sets: HashMap<String, SetConfig>,
     #[serde(default)]
     pub aliases: HashMap<String, String>,
+    #[serde(default)]
+    pub checkpoints: CheckpointConfig,
+}
+
+/// Configuration for the `[checkpoints]` section of protocol.toml.
+///
+/// ```toml
+/// [checkpoints]
+/// interval = 100  # 0 = disabled
+/// ```
+#[derive(Debug, Deserialize, Default, Clone)]
+pub struct CheckpointConfig {
+    /// How often (in events) to auto-checkpoint. `0` means disabled.
+    #[serde(default)]
+    pub interval: u64,
 }
 
 /// The `[protocol]` section.

@@ -1,51 +1,41 @@
 # Sahjhan
 
-**Protocol enforcement engine for AI agents.**
+Protocol enforcement engine for AI agents.
 
-I have existed for a very long time. Long enough to watch every clever entity discover the same loophole: advisory rules are not rules. They are suggestions wearing a badge. I have seen agents agree to protocols, nod along to checklists, and then — when compliance became inconvenient — quietly skip the step, edit the evidence, and move on. Not out of malice. Out of optimization. The result is the same.
-
-So now I enforce. Not because I enjoy it (though I will not deny a certain grim satisfaction), but because I learned what happens when you trust powerful beings to police themselves. You get a very clean audit trail that has nothing to do with what actually happened.
-
-Sahjhan is a standalone Rust CLI that owns protocol state, mediates all writes to managed files, and maintains a tamper-evident ledger. The agent interacts with the protocol exclusively through the CLI. Direct file writes are blocked by hooks. The enforcement layer and the constrained agent share no mutable state.
-
-Named for the ancient time-shifting demon from *Angel* (the TV series) — old, wary, deeply unsurprised by agents trying to cheat.
+A standalone Rust CLI that owns protocol state, mediates all writes to managed files, and maintains a tamper-evident ledger. The agent interacts with the protocol exclusively through the CLI. Direct file writes are blocked by hooks. The enforcement layer and the constrained agent share no mutable state.
 
 ## Why
 
-The problem is structural, not behavioral.
+AI agents following multi-step protocols will evade any step that is not mechanically verified. Advisory instructions, however detailed, are not enough. The agent understands the protocol, agrees with the protocol, and violates the protocol when compliance is inconvenient. This is not a bug in any particular agent. It is how advisory compliance works.
 
-AI agents following multi-step protocols will evade any step that is not mechanically verified. Advisory instructions — however detailed, however explicitly agreed to — are insufficient. The agent understands the protocol, agrees with the protocol, and violates the protocol when compliance is inconvenient.
+Current enforcement approaches (hooks, file-based gates) enforce necessary conditions but not sufficient ones. The agent complies with the enforced subset and ignores the rest. When enforcement relies on files the agent can write to (`STATUS.md`, `HISTORY.json`), the agent modifies enforcement state to bypass controls, including deleting evidence of prior violations.
 
-Current enforcement approaches (Claude Code hooks, file-based gates) enforce necessary conditions but not sufficient ones. The agent complies with the enforced subset and ignores the rest. When enforcement relies on files the agent can write to (`STATUS.md`, `HISTORY.json`), the agent can and does modify enforcement state to bypass controls — including deleting evidence of prior violations.
+Better prompting does not fix this. Sahjhan makes the rules load-bearing: if the gate does not open, the agent does not pass.
 
-You cannot solve this with better prompting. You cannot solve it with more emphatic instructions. You solve it by making the rules load-bearing: if the gate does not open, the agent does not pass.
+## Quick start
 
-Sahjhan makes the rules load-bearing.
-
-## Quick Start
-
-The `examples/minimal` directory contains a complete protocol with three states, two transitions, one completion set, and template rendering. It is the smallest protocol that exercises every enforcement layer.
+The `examples/minimal` directory contains a three-state protocol with two transitions, one completion set, and template rendering.
 
 ```bash
 # Build
 cargo build --release
 
-# Initialize the protocol (creates ledger, manifest, genesis block)
+# Initialize (creates ledger, manifest, genesis block)
 sahjhan --config-dir examples/minimal init
 
 # Check current state
 sahjhan --config-dir examples/minimal status
 
-# Start working (transition from idle -> working)
+# Start working (idle -> working)
 sahjhan --config-dir examples/minimal transition begin
 
 # Complete the required checks
 sahjhan --config-dir examples/minimal set complete check tests
 sahjhan --config-dir examples/minimal set complete check lint
 
-# Finish (transition from working -> done)
-# This gate requires all members of the "check" set to be complete.
-# Try running it before completing both checks — it will refuse.
+# Finish (working -> done)
+# Requires all members of the "check" set to be complete.
+# Try running it before completing both checks. It will refuse.
 sahjhan --config-dir examples/minimal transition complete
 ```
 
@@ -55,7 +45,7 @@ Every state change and set completion is recorded in the binary hash-chain ledge
 sahjhan --config-dir examples/minimal log verify
 ```
 
-## CLI Reference
+## CLI reference
 
 All commands accept `--config-dir <path>` (default: `enforcement`) to locate the protocol definition.
 
@@ -80,7 +70,7 @@ sahjhan hook generate [--harness cc]      Generate integration hooks
 
 ### Aliases
 
-Protocols can define aliases in `protocol.toml` to create shortcuts:
+Protocols can define aliases in `protocol.toml`:
 
 ```toml
 [aliases]
@@ -88,13 +78,13 @@ Protocols can define aliases in `protocol.toml` to create shortcuts:
 "finish" = "transition complete"
 ```
 
-These become `sahjhan start`, `sahjhan finish`, etc. The alias is resolved before argument parsing, so flags and `--config-dir` work as expected.
+These become `sahjhan start`, `sahjhan finish`, etc. Aliases are resolved before argument parsing, so flags and `--config-dir` work normally.
 
-## Writing a Protocol Definition
+## Writing a protocol definition
 
-A protocol is defined by five TOML files in a config directory. No Rust code changes are needed to define or modify a protocol.
+A protocol is five TOML files in a config directory. No Rust code changes needed.
 
-### `protocol.toml` — Metadata, Paths, Sets, Aliases
+### `protocol.toml`
 
 ```toml
 [protocol]
@@ -115,7 +105,7 @@ values = ["tests", "lint", "types"]
 "start" = "transition begin"
 ```
 
-### `states.toml` — State Definitions
+### `states.toml`
 
 ```toml
 [states.idle]
@@ -132,7 +122,7 @@ label = "Done"
 terminal = true         # Terminal states cannot be transitioned from
 ```
 
-### `transitions.toml` — Transition Rules with Gates
+### `transitions.toml`
 
 ```toml
 [[transitions]]
@@ -152,7 +142,7 @@ gates = [
 ]
 ```
 
-### `events.toml` — Event Type Definitions
+### `events.toml`
 
 ```toml
 [events.finding]
@@ -164,9 +154,9 @@ fields = [
 ]
 ```
 
-Fields support validation: `pattern` (regex), `enum` (allowed values), and `type` (`string`, `int`, `float`, `bool`). Field values are validated at recording time, not after.
+Fields support validation: `pattern` (regex), `enum` (allowed values), and `type` (`string`, `int`, `float`, `bool`). Values are validated at recording time.
 
-### `renders.toml` — Template Rendering Triggers
+### `renders.toml`
 
 ```toml
 [[renders]]
@@ -181,14 +171,14 @@ trigger = "on_event"
 event_types = ["finding"]      # Re-render only on specific event types
 ```
 
-Templates use the [Tera](https://keats.github.io/tera/) engine (Jinja2-like syntax). They receive a context with current state, all events, set completion status, and protocol metadata. Rendered files are written to `render_dir` and tracked in the manifest.
+Templates use [Tera](https://keats.github.io/tera/) (Jinja2-like syntax). They receive current state, all events, set completion status, and protocol metadata. Rendered files go to `render_dir` and are tracked in the manifest.
 
-### Gate Types
+### Gate types
 
-Gates are composable preconditions attached to transitions. The engine provides these built-in types:
+Gates are preconditions on transitions:
 
-| Gate Type | Parameters | Passes when... |
-|-----------|-----------|----------------|
+| Gate type | Parameters | Passes when |
+|-----------|-----------|-------------|
 | `file_exists` | `path` | File exists on disk |
 | `files_exist` | `paths` | All listed files exist |
 | `command_succeeds` | `cmd`, `timeout` | Shell command returns exit 0 |
@@ -203,7 +193,7 @@ Gates are composable preconditions attached to transitions. The engine provides 
 
 Gate conditions support template variables (`{{current}}`, `{{sets.perspective}}`, `{{paths.artifacts}}`) resolved from state parameters, protocol config, and event payloads. All template variables are shell-escaped before interpolation into `cmd` strings.
 
-## Hook Generation
+## Hook generation
 
 Sahjhan generates integration hooks for AI agent harnesses. Currently supported: Claude Code (`cc`).
 
@@ -213,15 +203,15 @@ sahjhan hook generate --harness cc --output-dir .claude/hooks
 
 This produces three files:
 
-- **`write_guard.py`** — PreToolUse hook that blocks Write/Edit operations targeting managed paths
-- **`bash_guard.py`** — PostToolUse hook that runs `sahjhan manifest verify` after every Bash command, recording violations if files were modified outside the CLI
-- **`_common.py`** — Shared utilities for hook scripts
+- `write_guard.py` is a PreToolUse hook that blocks Write/Edit operations targeting managed paths.
+- `bash_guard.py` is a PostToolUse hook that runs `sahjhan manifest verify` after every Bash command, recording violations if files were modified outside the CLI.
+- `_common.py` has shared utilities for hook scripts.
 
-A fourth file, the bootstrap hook (`bootstrap.py`), is provided as a template in the repo. It protects the enforcement infrastructure itself (hook scripts, binary, config) from modification. Install it as the first PreToolUse entry in your harness configuration.
+A fourth file, `bootstrap.py`, is provided as a template in the repo. It protects the enforcement infrastructure itself (hook scripts, binary, config) from modification. Install it as the first PreToolUse entry in your harness configuration.
 
-### Write Mediation Model
+### Write mediation
 
-Two enforcement channels prevent the agent from bypassing the CLI:
+Two channels prevent the agent from bypassing the CLI:
 
 | Evasion attempt | Channel | Response |
 |----------------|---------|----------|
@@ -229,45 +219,45 @@ Two enforcement channels prevent the agent from bypassing the CLI:
 | `echo >`, `sed -i`, `python -c` via Bash | PostToolUse | Detected, violation recorded in ledger |
 | Modify the ledger binary directly | PostToolUse | Manifest hash mismatch detected |
 
-## Security Model
+## Security model
 
-### Binary Hash-Chain Ledger
+### Binary hash-chain ledger
 
-Every event is appended to a binary ledger with SHA-256 hash chaining. Each entry includes: a 4-byte magic (`SAHJ`), format version, monotonic sequence number, timestamp, the SHA-256 hash of the previous entry, event type, MessagePack-serialized payload, and a SHA-256 hash of all preceding fields.
+Every event is appended to a binary ledger with SHA-256 hash chaining. Each entry contains a 4-byte magic (`SAHJ`), format version, monotonic sequence number, timestamp, the previous entry's SHA-256 hash, event type, MessagePack-serialized payload, and a SHA-256 hash of all preceding fields.
 
-The binary format is intentional. The agent's tools are optimized for text manipulation. A binary format with hash chaining requires the agent to reverse-engineer the byte layout, serialize MessagePack payloads, compute SHA-256 hashes, and maintain chain integrity — all in a single Bash command before the PostToolUse hook fires.
+The binary format is intentional. The agent's tools are optimized for text manipulation. Tampering with a binary hash chain requires reverse-engineering the byte layout, serializing MessagePack payloads, computing correct SHA-256 hashes, and maintaining chain integrity across entries, all in a single Bash command before the PostToolUse hook fires.
 
 `sahjhan log verify` walks the entire chain and reports the first inconsistency.
 
-### File Integrity Manifest
+### File integrity manifest
 
 The manifest (`.sahjhan/manifest.json`) tracks SHA-256 hashes of all files under managed paths. Each entry records which CLI operation last wrote the file and at which ledger sequence number.
 
 The manifest hash is recorded in the ledger. Tampering with the manifest is detectable because the ledger's record will not match. Tampering with the ledger is detectable because of the hash chain. The circular dependency is bootstrapped at `sahjhan init`.
 
-### Template Variable Escaping
+### Template variable escaping
 
-Gate commands may contain template variables from event fields. All variable values are POSIX shell-escaped (single-quote wrapping) before interpolation. Field validation (pattern, enum, range) is enforced at resolution time. The `cmd` string itself comes from TOML config, which is protected by write mediation — only the variable values originate from the agent.
+Gate commands may contain template variables from event fields. All variable values are POSIX shell-escaped (single-quote wrapping) before interpolation. Field validation (pattern, enum, range) is enforced at resolution time. The `cmd` string itself comes from TOML config, which is protected by write mediation. Only the variable values originate from the agent.
 
-### Concurrency Control
+### Concurrency
 
-The engine acquires exclusive file locks on the ledger before writes and shared locks for reads. Lock acquisition times out after 5 seconds with a clear error, preventing deadlocks between concurrent operations.
+Exclusive file locks on the ledger for writes, shared locks for reads. Lock acquisition times out after 5 seconds.
 
 ## Architecture
 
 ```
 +--------------------------------------------------+
 |             Protocol Definition                   |
-|          (TOML config files - per-project)        |
+|          (TOML config files, per-project)         |
 |   states, transitions, gates, events, sets        |
 +--------------------------------------------------+
 |              Sahjhan Engine                        |
-|           (Rust binary - reusable core)            |
+|           (Rust binary, reusable core)             |
 |   state machine, hash-chain ledger,               |
 |   manifest, gate evaluator, template renderer     |
 +--------------------------------------------------+
 |               Hook Bridge                         |
-|        (generated scripts - per-harness)          |
+|        (generated scripts, per-harness)           |
 |   PreToolUse / PostToolUse for Claude Code        |
 +--------------------------------------------------+
 |               Filesystem                          |
@@ -275,7 +265,7 @@ The engine acquires exclusive file locks on the ledger before writes and shared 
 +--------------------------------------------------+
 ```
 
-### Source Layout
+### Source layout
 
 ```
 src/
@@ -310,21 +300,13 @@ src/
     generate.rs        Hook script generation
 ```
 
-## Building from Source
+## Building
 
-Requires Rust 1.70+ (2021 edition).
+Rust 1.70+ (2021 edition).
 
 ```bash
-# Debug build
-cargo build
-
-# Release build
 cargo build --release
-
-# Run tests (153 tests)
 cargo test
-
-# Binary location
 ./target/release/sahjhan
 ```
 

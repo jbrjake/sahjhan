@@ -1,12 +1,14 @@
 // src/state/machine.rs
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use thiserror::Error;
 
 use crate::config::ProtocolConfig;
 use crate::ledger::chain::Ledger;
 use crate::ledger::entry::LedgerError;
+use crate::gates::evaluator::{evaluate_gate, GateContext};
 use super::sets::{MemberStatus, SetStatus};
 
 // ---------------------------------------------------------------------------
@@ -178,59 +180,26 @@ impl StateMachine {
             .to_string()
     }
 
-    /// Evaluate a single gate.  `set_covered` is implemented directly;
-    /// all other types pass (Task 6 will implement the full evaluator).
+    /// Evaluate a single gate using the full gate evaluator.
     fn evaluate_gate(&self, gate: &crate::config::GateConfig) -> Result<(), StateError> {
-        if gate.gate_type == "set_covered" {
-            let set_name = gate
-                .params
-                .get("set")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| StateError::GateBlocked {
-                    gate_type: "set_covered".to_string(),
-                    reason: "gate missing 'set' param".to_string(),
-                })?;
+        let ctx = GateContext {
+            ledger: &self.ledger,
+            config: &self.config,
+            current_state: &self.current_state,
+            state_params: HashMap::new(),
+            working_dir: PathBuf::from("."),
+            event_fields: None,
+        };
 
-            let event_name = gate
-                .params
-                .get("event")
-                .and_then(|v| v.as_str())
-                .unwrap_or("set_member_complete");
+        let result = evaluate_gate(gate, &ctx);
 
-            let field_name = gate
-                .params
-                .get("field")
-                .and_then(|v| v.as_str())
-                .unwrap_or("member");
-
-            let set_config = self.config.sets.get(set_name).ok_or_else(|| {
-                StateError::GateBlocked {
-                    gate_type: "set_covered".to_string(),
-                    reason: format!("unknown set '{}'", set_name),
-                }
-            })?;
-
-            let covered = self.completed_members_for_set(set_name, event_name, field_name);
-
-            let missing: Vec<&str> = set_config
-                .values
-                .iter()
-                .filter(|v| !covered.contains(*v))
-                .map(|v| v.as_str())
-                .collect();
-
-            if !missing.is_empty() {
-                return Err(StateError::GateBlocked {
-                    gate_type: "set_covered".to_string(),
-                    reason: format!(
-                        "set '{}' not fully covered; missing: {}",
-                        set_name,
-                        missing.join(", ")
-                    ),
-                });
-            }
+        if !result.passed {
+            return Err(StateError::GateBlocked {
+                gate_type: result.gate_type,
+                reason: result.reason.unwrap_or_else(|| "gate failed".to_string()),
+            });
         }
-        // All other gate types: pass (stub — Task 6 implements the full evaluator).
+
         Ok(())
     }
 

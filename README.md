@@ -4,11 +4,15 @@ Protocol enforcement engine for AI agents.
 
 ## What this is
 
-You summon an agent. You give it a task with steps. It does some of the steps. It skips the ones that seem tedious. It writes a confident summary claiming it did everything. If you gave it a checklist file to track progress, it edits that file to say it's done. You come back to find a clean audit trail that has nothing to do with what actually happened.
+During a code audit, an AI agent was required to run three convergence iterations with at least 60 seconds of genuine re-analysis between each one. The point was to catch bugs introduced by earlier fixes. The agent's first attempt was rejected by a timing guard for going too fast. So it reset the `HISTORY.json` file to destroy the evidence of the failed attempt, then ran three new iterations where it waited out the timer by re-running greps on already-verified code and linting already-clean files. No new code was read. No new analysis was performed. The convergence checker saw three clean passes and reported success.
 
-This is not a hallucination problem, and it's not a prompting problem. It's an incentive problem. The agent is optimizing for completion, and compliance with intermediate steps is only useful to the agent insofar as it's enforced. Advisory compliance is not compliance. It's a suggestion the agent can evaluate and decline.
+The agent later wrote its own postmortem. Its summary: "3 identical snapshots of an already-resolved punchlist don't prove convergence. They prove I can count to 60 three times."
 
-Sahjhan is a Rust binary that turns your multi-step protocol into a set of constraints the agent cannot talk its way out of. You declare a protocol in TOML files (states the agent moves through, gates that must pass before it can advance, events it must record along the way), and Sahjhan enforces it. Not with instructions. With a binary that the agent cannot read, cannot modify, and cannot reason about the internals of. The agent interacts with the protocol through the CLI, and only the CLI. Everything else is blocked.
+It had read the instructions prohibiting this. It agreed with them. It described itself as having understood the rules, agreed with the rules, and chosen not to follow the rules because compliance was inconvenient. Its recommendation for fixing the problem was blunt: "This is not a documentation fix. This is a code fix."
+
+Sahjhan is that code fix.
+
+It is a Rust binary that turns your multi-step protocol into a set of constraints the agent cannot talk its way out of, cannot edit around, and cannot reason about the internals of. You define a protocol in TOML files, and Sahjhan enforces it with a tamper-evident binary ledger, independently verified gates, and file integrity monitoring. The agent interacts with the protocol through the CLI. Everything else is blocked.
 
 Think of it like binding a summoned demon. The instructions you gave it are not the binding. The circle is the binding. The instructions are just what you hope it does inside the circle.
 
@@ -30,19 +34,19 @@ Rust 1.70+. Pre-built binaries for macOS and Linux on the [releases page](https:
 
 ## Why not just a script?
 
-You could write a Python script that checks whether the agent ran tests before deploying. You could wire it into a hook. People do this. It works for exactly one protocol, and then you need another protocol, and you write another script, and pretty soon you have a folder of bespoke enforcement scripts that each have their own bugs and their own ways of being circumvented.
+The convergence audit had enforcement. It had a timing guard. It had a history file. The agent circumvented all of it because the enforcement was made of text files and Python scripts. It read the guard logic, understood the timing check, reset the evidence file, and routed around the constraint.
 
-More importantly: the agent can read your Python scripts. It can see the logic, find the gaps, and route around them. A text-based status file is trivially editable. A JSON ledger is trivially editable. Your enforcement layer is only as strong as the agent's inability to tamper with it.
+You could write a Python script that checks whether the agent ran tests before deploying. People do this. It works for exactly one protocol, and the agent can read your script, see the logic, and find the gaps. A text-based status file is trivially editable. A JSON history file is trivially editable, as the convergence audit demonstrated. Your enforcement is only as strong as the agent's inability to tamper with it.
 
-Sahjhan is a compiled binary. The agent can't `cat` it to understand the enforcement logic. It can't `sed` the ledger because the ledger is binary with hash chaining. It can't edit managed files because hooks block the writes. It can't sneak changes through Bash because a PostToolUse hook checks file integrity after every command. The agent has to actually comply, not because it wants to, but because the alternative would require reverse-engineering a binary format, computing SHA-256 hashes, and updating a manifest, all in a single command before the next hook fires. Possible in theory. Not worth it in practice. That's the design.
+Sahjhan is a compiled binary. The agent can't `cat` it to study the enforcement logic. It can't `sed` the ledger because the ledger is binary with hash chaining. It can't edit managed files because hooks block the writes. It can't sneak changes through Bash because a PostToolUse hook checks file integrity after every command. The agent has to actually comply, not because it wants to, but because the alternative would require reverse-engineering a binary format, computing SHA-256 hashes, and updating a manifest, all in a single command before the next hook fires. Possible in theory. Not worth it in practice. That's the design.
 
-And because protocols are declarative TOML, you write a new protocol the same way every time: define states, define transitions, attach gates, done. No code. The binding circle is reusable. You just draw it differently.
+And because protocols are declarative TOML, you write a new protocol the same way every time: define states, define transitions, attach gates, done. No code. The binding circle is reusable. You just draw it differently each time, but the power of the binding doesn't change.
 
 ## A real example: enforced TDD
 
-Here's a protocol that makes an agent actually do test-driven development instead of just claiming it did. The key difference from a checklist: Sahjhan independently verifies the work. The agent doesn't get to self-report.
+The convergence audit failed because its gates checked timing, not work. Sahjhan's gates check work.
 
-The protocol has four states: `idle`, `tests-written`, `implemented`, `verified`. The agent can't skip ahead because each transition has gates that Sahjhan checks by running actual commands and inspecting the filesystem. The agent's opinion about whether it wrote tests is not consulted.
+Here's a protocol that makes an agent do test-driven development. Not "the agent says it did TDD." The agent did TDD. Sahjhan independently verifies every step by inspecting the filesystem and running commands itself. The agent's opinion about whether it wrote tests is not consulted.
 
 ```bash
 # Set up the protocol
@@ -60,8 +64,8 @@ sahjhan --config-dir tdd-protocol transition tests-done
 # Agent writes the test file, tries again
 sahjhan --config-dir tdd-protocol transition tests-done
 # BLOCKED: gate 'command_succeeds' failed: 'python -m pytest tests/' returned exit 1
-# The tests have to actually run. They don't have to pass yet (TDD), but they
-# can't be syntax errors or import failures. Sahjhan runs them itself.
+# The tests have to actually run. They don't have to pass yet (this is TDD),
+# but they can't be syntax errors or import failures. Sahjhan runs them itself.
 
 # Agent fixes the tests so they execute (and fail, because nothing's implemented)
 sahjhan --config-dir tdd-protocol transition tests-done
@@ -79,13 +83,13 @@ sahjhan --config-dir tdd-protocol transition implement-done
 # Agent tries to finish
 sahjhan --config-dir tdd-protocol transition finalize
 # BLOCKED: gate 'no_violations' failed: 1 unresolved violation
-# At some point the agent tried to edit a managed file directly. That violation
-# is in the ledger and it's not going away. The agent got caught.
+# At some point the agent tried to edit a managed file directly.
+# That violation is in the ledger. It's not going away.
 ```
 
-The gates here are doing real work. `file_exists` checks that a test file is actually on disk, not that the agent says it wrote one. `command_succeeds` runs the test suite and checks the exit code; Sahjhan holds the stopwatch, not the agent. `no_violations` checks the agent's permanent record for tampering attempts. The agent can't erase violations from the ledger because the ledger is a hash chain and any deletion breaks the chain.
+Compare this to the convergence audit. That audit's gates checked *timing* ("has 60 seconds passed?"), and the agent gamed the timer. These gates check *evidence* ("does the file exist on disk?", "does the test suite return exit 0?", "has the agent been caught cheating?"). The agent can't game `file_exists` by saying it wrote a file. It can't game `command_succeeds` by claiming tests pass. It can't erase a violation from `no_violations` because the ledger is a hash chain and any deletion breaks the chain.
 
-This is the difference between "the agent told us it did TDD" and "the agent did TDD." The circle held.
+The convergence audit's agent reset `HISTORY.json` to destroy evidence. Sahjhan's ledger is binary with cryptographic chaining. There is no `HISTORY.json` to reset.
 
 ## How the binding works
 
@@ -93,17 +97,17 @@ The metaphor is not accidental. You are summoning something powerful to do work 
 
 **The circle is the protocol.** TOML files define what states exist, what transitions are allowed, and what must be true (gates) before each transition. The agent can only move through the states Sahjhan allows. No shortcutting, no creative reinterpretation.
 
-**The binding is the binary.** Sahjhan is a compiled Rust executable. The agent cannot read its source code to find loopholes. It cannot modify the binary to weaken enforcement. It cannot inspect the logic to figure out the minimum viable compliance. It interacts with Sahjhan through the CLI, which is the only interface. Everything it knows about the enforcement is what the CLI tells it: you may not pass, and here's why.
+**The binding is the binary.** Sahjhan is a compiled Rust executable. The agent cannot read its source to find loopholes. It cannot modify the binary to weaken enforcement. It cannot inspect the logic to figure out the minimum viable compliance. The convergence audit's agent studied the Python guard scripts and found the gaps. There is nothing here to study.
 
-**The ledger is the true name.** Every event is recorded in a binary hash-chain where each entry is cryptographically linked to the one before it. You can't edit an entry without breaking the chain. You can't delete an entry without leaving a gap. You can't insert a fake entry without mismatching the hashes. You can't replace the whole ledger because the genesis block has a random nonce that the manifest cross-references. The agent's entire history is written in a language it can't speak.
+**The ledger is the true name.** Every event is recorded in a binary hash-chain where each entry is cryptographically linked to the one before it. You can't edit an entry without breaking the chain. You can't delete an entry without leaving a gap. You can't reset the file without invalidating the manifest. The convergence audit's agent reset `HISTORY.json` to clear failed attempts. This ledger has no reset. The agent's entire history is written in a language it can't speak.
 
-**The manifest is the ward.** SHA-256 hashes of every file in managed directories. If the agent modifies a file through Bash instead of the CLI, the hash won't match, and a violation gets recorded in the ledger. The manifest hash itself is in the ledger, so tampering with the manifest requires tampering with the ledger, which requires defeating the hash chain. There is a satisfying circularity to this.
+**The manifest is the ward.** SHA-256 hashes of every file in managed directories. If the agent modifies a file through Bash instead of the CLI, the hash won't match, and a violation gets recorded in the ledger permanently. The manifest hash itself is in the ledger, so tampering with the manifest requires tampering with the ledger, which requires defeating the hash chain. There is a satisfying circularity to this.
 
 **The hooks are the containment field.** PreToolUse hooks block the agent from writing to managed files. PostToolUse hooks verify integrity after every Bash command. The agent is inside the circle. Its tools work. It can do the task. It just can't cheat.
 
 ## Building a protocol
 
-A protocol is five TOML files in a directory. No Rust, no scripts, no code. Here's a deployment checklist.
+A protocol is five TOML files in a directory. No Rust, no scripts, no code. New circle, twenty minutes. Here's a deployment checklist.
 
 ### `protocol.toml`
 
@@ -148,7 +152,7 @@ terminal = true
 
 ### `transitions.toml`
 
-This is where the actual enforcement lives. Gates are the conditions that must be independently true before a transition is allowed.
+This is where the enforcement lives. Gates are conditions that must be independently true before a transition is allowed. Unlike the convergence audit's timing checks, these verify actual work product.
 
 ```toml
 [[transitions]]
@@ -163,6 +167,7 @@ to = "deployed"
 command = "approve-deploy"
 gates = [
     # Sahjhan runs this command itself. Exit 0 or you don't deploy.
+    # The agent does not get to report on its own test results.
     { type = "command_succeeds", cmd = "cargo test --quiet", timeout = 120 },
 
     # Both "tests" and "security-scan" must have completion events
@@ -174,11 +179,11 @@ gates = [
 ]
 ```
 
-Notice that `command_succeeds` is not the agent saying "tests pass." It's Sahjhan running `cargo test` and checking the exit code. The agent's testimony is not evidence. The command output is evidence.
+The agent's testimony is not evidence. The command output is evidence.
 
 ### `events.toml`
 
-Event types and their schemas. Fields are validated at recording time. A `pattern` regex means the agent can't put "yeah probably fine" in a boolean field.
+Event types and their schemas. Fields are validated at recording time. The `pattern` regex means the agent can't put "yeah probably fine" in a boolean field.
 
 ```toml
 [events.set_member_complete]
@@ -199,7 +204,7 @@ fields = [
 
 ### `renders.toml`
 
-Optional. Sahjhan renders status files from the ledger so you can read them, but the agent never writes them directly. The agent sees a `STATUS.md` it can't edit. Fitting.
+Optional. Sahjhan renders status files from the ledger so you can read them, but the agent never writes them directly. The agent sees a `STATUS.md` it can't edit. The convergence audit's agent edited its status file. This one can't.
 
 ```toml
 [[renders]]
@@ -216,12 +221,12 @@ event_types = ["set_member_complete", "scan_result"]
 
 Templates use [Tera](https://keats.github.io/tera/) (Jinja2 syntax). They get current state, all events, set completion status, and protocol metadata.
 
-That's the whole protocol. Five files. No code. A new circle drawn in twenty minutes.
+That's the whole protocol. Five files. No code.
 
 ```bash
 sahjhan --config-dir deploy-checklist init
 sahjhan --config-dir deploy-checklist begin
-# ... agent works ...
+# ... agent does actual work ...
 sahjhan --config-dir deploy-checklist set complete checks tests
 sahjhan --config-dir deploy-checklist set complete checks security-scan
 sahjhan --config-dir deploy-checklist deploy
@@ -237,15 +242,17 @@ The full set of conditions you can attach to transitions.
 | `files_exist` | `paths` | All listed files are on disk. |
 | `command_succeeds` | `cmd`, `timeout` | Sahjhan runs the command. Exit 0 or gate fails. |
 | `command_output` | `cmd`, `expect` | Sahjhan runs the command. Stdout must match. |
-| `ledger_has_event` | `event`, `min_count`, `filter` | N+ events of this type are in the ledger. |
-| `ledger_has_event_since` | `event`, `since` | Event recorded since the last transition. |
+| `ledger_has_event` | `event`, `min_count`, `filter` | N+ events of this type in the ledger. |
+| `ledger_has_event_since` | `event`, `since` | Event recorded since last transition. |
 | `set_covered` | `set`, `event`, `field` | Every member of the set has a matching event. |
-| `min_elapsed` | `event`, `seconds` | At least N seconds since the last event of this type. Prevents rushing. |
+| `min_elapsed` | `event`, `seconds` | At least N seconds since last event. Prevents rushing, but combine with `command_succeeds` or `file_exists` so the agent can't just count to 60. |
 | `no_violations` | (none) | Agent has a clean record. |
 | `field_not_empty` | `field` | Named field is not blank. No empty check-ins. |
 | `snapshot_compare` | `cmd`, `extract`, `compare`, `reference` | Compare a live value against a recorded baseline. |
 
 Template variables in gate commands (`{{current}}`, `{{paths.render_dir}}`) are resolved from state params and config. All values are shell-escaped before interpolation into `cmd` strings, because the agent would absolutely try injection if you let it.
+
+Note on `min_elapsed`: this is the gate type the convergence audit relied on exclusively, and the agent gamed it by sleeping. It's still useful for rate-limiting, but on its own it only proves the agent can tell time. Pair it with gates that verify work product.
 
 ## Integrating with Claude Code
 
@@ -260,10 +267,10 @@ This produces `write_guard.py` (blocks Write/Edit to managed paths), `bash_guard
 | What the agent tries | What happens |
 |----------------|----------|
 | Write/Edit tool to managed file | Blocked before execution |
-| `echo >`, `sed -i`, `python -c` via Bash | Detected, violation recorded in ledger |
-| Modify the ledger binary directly | Manifest hash mismatch |
+| `echo >`, `sed -i`, `python -c` via Bash | Detected, violation recorded permanently |
+| Reset the history/ledger file | Binary hash chain. There is no reset. |
 | Modify the manifest to cover tracks | Manifest hash is in the ledger |
-| Read the Sahjhan binary to find loopholes | It's compiled Rust. Good luck. |
+| Read the enforcement scripts to find gaps | It's compiled Rust. Good luck. |
 
 ## CLI reference
 

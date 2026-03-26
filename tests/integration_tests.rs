@@ -654,3 +654,282 @@ fn test_finish_alias() {
         .assert()
         .stdout(predicate::str::contains("Done"));
 }
+
+// ---------------------------------------------------------------------------
+// validate command tests
+// ---------------------------------------------------------------------------
+
+/// Helper: set up a config directory (without initializing a run) from the
+/// minimal example.  Returns the tempdir so it stays alive.
+fn setup_config_only_dir() -> tempfile::TempDir {
+    let dir = tempdir().unwrap();
+    let config_dir = dir.path().join("enforcement");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    for file in &[
+        "protocol.toml",
+        "states.toml",
+        "transitions.toml",
+        "events.toml",
+        "renders.toml",
+    ] {
+        std::fs::copy(
+            format!("examples/minimal/{}", file),
+            config_dir.join(file),
+        )
+        .unwrap();
+    }
+    // Copy templates directory
+    let templates_dir = config_dir.join("templates");
+    std::fs::create_dir_all(&templates_dir).unwrap();
+    for file in &["status.md.tera", "history.md.tera"] {
+        std::fs::copy(
+            format!("examples/minimal/templates/{}", file),
+            templates_dir.join(file),
+        )
+        .unwrap();
+    }
+    dir
+}
+
+#[test]
+fn test_validate_clean_config() {
+    let dir = setup_config_only_dir();
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "validate"])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Config checks out"));
+}
+
+#[test]
+fn test_validate_catches_bad_gate_type() {
+    let dir = setup_config_only_dir();
+    let config_dir = dir.path().join("enforcement");
+
+    // Overwrite transitions.toml with an invalid gate type
+    std::fs::write(
+        config_dir.join("transitions.toml"),
+        r#"
+[[transitions]]
+from = "idle"
+to = "working"
+command = "begin"
+gates = [
+    { type = "nonexistent_gate", foo = "bar" },
+]
+"#,
+    )
+    .unwrap();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "validate"])
+        .current_dir(dir.path())
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("unknown gate type 'nonexistent_gate'"));
+}
+
+#[test]
+fn test_validate_catches_missing_gate_param() {
+    let dir = setup_config_only_dir();
+    let config_dir = dir.path().join("enforcement");
+
+    // file_exists gate without required "path" parameter
+    std::fs::write(
+        config_dir.join("transitions.toml"),
+        r#"
+[[transitions]]
+from = "idle"
+to = "working"
+command = "begin"
+gates = [
+    { type = "file_exists" },
+]
+"#,
+    )
+    .unwrap();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "validate"])
+        .current_dir(dir.path())
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("missing required parameter 'path'"));
+}
+
+#[test]
+fn test_validate_catches_missing_template() {
+    let dir = setup_config_only_dir();
+    let config_dir = dir.path().join("enforcement");
+
+    // Overwrite renders.toml to point to a nonexistent template
+    std::fs::write(
+        config_dir.join("renders.toml"),
+        r#"
+[[renders]]
+target = "STATUS.md"
+template = "templates/nonexistent.tera"
+trigger = "on_transition"
+"#,
+    )
+    .unwrap();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "validate"])
+        .current_dir(dir.path())
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("template 'templates/nonexistent.tera' does not exist"));
+}
+
+#[test]
+fn test_validate_catches_bad_alias_target() {
+    let dir = setup_config_only_dir();
+    let config_dir = dir.path().join("enforcement");
+
+    // Overwrite protocol.toml with an alias pointing to a non-existent transition
+    std::fs::write(
+        config_dir.join("protocol.toml"),
+        r#"
+[protocol]
+name = "minimal"
+version = "1.0.0"
+description = "Minimal example protocol"
+
+[paths]
+managed = ["output"]
+data_dir = "output/.sahjhan"
+render_dir = "output"
+
+[sets.check]
+description = "Verification checks"
+values = ["tests", "lint"]
+
+[aliases]
+"start" = "transition begin"
+"bogus" = "transition does_not_exist"
+"#,
+    )
+    .unwrap();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "validate"])
+        .current_dir(dir.path())
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("alias 'bogus' targets transition 'does_not_exist' which is not defined"));
+}
+
+#[test]
+fn test_validate_catches_bad_render_event_type() {
+    let dir = setup_config_only_dir();
+    let config_dir = dir.path().join("enforcement");
+
+    // Overwrite renders.toml with a reference to a non-existent event type
+    std::fs::write(
+        config_dir.join("renders.toml"),
+        r#"
+[[renders]]
+target = "STATUS.md"
+template = "templates/status.md.tera"
+trigger = "on_transition"
+
+[[renders]]
+target = "HISTORY.md"
+template = "templates/history.md.tera"
+trigger = "on_event"
+event_types = ["totally_fake_event"]
+"#,
+    )
+    .unwrap();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "validate"])
+        .current_dir(dir.path())
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("undefined event type 'totally_fake_event'"));
+}
+
+#[test]
+fn test_validate_warns_terminal_state_outgoing() {
+    let dir = setup_config_only_dir();
+    let config_dir = dir.path().join("enforcement");
+
+    // Add a transition from the terminal state "done"
+    std::fs::write(
+        config_dir.join("transitions.toml"),
+        r#"
+[[transitions]]
+from = "idle"
+to = "working"
+command = "begin"
+gates = []
+
+[[transitions]]
+from = "working"
+to = "done"
+command = "complete"
+gates = [
+    { type = "set_covered", set = "check", event = "set_member_complete", field = "member" },
+]
+
+[[transitions]]
+from = "done"
+to = "idle"
+command = "restart"
+gates = []
+"#,
+    )
+    .unwrap();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "validate"])
+        .current_dir(dir.path())
+        .assert()
+        .success() // warnings don't cause failure
+        .stderr(predicate::str::contains("terminal state 'done' has outgoing transition"));
+}
+
+#[test]
+fn test_validate_warns_unreachable_state() {
+    let dir = setup_config_only_dir();
+    let config_dir = dir.path().join("enforcement");
+
+    // Add an orphan state that nothing transitions to
+    std::fs::write(
+        config_dir.join("states.toml"),
+        r#"
+[states.idle]
+label = "Idle"
+initial = true
+
+[states.working]
+label = "Working"
+
+[states.done]
+label = "Done"
+terminal = true
+
+[states.orphan]
+label = "Orphan"
+"#,
+    )
+    .unwrap();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "validate"])
+        .current_dir(dir.path())
+        .assert()
+        .success() // warnings don't cause failure
+        .stderr(predicate::str::contains("state 'orphan' is unreachable"));
+}

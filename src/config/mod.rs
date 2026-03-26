@@ -11,7 +11,7 @@ pub use renders::RenderConfig;
 pub use states::{StateConfig, StateParam};
 pub use transitions::{GateConfig, TransitionConfig};
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 /// The unified configuration loaded from a protocol directory.
@@ -184,5 +184,168 @@ impl ProtocolConfig {
         }
 
         errors
+    }
+
+    /// Deep validation that includes file-system and cross-reference checks.
+    ///
+    /// This extends the basic `validate()` with:
+    /// - Gate type validation (known types + required params)
+    /// - Template file existence (renders.toml paths relative to config_dir)
+    /// - Alias target validation (alias values resolve to valid commands)
+    /// - Render event type validation (on_event triggers reference defined events)
+    /// - Terminal state outgoing transition warnings
+    /// - Unreachable state detection warnings
+    ///
+    /// Returns `(errors, warnings)` — errors are hard failures, warnings are advisory.
+    pub fn validate_deep(&self, config_dir: &Path) -> (Vec<String>, Vec<String>) {
+        // Start with the basic checks.
+        let mut errors = self.validate();
+        let mut warnings: Vec<String> = Vec::new();
+
+        // Known gate types and their required parameters.
+        let known_gates: HashMap<&str, Vec<&str>> = HashMap::from([
+            ("file_exists", vec!["path"]),
+            ("files_exist", vec!["paths"]),
+            ("command_succeeds", vec!["cmd"]),
+            ("command_output", vec!["cmd", "expect"]),
+            ("ledger_has_event", vec!["event"]),
+            ("ledger_has_event_since", vec!["event"]),
+            ("set_covered", vec!["set"]),
+            ("min_elapsed", vec!["event", "seconds"]),
+            ("no_violations", vec![]),
+            ("field_not_empty", vec!["field"]),
+            ("snapshot_compare", vec!["cmd", "extract", "reference"]),
+        ]);
+
+        // 6. Gate type validation.
+        for t in &self.transitions {
+            for gate in &t.gates {
+                match known_gates.get(gate.gate_type.as_str()) {
+                    None => {
+                        errors.push(format!(
+                            "transitions.toml: transition '{}' has unknown gate type '{}'",
+                            t.command, gate.gate_type
+                        ));
+                    }
+                    Some(required_params) => {
+                        for &param in required_params {
+                            if !gate.params.contains_key(param) {
+                                errors.push(format!(
+                                    "transitions.toml: gate '{}' in transition '{}' missing required parameter '{}'",
+                                    gate.gate_type, t.command, param
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 7. Template file existence.
+        for render in &self.renders {
+            let template_path = config_dir.join(&render.template);
+            if !template_path.exists() {
+                errors.push(format!(
+                    "renders.toml: template '{}' does not exist (looked at {})",
+                    render.template,
+                    template_path.display()
+                ));
+            }
+        }
+
+        // 8. Alias target validation.
+        // Build the set of valid transition commands and event types.
+        let transition_commands: HashSet<&str> = self
+            .transitions
+            .iter()
+            .map(|t| t.command.as_str())
+            .collect();
+        let event_types: HashSet<&str> = self.events.keys().map(|k| k.as_str()).collect();
+
+        for (alias_name, alias_target) in &self.aliases {
+            let parts: Vec<&str> = alias_target.splitn(2, ' ').collect();
+            if parts.len() < 2 {
+                errors.push(format!(
+                    "protocol.toml: alias '{}' has malformed target '{}' (expected 'command arg')",
+                    alias_name, alias_target
+                ));
+                continue;
+            }
+            match parts[0] {
+                "transition" => {
+                    if !transition_commands.contains(parts[1]) {
+                        errors.push(format!(
+                            "protocol.toml: alias '{}' targets transition '{}' which is not defined",
+                            alias_name, parts[1]
+                        ));
+                    }
+                }
+                "event" => {
+                    if !event_types.contains(parts[1]) {
+                        errors.push(format!(
+                            "protocol.toml: alias '{}' targets event type '{}' which is not defined",
+                            alias_name, parts[1]
+                        ));
+                    }
+                }
+                // Other command targets (set, log, status, etc.) are built-in — skip.
+                _ => {}
+            }
+        }
+
+        // 9. Render event type validation.
+        for render in &self.renders {
+            if render.trigger == "on_event" {
+                if let Some(ref types) = render.event_types {
+                    for et in types {
+                        if !event_types.contains(et.as_str()) {
+                            errors.push(format!(
+                                "renders.toml: render for '{}' references undefined event type '{}'",
+                                render.target, et
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        // 10. Terminal state with outgoing transitions (warning).
+        let terminal_states: HashSet<&str> = self
+            .states
+            .iter()
+            .filter(|(_, s)| s.terminal.unwrap_or(false))
+            .map(|(name, _)| name.as_str())
+            .collect();
+
+        for t in &self.transitions {
+            if terminal_states.contains(t.from.as_str()) {
+                warnings.push(format!(
+                    "transitions.toml: terminal state '{}' has outgoing transition '{}' — this transition can never fire",
+                    t.from, t.command
+                ));
+            }
+        }
+
+        // 11. Unreachable state detection (warning).
+        // A state is reachable if it is initial, or if it appears as a `to` in some transition.
+        let mut reachable: HashSet<&str> = HashSet::new();
+        for (name, state) in &self.states {
+            if state.initial.unwrap_or(false) {
+                reachable.insert(name.as_str());
+            }
+        }
+        for t in &self.transitions {
+            reachable.insert(t.to.as_str());
+        }
+        for (name, _) in &self.states {
+            if !reachable.contains(name.as_str()) {
+                warnings.push(format!(
+                    "states.toml: state '{}' is unreachable (no incoming transitions and not initial)",
+                    name
+                ));
+            }
+        }
+
+        (errors, warnings)
     }
 }

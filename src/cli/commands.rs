@@ -118,6 +118,50 @@ fn pathdiff(target: &Path, base: &Path) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// validate
+// ---------------------------------------------------------------------------
+
+pub fn cmd_validate(config_dir: &str) -> i32 {
+    let config_path = resolve_config_dir(config_dir);
+
+    // Load the config (parse-level errors)
+    let config = match ProtocolConfig::load(&config_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("  - {}", e);
+            eprintln!(
+                "\nFix these before invoking. I can't enforce a protocol that doesn't make sense."
+            );
+            return EXIT_CONFIG_ERROR;
+        }
+    };
+
+    // Run deep validation
+    let (errors, warnings) = config.validate_deep(&config_path);
+
+    // Print warnings first
+    for w in &warnings {
+        eprintln!("  warning: {}", w);
+    }
+
+    if errors.is_empty() {
+        if !warnings.is_empty() {
+            println!();
+        }
+        println!("Config checks out. No guarantees about what the agent will do with it, but at least the circle is drawn correctly.");
+        EXIT_SUCCESS
+    } else {
+        for e in &errors {
+            eprintln!("  - {}", e);
+        }
+        eprintln!(
+            "\nFix these before invoking. I can't enforce a protocol that doesn't make sense."
+        );
+        EXIT_CONFIG_ERROR
+    }
+}
+
+// ---------------------------------------------------------------------------
 // init
 // ---------------------------------------------------------------------------
 

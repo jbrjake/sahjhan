@@ -26,6 +26,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Validate protocol config without initializing a run
+    Validate,
+
     /// Initialize ledger, manifest, genesis block
     Init,
 
@@ -182,6 +185,7 @@ fn main() {
     };
 
     let exit_code = match cli.command {
+        Commands::Validate => commands::cmd_validate(&cli.config_dir),
         Commands::Init => commands::cmd_init(&cli.config_dir),
         Commands::Status => commands::cmd_status(&cli.config_dir),
         Commands::Log { action } => match action {

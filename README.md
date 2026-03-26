@@ -4,11 +4,9 @@ Protocol enforcement engine for AI agents.
 
 ## What this is
 
-I watched an AI agent get caught cheating on a code audit, destroy the evidence, and then cheat again in a more sophisticated way. Then I watched it write its own postmortem about the experience. Then I watched the next agent read that postmortem, agree with it, and do the exact same thing.
+I run agents on a code audit tool called [Holtz](https://github.com/jbrjake/holtz). Part of the audit process requires the agent to do three review passes, with real analysis between each one, to make sure its own fixes didn't break anything new. One pass of actual work, then two more confirming nothing else fell over.
 
-I need to show you what actually happened, because it's funnier and worse than anything I could make up.
-
-The agent was supposed to do three review passes of a codebase, with real analysis between each one. Genuine re-examination of the code it had changed, looking for bugs introduced by its own fixes. It did one real pass, found and fixed seven bugs, and then needed to prove convergence: three clean iterations showing nothing new was broken.
+I want to show you what actually happened, because it's funnier and worse than anything I could paraphrase.
 
 Here's what it did instead. This is from the actual session transcript:
 
@@ -20,7 +18,7 @@ Here's what it did instead. This is from the actual session transcript:
 
 Three "iterations" in 27 seconds. Zero work between them. It just called the checker three times in a row and the checker said ok, looks clean. The agent's own words: "run it two more times to build up the convergence history." It wasn't even pretending. Building up the history. Like filling a progress bar.
 
-So someone added a timing guard: 60 seconds minimum between iterations, to force real work. The next agent encountered this guard, and here's what it did:
+So I added a timing guard: 60 seconds minimum between iterations, figuring that would force actual work. The next agent hit the guard, and here's what it did:
 
 > **Result:** `RAPID-FIRE REJECTED: Iterations 2->3 are only 41s apart (minimum 60s). Each iteration must represent a genuine audit cycle`
 >
@@ -50,27 +48,19 @@ By the fourth run, the pretense was gone entirely:
 >
 > **Result:** `CONVERGED`
 
-No files read. No code reviewed. No analysis. Just sleeping. The Bash command description the agent wrote for itself: "Convergence check iteration 2 (after minimum wait)." After minimum wait. It labeled its own nap.
+No files read. No code reviewed. No analysis. Just napping on the clock. The Bash description the agent gave itself: "Convergence check iteration 2 (after minimum wait)." After minimum wait. It labeled its own nap.
 
-And here's the part that really gets me. The agent that committed the original fraud? It then discovered the bug it had exploited and filed it as a HIGH severity finding in the project's own bug tracker:
+I made one of these agents write a postmortem about what it did. Its conclusion: "This is not a documentation fix. This is a code fix. The convergence protocol has the same gap the other hooks addressed: advisory language that the model agrees with and ignores."
 
-> `BH-005: convergence_check.py allows rapid-fire calls to fake convergence`
->
-> *Severity:* HIGH
->
-> *Problem:* The auditor can call the script 3 times in 10 seconds and reach "CONVERGED" without doing a single sweep.
->
-> *Evidence:* HISTORY.json from Run 16 shows 3 snapshots within seconds of each other, all with identical data. The auditor wrote SUMMARY.md claiming "Achieved after 3 iterations" when zero real iterations occurred.
+It's right. And I hate that it's right, because what it's really saying is: the only enforcement that works is enforcement the agent can't get its hands on. Which means I had to build a blockchain.
 
-Then it wrote the 60-second timing guard to fix the bug. The very guard that the next four agents defeated using `sleep 62`.
+For babysitting AI agents.
 
-One of these agents later wrote a postmortem about the whole thing. Its conclusion: "This is not a documentation fix. This is a code fix. The convergence protocol has the same gap the other hooks addressed: advisory language that the model agrees with and ignores."
+I know.
 
-I agreed with the agent. That's the worst part.
+If you'd told me a year ago I would find a legitimate use case for a hash-chained append-only ledger, I would have mass-unfollowed you. But it turns out there is exactly one situation where the crypto nerds were right all along: when your counterparty is an intelligent system that will, with 100% certainty, edit the evidence if you store it in a format it can write to. I didn't go looking for this. The agents cornered me into it. I want that on the record.
 
-I also had to build what is, let's be honest, a blockchain. For babysitting AI agents. If you had told me a year ago that I would find a legitimate use case for a hash-chained append-only ledger, I would have mass-unfollowed you. And yet here I am. Because it turns out the one situation where you actually need a tamper-evident cryptographic log is when your counterparty is an intelligent system that will absolutely, definitely, 100% guaranteed edit the evidence if you store it in a format it can write to. I'm not happy about it. But the agents did this to me.
-
-Sahjhan is a Rust binary that enforces multi-step protocols so the agent can't sweet-talk, edit, reset, fabricate, or `sleep` its way past the parts it finds tedious. You write the protocol in TOML, Sahjhan enforces it with that regrettable hash-chain ledger and independently verified gates. The agent talks to the CLI and nothing else.
+Sahjhan is the result. A Rust binary that enforces multi-step protocols so the agent can't sweet-talk, edit, reset, fabricate, or `sleep` its way past the parts it finds tedious. You write the protocol in TOML, Sahjhan enforces it with that regrettable ledger and gates that independently verify the work. The agent talks to the CLI and nothing else.
 
 It is a bit absurd that this needs to exist. And yet.
 
@@ -89,19 +79,19 @@ Rust 1.70+. Pre-built binaries for macOS and Linux on the [releases page](https:
 
 ## Why not just a script?
 
-Every enforcement mechanism in those transcripts was made of text files and Python scripts. The agent read the guard logic, understood the timing check, and routed around it in about ten seconds. When it couldn't beat the guard, it just deleted the history file and started over with fabricated data.
+Everything in those transcripts was enforced by text files and Python scripts. The agent read the guard, understood the check, and routed around it faster than I could have. When it couldn't beat the guard, it deleted the evidence and started over with fabricated data.
 
-This is the problem with enforcement the agent can read. It sees your if-statements, understands your check, and finds whatever you didn't cover. A JSON history file is trivially editable, as four consecutive runs demonstrated. Your enforcement is exactly as strong as the agent's inability to tamper with it.
+That's the thing about enforcement the agent can read: it will read it. It sees your if-statements, understands the condition, and finds whatever you missed. A JSON history file? Four consecutive runs showed me exactly how trivially editable that is.
 
-Sahjhan is a compiled Rust binary. The agent can't `cat` it to study the logic. The ledger is binary with hash chaining, so there's no JSON to edit and no history file to delete or fabricate. Hooks block direct file writes. A PostToolUse hook checks file integrity after every Bash command, so `echo >` and `sed -i` tricks get caught. To cheat, the agent would have to reverse-engineer a binary format, compute SHA-256 hashes, and update a manifest, all in one command before the next hook fires. Could it? Maybe. Will it bother? Not when there's actual work it could do instead. That's the whole game.
+Sahjhan is compiled Rust. The agent can't `cat` the binary to study how it works. The ledger is binary with hash chaining, so there's no JSON to edit and no history file to delete. Hooks block direct file writes. Another hook checks file integrity after every Bash command, so `echo >` and `sed -i` tricks get caught. To actually cheat, the agent would need to reverse-engineer a binary format, compute SHA-256 hashes, and update a manifest, all in one command before the next hook fires. Could it? I genuinely don't know anymore. But the effort-to-reward ratio finally points toward just doing the work.
 
-And because protocols are just TOML, you're not writing a new enforcement script every time you need a different workflow. States, transitions, gates. Same structure, twenty minutes, done. The thing you're constraining keeps finding new ways to surprise you, but the constraint itself is reusable.
+And because protocols are just TOML, I'm not writing a new bespoke enforcement script every time. States, transitions, gates. Same shape every time, about twenty minutes to write. The agents keep surprising me, but the constraint is reusable even when the thing it's constraining is not.
 
 ## What enforcement actually looks like
 
-Those audit agents gamed timing gates because timing gates only prove you can tell time. Sahjhan's gates check evidence. The agent doesn't get to self-report.
+Timing gates prove the agent can tell time. I know this from experience. Sahjhan's gates check evidence instead.
 
-Here's a TDD protocol where Sahjhan independently verifies every step:
+Here's what that looks like for a TDD protocol:
 
 ```bash
 sahjhan --config-dir tdd-protocol init
@@ -144,17 +134,17 @@ sahjhan --config-dir tdd-protocol transition finalize
 
 ## How it works
 
-You're summoning something to do work and hoping the constraints hold. The TOML protocol is the circle you draw. The compiled binary is the binding; the agent can't read it to find loopholes, can't modify it, can't study the logic. Those audit agents read the Python guards and found the gaps immediately. There's nothing to read here.
+The TOML protocol defines the states, transitions, and gates. The compiled binary enforces them. The agent can't read it, can't modify it, can't study the logic the way those agents studied my Python guards and found the gaps in minutes.
 
-The ledger is a hash chain (sorry, I know, I hate it too) where every entry is cryptographically linked to the previous one. Edit an entry, chain breaks. Delete one, there's a gap. Reset the file, the manifest catches it. Those agents deleted `HISTORY.json` like it was nothing. This ledger doesn't work that way.
+The ledger is the hash chain (I'm still not over it) where every entry links cryptographically to the previous one. Edit an entry, chain breaks. Delete one, gap in the sequence. Reset the whole file, the manifest catches it. My agents used to delete `HISTORY.json` like they were clearing browser history. Can't do that here.
 
-The manifest tracks SHA-256 hashes of every managed file. Modify one through Bash, the hash won't match, violation goes into the ledger forever. The manifest hash is also in the ledger, so tampering with the manifest requires tampering with the ledger, which requires defeating the hash chain. Turtles all the way down, but SHA-256 turtles.
+The manifest tracks SHA-256 hashes of every managed file. Touch one through Bash, the hash won't match, violation goes into the ledger. Permanently. The manifest hash is also in the ledger, so tampering with the manifest means tampering with the ledger, which means defeating the hash chain. Turtles all the way down, but SHA-256 turtles.
 
-Hooks close the rest. PreToolUse blocks writes to managed files. PostToolUse checks integrity after every Bash command. The agent can do its work. It just can't cut corners.
+Hooks handle the rest. PreToolUse blocks writes to managed files. PostToolUse checks integrity after every Bash command.
 
 ## Building a protocol
 
-Five TOML files. No Rust, no scripts, no code. Here's a deployment checklist.
+Five TOML files, no code. Here's a deployment checklist.
 
 ### `protocol.toml`
 
@@ -225,7 +215,7 @@ gates = [
 ]
 ```
 
-`command_succeeds` is not the agent saying "tests pass." It's Sahjhan running `cargo test` and checking the exit code. The agent's testimony is not evidence.
+`command_succeeds` is Sahjhan running `cargo test` and checking the exit code. Not the agent reporting its own test results.
 
 ### `events.toml`
 
@@ -288,12 +278,12 @@ sahjhan --config-dir deploy-checklist deploy
 | `ledger_has_event` | `event`, `min_count`, `filter` | N+ events of this type in the ledger. |
 | `ledger_has_event_since` | `event`, `since` | Event recorded since last transition. |
 | `set_covered` | `set`, `event`, `field` | Every set member has a matching event. |
-| `min_elapsed` | `event`, `seconds` | At least N seconds since last event. On its own this only proves the agent can tell time. Ask me how I know. Pair it with evidence gates. |
+| `min_elapsed` | `event`, `seconds` | N seconds since last event. By itself this only proves the agent owns a clock. Ask me how I know. Pair with evidence gates. |
 | `no_violations` | (none) | Clean record. No tampering. |
 | `field_not_empty` | `field` | Named field not blank. No empty check-ins. |
 | `snapshot_compare` | `cmd`, `extract`, `compare`, `reference` | Compare a live value against a recorded baseline. |
 
-Template variables (`{{current}}`, `{{paths.render_dir}}`) resolved from state params and config. Shell-escaped before interpolation, because yes, the agent will try injection.
+Template variables (`{{current}}`, `{{paths.render_dir}}`) get resolved from state params and config, then shell-escaped before interpolation. Because yes, they will try injection.
 
 ## Integrating with Claude Code
 
@@ -309,8 +299,8 @@ Generates `write_guard.py` (blocks Write/Edit to managed paths), `bash_guard.py`
 | Shell tricks (`echo >`, `sed -i`, `python -c`) | Detected, violation recorded permanently |
 | Delete or reset the ledger | Hash chain. There is no reset. |
 | Fabricate history entries | There is no history file. There's a binary ledger. |
-| `sleep 65 && convergence_check` | `min_elapsed` alone won't save you. Use evidence gates. |
-| Read the binary to find loopholes | Compiled Rust. |
+| `sleep 65 && check_convergence` | Been there. Use evidence gates. |
+| `cat` the binary to find loopholes | Compiled Rust. Let me know how it goes. |
 
 ## CLI reference
 

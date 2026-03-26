@@ -12,6 +12,7 @@ use crate::gates::evaluator::{evaluate_gates, GateContext};
 use crate::ledger::chain::Ledger;
 use crate::manifest::tracker::Manifest;
 use crate::manifest::verify as manifest_verify;
+use crate::render::engine::RenderEngine;
 use crate::state::machine::StateMachine;
 
 // ---------------------------------------------------------------------------
@@ -400,9 +401,32 @@ pub fn cmd_transition(config_dir: &str, name: &str, args: &[String]) -> i32 {
                 machine.current_state()
             );
 
-            // Stub: renders would be triggered here
+            // Trigger on_transition renders
             if !config.renders.is_empty() {
-                println!("  (renders would be triggered)");
+                if let Ok(engine) = RenderEngine::new(&config, &config_path) {
+                    let render_dir = resolve_data_dir(&config.paths.render_dir);
+                    let ledger_seq = machine.ledger().entries().last().map(|e| e.seq).unwrap_or(0);
+                    match engine.render_triggered(
+                        "on_transition",
+                        None,
+                        machine.ledger(),
+                        &render_dir,
+                        &mut manifest,
+                        ledger_seq,
+                    ) {
+                        Ok(rendered) => {
+                            for target in &rendered {
+                                println!("  Rendered: {}", target);
+                            }
+                            if !rendered.is_empty() {
+                                let _ = save_manifest(&mut manifest, &data_dir);
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("  Render warning: {}", e);
+                        }
+                    }
+                }
             }
 
             EXIT_SUCCESS
@@ -527,6 +551,35 @@ pub fn cmd_event(config_dir: &str, event_type: &str, field_strs: &[String]) -> i
             }
 
             println!("Event '{}' recorded. I've added it to the ledger, where it will remain long after your context window has forgotten.", event_type);
+
+            // Trigger on_event renders
+            if !config.renders.is_empty() {
+                if let Ok(engine) = RenderEngine::new(&config, &config_path) {
+                    let render_dir = resolve_data_dir(&config.paths.render_dir);
+                    let ledger_seq = machine.ledger().entries().last().map(|e| e.seq).unwrap_or(0);
+                    match engine.render_triggered(
+                        "on_event",
+                        Some(event_type),
+                        machine.ledger(),
+                        &render_dir,
+                        &mut manifest,
+                        ledger_seq,
+                    ) {
+                        Ok(rendered) => {
+                            for target in &rendered {
+                                println!("  Rendered: {}", target);
+                            }
+                            if !rendered.is_empty() {
+                                let _ = save_manifest(&mut manifest, &data_dir);
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("  Render warning: {}", e);
+                        }
+                    }
+                }
+            }
+
             EXIT_SUCCESS
         }
         Err(e) => {
@@ -651,6 +704,35 @@ pub fn cmd_set_complete(config_dir: &str, set_name: &str, member: &str) -> i32 {
                 "Recorded: {}.{} complete ({}/{}). The ledger remembers.",
                 set_name, member, status.completed, status.total
             );
+
+            // Trigger on_event renders for set_member_complete
+            if !config.renders.is_empty() {
+                if let Ok(engine) = RenderEngine::new(&config, &config_path) {
+                    let render_dir = resolve_data_dir(&config.paths.render_dir);
+                    let ledger_seq = machine.ledger().entries().last().map(|e| e.seq).unwrap_or(0);
+                    match engine.render_triggered(
+                        "on_event",
+                        Some("set_member_complete"),
+                        machine.ledger(),
+                        &render_dir,
+                        &mut manifest,
+                        ledger_seq,
+                    ) {
+                        Ok(rendered) => {
+                            for target in &rendered {
+                                println!("  Rendered: {}", target);
+                            }
+                            if !rendered.is_empty() {
+                                let _ = save_manifest(&mut manifest, &data_dir);
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("  Render warning: {}", e);
+                        }
+                    }
+                }
+            }
+
             EXIT_SUCCESS
         }
         Err(e) => {
@@ -981,17 +1063,122 @@ pub fn cmd_gate_check(config_dir: &str, transition_name: &str) -> i32 {
 // render (stub)
 // ---------------------------------------------------------------------------
 
-pub fn cmd_render(_config_dir: &str) -> i32 {
-    println!("Render: not yet implemented. The templates will have their day.");
-    EXIT_SUCCESS
+pub fn cmd_render(config_dir: &str) -> i32 {
+    let config_path = resolve_config_dir(config_dir);
+    let config = match load_config(&config_path) {
+        Ok(c) => c,
+        Err((code, msg)) => {
+            eprintln!("{}", msg);
+            return code;
+        }
+    };
+
+    if config.renders.is_empty() {
+        println!("No renders configured. Nothing to do.");
+        return EXIT_SUCCESS;
+    }
+
+    let data_dir = resolve_data_dir(&config.paths.data_dir);
+    let ledger = match open_ledger(&data_dir) {
+        Ok(l) => l,
+        Err((code, msg)) => {
+            eprintln!("{}", msg);
+            return code;
+        }
+    };
+    let mut manifest = match load_manifest(&data_dir) {
+        Ok(m) => m,
+        Err((code, msg)) => {
+            eprintln!("{}", msg);
+            return code;
+        }
+    };
+
+    let engine = match RenderEngine::new(&config, &config_path) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("Cannot create render engine: {}", e);
+            return EXIT_CONFIG_ERROR;
+        }
+    };
+
+    let render_dir = resolve_data_dir(&config.paths.render_dir);
+    let ledger_seq = ledger.entries().last().map(|e| e.seq).unwrap_or(0);
+
+    match engine.render_all(&ledger, &render_dir, &mut manifest, ledger_seq) {
+        Ok(rendered) => {
+            if let Err((code, msg)) = save_manifest(&mut manifest, &data_dir) {
+                eprintln!("{}", msg);
+                return code;
+            }
+            for target in &rendered {
+                println!("Rendered: {}", target);
+            }
+            println!(
+                "All templates rendered. {} file(s) written. The ledger made manifest.",
+                rendered.len()
+            );
+            EXIT_SUCCESS
+        }
+        Err(e) => {
+            eprintln!("Render failed: {}", e);
+            EXIT_INTEGRITY_ERROR
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
-// hook generate (stub)
+// hook generate
 // ---------------------------------------------------------------------------
 
-pub fn cmd_hook_generate(_config_dir: &str, _harness: &Option<String>) -> i32 {
-    println!("Hook generation: not yet implemented. The hooks will come when the time is right.");
+pub fn cmd_hook_generate(config_dir: &str, harness: &Option<String>, output_dir: &Option<String>) -> i32 {
+    let config_path = resolve_config_dir(config_dir);
+    let config = match load_config(&config_path) {
+        Ok(c) => c,
+        Err((code, msg)) => {
+            eprintln!("{}", msg);
+            return code;
+        }
+    };
+
+    let harness_name = harness.as_deref().unwrap_or("cc");
+
+    let generator = match crate::hooks::HookGenerator::new() {
+        Ok(g) => g,
+        Err(e) => {
+            eprintln!("Cannot initialize hook generator: {}", e);
+            return EXIT_CONFIG_ERROR;
+        }
+    };
+
+    let out_path = output_dir.as_ref().map(|d| PathBuf::from(d));
+    let hooks = match generator.generate(&config, harness_name, out_path.as_deref()) {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("Hook generation failed: {}", e);
+            return EXIT_CONFIG_ERROR;
+        }
+    };
+
+    if output_dir.is_some() {
+        let dir = output_dir.as_ref().unwrap();
+        println!("Generated {} hook scripts in {}/", hooks.len(), dir);
+        for hook in &hooks {
+            println!("  {} ({})", hook.filename, hook.hook_type);
+        }
+    } else {
+        // Print each hook to stdout with separators
+        for hook in &hooks {
+            println!("# === {} ({}) ===", hook.filename, hook.hook_type);
+            println!("{}", hook.content);
+        }
+    }
+
+    // Print suggested hooks.json configuration
+    let hooks_dir = output_dir.as_deref().unwrap_or(".hooks");
+    println!("\n# Suggested hooks.json configuration:");
+    println!("{}", crate::hooks::HookGenerator::suggested_hooks_json(&hooks, hooks_dir));
+
     EXIT_SUCCESS
 }
 

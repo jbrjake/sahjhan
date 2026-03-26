@@ -1,0 +1,13 @@
+# {{ protocol.name }} v{{ protocol.version }}
+
+**State:** {{ state.name }} ({{ state.label }})
+**Ledger:** {{ ledger_len }} events
+**Violations:** {{ violations }}
+
+{% for set_name, set in sets %}
+## Set: {{ set_name }} ({{ set.completed }}/{{ set.total }})
+
+{% for member in set.members %}
+{% if member.done %}- [x] {{ member.name }}{% else %}- [ ] {{ member.name }}{% endif %}
+{% endfor %}
+{% endfor %}

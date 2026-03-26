@@ -24,6 +24,16 @@ fn setup_initialized_dir() -> tempfile::TempDir {
         )
         .unwrap();
     }
+    // Copy templates directory
+    let templates_dir = config_dir.join("templates");
+    std::fs::create_dir_all(&templates_dir).unwrap();
+    for file in &["status.md.tera", "history.md.tera"] {
+        std::fs::copy(
+            format!("examples/minimal/templates/{}", file),
+            templates_dir.join(file),
+        )
+        .unwrap();
+    }
     // Also create the output directory
     std::fs::create_dir_all(dir.path().join("output")).unwrap();
 
@@ -350,7 +360,72 @@ fn test_invalid_transition_from_state() {
 }
 
 #[test]
-fn test_render_stub() {
+fn test_render_produces_status_file() {
+    let dir = setup_initialized_dir();
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "render"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+    assert!(dir.path().join("output/STATUS.md").exists());
+}
+
+#[test]
+fn test_render_produces_history_file() {
+    let dir = setup_initialized_dir();
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "render"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+    assert!(dir.path().join("output/HISTORY.md").exists());
+}
+
+#[test]
+fn test_render_status_contains_state() {
+    let dir = setup_initialized_dir();
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "render"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+    let content = std::fs::read_to_string(dir.path().join("output/STATUS.md")).unwrap();
+    assert!(content.contains("idle") || content.contains("Idle"));
+}
+
+#[test]
+fn test_render_status_contains_protocol() {
+    let dir = setup_initialized_dir();
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "render"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+    let content = std::fs::read_to_string(dir.path().join("output/STATUS.md")).unwrap();
+    assert!(content.contains("minimal"));
+    assert!(content.contains("1.0.0"));
+}
+
+#[test]
+fn test_render_history_contains_events() {
+    let dir = setup_initialized_dir();
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "render"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+    let content = std::fs::read_to_string(dir.path().join("output/HISTORY.md")).unwrap();
+    assert!(content.contains("Event History"));
+    assert!(content.contains("protocol_init"));
+}
+
+#[test]
+fn test_render_reports_files() {
     let dir = setup_initialized_dir();
     Command::cargo_bin("sahjhan")
         .unwrap()
@@ -358,11 +433,79 @@ fn test_render_stub() {
         .current_dir(dir.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("not yet implemented"));
+        .stdout(predicate::str::contains("Rendered: STATUS.md"))
+        .stdout(predicate::str::contains("Rendered: HISTORY.md"));
 }
 
 #[test]
-fn test_hook_generate_stub() {
+fn test_transition_triggers_render() {
+    let dir = setup_initialized_dir();
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "transition", "begin"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+    // on_transition render should have produced STATUS.md
+    assert!(dir.path().join("output/STATUS.md").exists());
+    let content = std::fs::read_to_string(dir.path().join("output/STATUS.md")).unwrap();
+    assert!(content.contains("working") || content.contains("Working"));
+}
+
+#[test]
+fn test_set_complete_triggers_event_render() {
+    let dir = setup_initialized_dir();
+    // Transition to working state first
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "transition", "begin"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Record a set_member_complete — should trigger on_event render for HISTORY.md
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "set",
+            "complete",
+            "check",
+            "tests",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    assert!(dir.path().join("output/HISTORY.md").exists());
+    let content = std::fs::read_to_string(dir.path().join("output/HISTORY.md")).unwrap();
+    assert!(content.contains("set_member_complete"));
+}
+
+#[test]
+fn test_render_tracked_in_manifest() {
+    let dir = setup_initialized_dir();
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "render"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Manifest should now track the rendered files
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "manifest", "list"])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("STATUS.md"))
+        .stdout(predicate::str::contains("render"));
+}
+
+#[test]
+fn test_hook_generate() {
     let dir = setup_initialized_dir();
     Command::cargo_bin("sahjhan")
         .unwrap()
@@ -370,7 +513,32 @@ fn test_hook_generate_stub() {
         .current_dir(dir.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("not yet implemented"));
+        .stdout(predicate::str::contains("write_guard.py"))
+        .stdout(predicate::str::contains("bash_guard.py"))
+        .stdout(predicate::str::contains("_sahjhan_bootstrap.py"))
+        .stdout(predicate::str::contains("hooks.json"));
+}
+
+#[test]
+fn test_hook_generate_with_output_dir() {
+    let dir = setup_initialized_dir();
+    let hooks_dir = dir.path().join(".hooks");
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir", "enforcement",
+            "hook", "generate",
+            "--output-dir", hooks_dir.to_str().unwrap(),
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Generated 3 hook scripts"));
+
+    // Verify files were created
+    assert!(hooks_dir.join("write_guard.py").exists());
+    assert!(hooks_dir.join("bash_guard.py").exists());
+    assert!(hooks_dir.join("_sahjhan_bootstrap.py").exists());
 }
 
 #[test]

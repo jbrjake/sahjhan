@@ -1,0 +1,9 @@
+# Event History
+
+{% for event in events %}
+## [{{ event.seq }}] {{ event.event_type }} ({{ event.timestamp }})
+{% for key, val in event.fields %}
+- **{{ key }}:** {{ val }}
+{% endfor %}
+
+{% endfor %}

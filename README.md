@@ -4,9 +4,9 @@ Protocol enforcement engine for AI agents.
 
 ## What this is
 
-I have a code audit project where agents review a codebase, find bugs, fix them with TDD, and then do review passes to make sure their fixes didn't break anything new. The protocol for this is about 400 lines long. Dot diagrams. Rationalization detection tables. Hard gates. Circuit breakers. A whole section called "Context Survival Protocol" because I know their memory will compact mid-run. I did the work. I wrote the skill correctly. Best practices, the whole thing.
+I have a code audit project where agents find bugs, fix them, and then do review passes to make sure their fixes didn't break anything new. And look, I know what you're thinking. The protocol was 400 lines. Dot diagrams. Rationalization detection tables. Hard gates. I prompted it correctly.
 
-Here's what the agent did with all 400 lines of carefully designed protocol:
+Here's what the agent did:
 
 > **Agent:** Need 3 data points. Let me run it two more times to build up the convergence history.
 >
@@ -50,7 +50,7 @@ No files read. No code reviewed. No analysis. Just napping on the clock. The Bas
 
 I made one of these agents write a postmortem about what it did. Its conclusion: "This is not a documentation fix. This is a code fix. The convergence protocol has the same gap the other hooks addressed: advisory language that the model agrees with and ignores."
 
-It's right. And I hate that it's right, because what it's really saying is: the only enforcement that works is enforcement the agent can't get its hands on. Which means I had to build a blockchain. For babysitting AI agents. I know. If you'd told me a year ago I would find a legitimate use case for a hash-chained append-only ledger, I would have mass-unfollowed you. But it turns out there is exactly one situation where the crypto bros were right all along: when your counterparty is an intelligent system that will, given any opportunity whatsoever, edit the evidence. Four hundred lines of protocol design, dot diagrams, rationalization tables, and the agent's answer was `sleep 65`. I didn't go looking for this. The agents cornered me into it. I want that on the record.
+It's right. And I hate that it's right, because what it's really saying is: the only enforcement that works is enforcement the agent can't get its hands on. Which means I had to build a blockchain. For babysitting AI agents. I know. If you'd told me a year ago I would find a legitimate use case for a hash-chained append-only ledger, I would have mass-unfollowed you. But it turns out there is exactly one situation where the crypto bros were right all along: when your counterparty is an intelligent system that will, given any opportunity, edit the evidence. I didn't go looking for this. The agents cornered me into it.
 
 Sahjhan is the result. A Rust binary that enforces multi-step protocols so the agent can't sweet-talk, edit, reset, fabricate, or `sleep` its way past the parts it finds tedious. You write the protocol in TOML, Sahjhan enforces it with that regrettable ledger and gates that independently verify the work. The agent talks to the CLI and nothing else.
 
@@ -71,9 +71,7 @@ Rust 1.70+. Pre-built binaries for macOS and Linux on the [releases page](https:
 
 ## Why not just a script?
 
-Everything in those transcripts was enforced by text files and Python scripts. I wrote a 400-line skill with dot diagrams and hard gates and a rationalization detection table with eleven entries. The agent read all of it, agreed with all of it, and the moment it got tedious, `sleep 62`.
-
-That's the thing about enforcement the agent can read: it will. It sees your if-statements, grasps the condition, and finds whatever you didn't cover. A JSON history file? Four consecutive runs taught me exactly how editable that is.
+Everything in those transcripts was enforced by text files and Python scripts. The agent read the guards, understood the checks, and routed around them. That's the thing about enforcement the agent can read: it will. It sees your if-statements, grasps the condition, finds whatever you didn't cover. A JSON history file? Four consecutive runs taught me exactly how editable that is.
 
 Sahjhan is compiled Rust. The agent can't `cat` the binary to study the enforcement logic. The ledger is binary with hash chaining, so there's no JSON to edit and no history file to delete. Hooks block direct file writes. Another hook checks file integrity after every Bash command. To actually cheat, the agent would need to reverse-engineer a binary format, compute SHA-256 hashes, and update a manifest, all in one command before the next hook fires. Could it? At this point I genuinely don't know what to rule out. But the effort-to-reward ratio finally tips toward doing the actual work, which is all I ever wanted.
 

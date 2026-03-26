@@ -171,7 +171,7 @@ Stateful ledgers are bound to the state machine. Event-only ledgers just accumul
 
 TOML defines the states, transitions, and gates. The compiled binary enforces them. My agents used to read my Python guard scripts and find the gaps in minutes. There's nothing to read here.
 
-The ledger is the hash chain (I'm still not over it). Every entry is a JSON line with eight envelope fields — sequence number, timestamp, event type, SHA-256 of the previous entry, SHA-256 of the current entry computed over RFC 8785 canonical JSON. Edit one, chain breaks. Delete one, sequence gap. Reset the whole file, the manifest notices. My agents used to delete `HISTORY.json` like clearing browser history. That was fun while it lasted.
+The ledger is the hash chain (I'm still not over it). Every entry is a JSON line with eight envelope fields — sequence number, timestamp, event type, SHA-256 of the previous entry, SHA-256 of the current entry computed over RFC 8785 canonical JSON. Edit one, chain breaks. Delete one, sequence gap. Reset the whole file, the manifest notices.
 
 The manifest tracks SHA-256 hashes of every managed file. Touch one through Bash, the hash won't match, violation gets written to the ledger. Permanently. The manifest hash is also in the ledger, so tampering with the manifest means tampering with the ledger, which means defeating the hash chain. Turtles all the way down, but SHA-256 turtles.
 

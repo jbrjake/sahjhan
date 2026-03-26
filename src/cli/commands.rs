@@ -4,14 +4,17 @@
 // Each function takes parsed CLI arguments, loads config/ledger/manifest
 // as needed, performs its work, prints output, and returns an exit code.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use crate::config::ProtocolConfig;
 use crate::gates::evaluator::{evaluate_gates, GateContext};
 use crate::ledger::chain::Ledger;
+use crate::ledger::import::import_jsonl;
+use crate::ledger::registry::{LedgerMode, LedgerRegistry};
 use crate::manifest::tracker::Manifest;
 use crate::manifest::verify as manifest_verify;
+use crate::query::QueryEngine;
 use crate::render::engine::RenderEngine;
 use crate::state::machine::StateMachine;
 
@@ -24,6 +27,16 @@ pub const EXIT_GATE_FAILED: i32 = 1;
 pub const EXIT_INTEGRITY_ERROR: i32 = 2;
 pub const EXIT_CONFIG_ERROR: i32 = 3;
 pub const EXIT_USAGE_ERROR: i32 = 4;
+
+// ---------------------------------------------------------------------------
+// Ledger targeting (Task 14)
+// ---------------------------------------------------------------------------
+
+/// Captures global --ledger / --ledger-path flags for ledger resolution.
+pub struct LedgerTargeting {
+    pub ledger_name: Option<String>,
+    pub ledger_path: Option<String>,
+}
 
 // ---------------------------------------------------------------------------
 // Helper: load config with validation
@@ -124,6 +137,100 @@ fn pathdiff(target: &Path, base: &Path) -> String {
         .strip_prefix(base)
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|_| target.to_string_lossy().to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Ledger resolution (Task 14)
+// ---------------------------------------------------------------------------
+
+/// Resolve a ledger path from targeting flags.
+///
+/// 1. If --ledger-path given, use that file directly.
+/// 2. If --ledger given, resolve from registry.
+/// 3. If neither, try registry first entry; else fall back to config data_dir/ledger.bin.
+fn resolve_ledger_from_targeting(
+    config: &ProtocolConfig,
+    targeting: &LedgerTargeting,
+) -> Result<(PathBuf, Option<LedgerMode>), (i32, String)> {
+    // 1. Direct path
+    if let Some(ref lp) = targeting.ledger_path {
+        let p = PathBuf::from(lp);
+        return Ok((p, None));
+    }
+
+    // 2. Named ledger from registry
+    if let Some(ref name) = targeting.ledger_name {
+        let reg_path = registry_path_from_config(config);
+        let registry = LedgerRegistry::new(&reg_path).map_err(|e| {
+            (
+                EXIT_CONFIG_ERROR,
+                format!("Cannot load ledger registry: {}", e),
+            )
+        })?;
+        let entry = registry.resolve(Some(name)).map_err(|e| {
+            (EXIT_CONFIG_ERROR, format!("Ledger resolution failed: {}", e))
+        })?;
+        let resolved = resolve_registry_path(&entry.path, config);
+        return Ok((resolved, Some(entry.mode.clone())));
+    }
+
+    // 3. Default: try registry first, else fall back to data_dir/ledger.bin
+    let reg_path = registry_path_from_config(config);
+    if reg_path.exists() {
+        if let Ok(registry) = LedgerRegistry::new(&reg_path) {
+            if let Ok(entry) = registry.resolve(None) {
+                let resolved = resolve_registry_path(&entry.path, config);
+                return Ok((resolved, Some(entry.mode.clone())));
+            }
+        }
+    }
+
+    // Fall back to default ledger path
+    let data_dir = resolve_data_dir(&config.paths.data_dir);
+    Ok((ledger_path(&data_dir), None))
+}
+
+/// Open a ledger using targeting flags.
+fn open_targeted_ledger(
+    config: &ProtocolConfig,
+    targeting: &LedgerTargeting,
+) -> Result<(Ledger, Option<LedgerMode>), (i32, String)> {
+    let (path, mode) = resolve_ledger_from_targeting(config, targeting)?;
+    let ledger = Ledger::open(&path)
+        .map_err(|e| (EXIT_INTEGRITY_ERROR, format!("Cannot open ledger: {}", e)))?;
+    Ok((ledger, mode))
+}
+
+/// Compute the registry path relative to the config's data_dir.
+fn registry_path_from_config(config: &ProtocolConfig) -> PathBuf {
+    let data_dir = resolve_data_dir(&config.paths.data_dir);
+    data_dir.join("ledgers.toml")
+}
+
+/// Resolve a registry entry path (relative to data_dir) to an absolute path.
+fn resolve_registry_path(entry_path: &str, config: &ProtocolConfig) -> PathBuf {
+    let p = PathBuf::from(entry_path);
+    if p.is_absolute() {
+        p
+    } else {
+        let data_dir = resolve_data_dir(&config.paths.data_dir);
+        data_dir.join(p)
+    }
+}
+
+/// Guard: check if a ledger mode is event-only and block stateful operations.
+fn guard_event_only(mode: &Option<LedgerMode>, operation: &str) -> Result<(), (i32, String)> {
+    if let Some(LedgerMode::EventOnly) = mode {
+        Err((
+            EXIT_CONFIG_ERROR,
+            format!(
+                "Cannot {} on an event-only ledger. This ledger has no state machine.",
+                operation
+            ),
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -237,7 +344,7 @@ pub fn cmd_init(config_dir: &str) -> i32 {
 // status
 // ---------------------------------------------------------------------------
 
-pub fn cmd_status(config_dir: &str) -> i32 {
+pub fn cmd_status(config_dir: &str, targeting: &LedgerTargeting) -> i32 {
     let config_path = resolve_config_dir(config_dir);
     let config = match load_config(&config_path) {
         Ok(c) => c,
@@ -247,14 +354,43 @@ pub fn cmd_status(config_dir: &str) -> i32 {
         }
     };
 
-    let data_dir = resolve_data_dir(&config.paths.data_dir);
-    let ledger = match open_ledger(&data_dir) {
-        Ok(l) => l,
+    let (ledger, mode) = match open_targeted_ledger(&config, targeting) {
+        Ok(lm) => lm,
         Err((code, msg)) => {
             eprintln!("{}", msg);
             return code;
         }
     };
+
+    // Event-only ledger: show metadata without state machine fields
+    if let Some(LedgerMode::EventOnly) = mode {
+        let ledger_len = ledger.len();
+        let chain_status = match ledger.verify() {
+            Ok(()) => "valid".to_string(),
+            Err(e) => format!("INVALID ({})", e),
+        };
+        let last_ts = ledger
+            .entries()
+            .last()
+            .map(|e| e.ts.as_str())
+            .unwrap_or("none");
+
+        let width = 59;
+        let bar = "=".repeat(width);
+        println!("{}", bar);
+        println!("  sahjhan · event-only ledger");
+        println!("{}", bar);
+        println!();
+        println!("  Mode:      event-only");
+        println!("  Events:    {}", ledger_len);
+        println!("  Chain:     {}", chain_status);
+        println!("  Last:      {}", last_ts);
+        println!();
+        println!("{}", bar);
+        return EXIT_SUCCESS;
+    }
+
+    let data_dir = resolve_data_dir(&config.paths.data_dir);
     let manifest = match load_manifest(&data_dir) {
         Ok(m) => m,
         Err((code, msg)) => {
@@ -301,7 +437,7 @@ pub fn cmd_status(config_dir: &str) -> i32 {
 
     // Header
     let width = 59;
-    let bar = "═".repeat(width);
+    let bar = "=".repeat(width);
     println!("{}", bar);
     println!(
         "  sahjhan · {} v{} · Run {}",
@@ -396,7 +532,12 @@ fn build_state_params(config: &ProtocolConfig, state_name: &str) -> HashMap<Stri
 // transition
 // ---------------------------------------------------------------------------
 
-pub fn cmd_transition(config_dir: &str, name: &str, args: &[String]) -> i32 {
+pub fn cmd_transition(
+    config_dir: &str,
+    name: &str,
+    args: &[String],
+    targeting: &LedgerTargeting,
+) -> i32 {
     let config_path = resolve_config_dir(config_dir);
     let config = match load_config(&config_path) {
         Ok(c) => c,
@@ -406,14 +547,21 @@ pub fn cmd_transition(config_dir: &str, name: &str, args: &[String]) -> i32 {
         }
     };
 
-    let data_dir = resolve_data_dir(&config.paths.data_dir);
-    let ledger = match open_ledger(&data_dir) {
-        Ok(l) => l,
+    let (ledger, mode) = match open_targeted_ledger(&config, targeting) {
+        Ok(lm) => lm,
         Err((code, msg)) => {
             eprintln!("{}", msg);
             return code;
         }
     };
+
+    // Guard: event-only ledgers cannot transition
+    if let Err((code, msg)) = guard_event_only(&mode, "execute a transition") {
+        eprintln!("{}", msg);
+        return code;
+    }
+
+    let data_dir = resolve_data_dir(&config.paths.data_dir);
     let mut manifest = match load_manifest(&data_dir) {
         Ok(m) => m,
         Err((code, msg)) => {
@@ -506,7 +654,12 @@ pub fn cmd_transition(config_dir: &str, name: &str, args: &[String]) -> i32 {
 // event
 // ---------------------------------------------------------------------------
 
-pub fn cmd_event(config_dir: &str, event_type: &str, field_strs: &[String]) -> i32 {
+pub fn cmd_event(
+    config_dir: &str,
+    event_type: &str,
+    field_strs: &[String],
+    targeting: &LedgerTargeting,
+) -> i32 {
     let config_path = resolve_config_dir(config_dir);
     let config = match load_config(&config_path) {
         Ok(c) => c,
@@ -516,14 +669,15 @@ pub fn cmd_event(config_dir: &str, event_type: &str, field_strs: &[String]) -> i
         }
     };
 
-    let data_dir = resolve_data_dir(&config.paths.data_dir);
-    let ledger = match open_ledger(&data_dir) {
-        Ok(l) => l,
+    let (ledger, _mode) = match open_targeted_ledger(&config, targeting) {
+        Ok(lm) => lm,
         Err((code, msg)) => {
             eprintln!("{}", msg);
             return code;
         }
     };
+
+    let data_dir = resolve_data_dir(&config.paths.data_dir);
     let mut manifest = match load_manifest(&data_dir) {
         Ok(m) => m,
         Err((code, msg)) => {
@@ -649,7 +803,7 @@ pub fn cmd_event(config_dir: &str, event_type: &str, field_strs: &[String]) -> i
 // set status
 // ---------------------------------------------------------------------------
 
-pub fn cmd_set_status(config_dir: &str, set_name: &str) -> i32 {
+pub fn cmd_set_status(config_dir: &str, set_name: &str, targeting: &LedgerTargeting) -> i32 {
     let config_path = resolve_config_dir(config_dir);
     let config = match load_config(&config_path) {
         Ok(c) => c,
@@ -667,9 +821,8 @@ pub fn cmd_set_status(config_dir: &str, set_name: &str) -> i32 {
         return EXIT_USAGE_ERROR;
     }
 
-    let data_dir = resolve_data_dir(&config.paths.data_dir);
-    let ledger = match open_ledger(&data_dir) {
-        Ok(l) => l,
+    let (ledger, _mode) = match open_targeted_ledger(&config, targeting) {
+        Ok(lm) => lm,
         Err((code, msg)) => {
             eprintln!("{}", msg);
             return code;
@@ -695,7 +848,12 @@ pub fn cmd_set_status(config_dir: &str, set_name: &str) -> i32 {
 // set complete
 // ---------------------------------------------------------------------------
 
-pub fn cmd_set_complete(config_dir: &str, set_name: &str, member: &str) -> i32 {
+pub fn cmd_set_complete(
+    config_dir: &str,
+    set_name: &str,
+    member: &str,
+    targeting: &LedgerTargeting,
+) -> i32 {
     let config_path = resolve_config_dir(config_dir);
     let config = match load_config(&config_path) {
         Ok(c) => c,
@@ -728,14 +886,15 @@ pub fn cmd_set_complete(config_dir: &str, set_name: &str, member: &str) -> i32 {
         return EXIT_USAGE_ERROR;
     }
 
-    let data_dir = resolve_data_dir(&config.paths.data_dir);
-    let ledger = match open_ledger(&data_dir) {
-        Ok(l) => l,
+    let (ledger, _mode) = match open_targeted_ledger(&config, targeting) {
+        Ok(lm) => lm,
         Err((code, msg)) => {
             eprintln!("{}", msg);
             return code;
         }
     };
+
+    let data_dir = resolve_data_dir(&config.paths.data_dir);
     let mut manifest = match load_manifest(&data_dir) {
         Ok(m) => m,
         Err((code, msg)) => {
@@ -815,7 +974,7 @@ pub fn cmd_set_complete(config_dir: &str, set_name: &str, member: &str) -> i32 {
 // log dump (E19)
 // ---------------------------------------------------------------------------
 
-pub fn cmd_log_dump(config_dir: &str) -> i32 {
+pub fn cmd_log_dump(config_dir: &str, targeting: &LedgerTargeting) -> i32 {
     let config_path = resolve_config_dir(config_dir);
     let config = match load_config(&config_path) {
         Ok(c) => c,
@@ -825,9 +984,8 @@ pub fn cmd_log_dump(config_dir: &str) -> i32 {
         }
     };
 
-    let data_dir = resolve_data_dir(&config.paths.data_dir);
-    let ledger = match open_ledger(&data_dir) {
-        Ok(l) => l,
+    let (ledger, _mode) = match open_targeted_ledger(&config, targeting) {
+        Ok(lm) => lm,
         Err((code, msg)) => {
             eprintln!("{}", msg);
             return code;
@@ -842,7 +1000,7 @@ pub fn cmd_log_dump(config_dir: &str) -> i32 {
 // log verify
 // ---------------------------------------------------------------------------
 
-pub fn cmd_log_verify(config_dir: &str) -> i32 {
+pub fn cmd_log_verify(config_dir: &str, targeting: &LedgerTargeting) -> i32 {
     let config_path = resolve_config_dir(config_dir);
     let config = match load_config(&config_path) {
         Ok(c) => c,
@@ -852,9 +1010,8 @@ pub fn cmd_log_verify(config_dir: &str) -> i32 {
         }
     };
 
-    let data_dir = resolve_data_dir(&config.paths.data_dir);
-    let ledger = match open_ledger(&data_dir) {
-        Ok(l) => l,
+    let (ledger, _mode) = match open_targeted_ledger(&config, targeting) {
+        Ok(lm) => lm,
         Err((code, msg)) => {
             eprintln!("{}", msg);
             return code;
@@ -881,7 +1038,7 @@ pub fn cmd_log_verify(config_dir: &str) -> i32 {
 // log tail
 // ---------------------------------------------------------------------------
 
-pub fn cmd_log_tail(config_dir: &str, n: usize) -> i32 {
+pub fn cmd_log_tail(config_dir: &str, n: usize, targeting: &LedgerTargeting) -> i32 {
     let config_path = resolve_config_dir(config_dir);
     let config = match load_config(&config_path) {
         Ok(c) => c,
@@ -891,9 +1048,8 @@ pub fn cmd_log_tail(config_dir: &str, n: usize) -> i32 {
         }
     };
 
-    let data_dir = resolve_data_dir(&config.paths.data_dir);
-    let ledger = match open_ledger(&data_dir) {
-        Ok(l) => l,
+    let (ledger, _mode) = match open_targeted_ledger(&config, targeting) {
+        Ok(lm) => lm,
         Err((code, msg)) => {
             eprintln!("{}", msg);
             return code;
@@ -1053,7 +1209,11 @@ pub fn cmd_manifest_restore(config_dir: &str, path: &str) -> i32 {
 // gate check (dry-run)
 // ---------------------------------------------------------------------------
 
-pub fn cmd_gate_check(config_dir: &str, transition_name: &str) -> i32 {
+pub fn cmd_gate_check(
+    config_dir: &str,
+    transition_name: &str,
+    targeting: &LedgerTargeting,
+) -> i32 {
     let config_path = resolve_config_dir(config_dir);
     let config = match load_config(&config_path) {
         Ok(c) => c,
@@ -1063,14 +1223,19 @@ pub fn cmd_gate_check(config_dir: &str, transition_name: &str) -> i32 {
         }
     };
 
-    let data_dir = resolve_data_dir(&config.paths.data_dir);
-    let ledger = match open_ledger(&data_dir) {
-        Ok(l) => l,
+    let (ledger, mode) = match open_targeted_ledger(&config, targeting) {
+        Ok(lm) => lm,
         Err((code, msg)) => {
             eprintln!("{}", msg);
             return code;
         }
     };
+
+    // Guard: event-only ledgers cannot check gates
+    if let Err((code, msg)) = guard_event_only(&mode, "check gates") {
+        eprintln!("{}", msg);
+        return code;
+    }
 
     let machine = StateMachine::new(&config, ledger);
     let current_state = machine.current_state().to_string();
@@ -1134,10 +1299,10 @@ pub fn cmd_gate_check(config_dir: &str, transition_name: &str) -> i32 {
 }
 
 // ---------------------------------------------------------------------------
-// render (stub)
+// render
 // ---------------------------------------------------------------------------
 
-pub fn cmd_render(config_dir: &str) -> i32 {
+pub fn cmd_render(config_dir: &str, targeting: &LedgerTargeting) -> i32 {
     let config_path = resolve_config_dir(config_dir);
     let config = match load_config(&config_path) {
         Ok(c) => c,
@@ -1153,8 +1318,8 @@ pub fn cmd_render(config_dir: &str) -> i32 {
     }
 
     let data_dir = resolve_data_dir(&config.paths.data_dir);
-    let ledger = match open_ledger(&data_dir) {
-        Ok(l) => l,
+    let (ledger, _mode) = match open_targeted_ledger(&config, targeting) {
+        Ok(lm) => lm,
         Err((code, msg)) => {
             eprintln!("{}", msg);
             return code;
@@ -1205,7 +1370,7 @@ pub fn cmd_render(config_dir: &str) -> i32 {
 // render --dump-context
 // ---------------------------------------------------------------------------
 
-pub fn cmd_render_dump_context(config_dir: &str) -> i32 {
+pub fn cmd_render_dump_context(config_dir: &str, targeting: &LedgerTargeting) -> i32 {
     let config_path = resolve_config_dir(config_dir);
     let config = match load_config(&config_path) {
         Ok(c) => c,
@@ -1215,9 +1380,8 @@ pub fn cmd_render_dump_context(config_dir: &str) -> i32 {
         }
     };
 
-    let data_dir = resolve_data_dir(&config.paths.data_dir);
-    let ledger = match open_ledger(&data_dir) {
-        Ok(l) => l,
+    let (ledger, _mode) = match open_targeted_ledger(&config, targeting) {
+        Ok(lm) => lm,
         Err((code, msg)) => {
             eprintln!("{}", msg);
             return code;
@@ -1396,33 +1560,535 @@ pub fn cmd_reset(config_dir: &str, confirm: bool, token: &Option<String>) -> i32
     }
 }
 
-fn hex_encode_short(bytes: &[u8; 32], len: usize) -> String {
-    bytes
-        .iter()
-        .map(|b| format!("{:02x}", b))
-        .collect::<String>()[..len]
-        .to_string()
-}
+// ---------------------------------------------------------------------------
+// ledger create (Task 12)
+// ---------------------------------------------------------------------------
 
-/// Check if stdin is a TTY (rough heuristic).
-fn atty_check() -> bool {
-    // Simple heuristic: check if stdin is a terminal via libc.
-    // For portability, we'll just return true and note this is a stub.
-    // A full implementation would use the `atty` crate or libc isatty.
-    unsafe { libc_isatty() }
-}
+pub fn cmd_ledger_create(config_dir: &str, name: &str, path: &str, mode_str: &str) -> i32 {
+    let config_path = resolve_config_dir(config_dir);
+    let config = match load_config(&config_path) {
+        Ok(c) => c,
+        Err((code, msg)) => {
+            eprintln!("{}", msg);
+            return code;
+        }
+    };
 
-#[cfg(unix)]
-unsafe fn libc_isatty() -> bool {
-    extern "C" {
-        fn isatty(fd: i32) -> i32;
+    let mode = match mode_str {
+        "stateful" => LedgerMode::Stateful,
+        "event-only" => LedgerMode::EventOnly,
+        other => {
+            eprintln!(
+                "Unknown ledger mode '{}'. Valid: stateful, event-only.",
+                other
+            );
+            return EXIT_USAGE_ERROR;
+        }
+    };
+
+    // Resolve output path relative to data_dir
+    let data_dir = resolve_data_dir(&config.paths.data_dir);
+    let ledger_file = if PathBuf::from(path).is_absolute() {
+        PathBuf::from(path)
+    } else {
+        data_dir.join(path)
+    };
+
+    // Initialize the ledger file
+    if let Err(e) = std::fs::create_dir_all(ledger_file.parent().unwrap_or(Path::new("."))) {
+        eprintln!("Cannot create directory for ledger: {}", e);
+        return EXIT_CONFIG_ERROR;
     }
-    unsafe { isatty(0) != 0 }
+
+    match Ledger::init(&ledger_file, &config.protocol.name, &config.protocol.version) {
+        Ok(_) => {}
+        Err(e) => {
+            eprintln!("Cannot initialize ledger: {}", e);
+            return EXIT_INTEGRITY_ERROR;
+        }
+    }
+
+    // Register in the registry
+    let reg_path = registry_path_from_config(&config);
+    let mut registry = match LedgerRegistry::new(&reg_path) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Cannot load registry: {}", e);
+            return EXIT_CONFIG_ERROR;
+        }
+    };
+
+    if let Err(e) = registry.create(name, path, mode) {
+        eprintln!("Cannot register ledger: {}", e);
+        return EXIT_CONFIG_ERROR;
+    }
+
+    println!(
+        "Ledger '{}' created at {} and registered.",
+        name,
+        ledger_file.display()
+    );
+    EXIT_SUCCESS
 }
 
-#[cfg(not(unix))]
-unsafe fn libc_isatty() -> bool {
-    true
+// ---------------------------------------------------------------------------
+// ledger list (Task 12)
+// ---------------------------------------------------------------------------
+
+pub fn cmd_ledger_list(config_dir: &str) -> i32 {
+    let config_path = resolve_config_dir(config_dir);
+    let config = match load_config(&config_path) {
+        Ok(c) => c,
+        Err((code, msg)) => {
+            eprintln!("{}", msg);
+            return code;
+        }
+    };
+
+    let reg_path = registry_path_from_config(&config);
+    let registry = match LedgerRegistry::new(&reg_path) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Cannot load registry: {}", e);
+            return EXIT_CONFIG_ERROR;
+        }
+    };
+
+    let entries = registry.list();
+    if entries.is_empty() {
+        println!("No ledgers registered.");
+        return EXIT_SUCCESS;
+    }
+
+    println!("Registered ledgers ({}):", entries.len());
+    for entry in entries {
+        let mode_str = match entry.mode {
+            LedgerMode::Stateful => "stateful",
+            LedgerMode::EventOnly => "event-only",
+        };
+        println!(
+            "  {} ({}) -> {} [{}]",
+            entry.name, mode_str, entry.path, entry.created
+        );
+    }
+
+    EXIT_SUCCESS
+}
+
+// ---------------------------------------------------------------------------
+// ledger remove (Task 12)
+// ---------------------------------------------------------------------------
+
+pub fn cmd_ledger_remove(config_dir: &str, name: &str) -> i32 {
+    let config_path = resolve_config_dir(config_dir);
+    let config = match load_config(&config_path) {
+        Ok(c) => c,
+        Err((code, msg)) => {
+            eprintln!("{}", msg);
+            return code;
+        }
+    };
+
+    let reg_path = registry_path_from_config(&config);
+    let mut registry = match LedgerRegistry::new(&reg_path) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Cannot load registry: {}", e);
+            return EXIT_CONFIG_ERROR;
+        }
+    };
+
+    if let Err(e) = registry.remove(name) {
+        eprintln!("{}", e);
+        return EXIT_CONFIG_ERROR;
+    }
+
+    println!(
+        "Ledger '{}' removed from registry. File kept on disk.",
+        name
+    );
+    EXIT_SUCCESS
+}
+
+// ---------------------------------------------------------------------------
+// ledger verify (Task 12)
+// ---------------------------------------------------------------------------
+
+pub fn cmd_ledger_verify(config_dir: &str, name: Option<&str>, path: Option<&str>) -> i32 {
+    let config_path = resolve_config_dir(config_dir);
+    let config = match load_config(&config_path) {
+        Ok(c) => c,
+        Err((code, msg)) => {
+            eprintln!("{}", msg);
+            return code;
+        }
+    };
+
+    // Resolve which ledger to verify
+    let ledger_file = if let Some(p) = path {
+        PathBuf::from(p)
+    } else if let Some(n) = name {
+        let reg_path = registry_path_from_config(&config);
+        let registry = match LedgerRegistry::new(&reg_path) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("Cannot load registry: {}", e);
+                return EXIT_CONFIG_ERROR;
+            }
+        };
+        let entry = match registry.resolve(Some(n)) {
+            Ok(e) => e.clone(),
+            Err(e) => {
+                eprintln!("{}", e);
+                return EXIT_CONFIG_ERROR;
+            }
+        };
+        resolve_registry_path(&entry.path, &config)
+    } else {
+        // Default: use config data_dir
+        let data_dir = resolve_data_dir(&config.paths.data_dir);
+        ledger_path(&data_dir)
+    };
+
+    let ledger = match Ledger::open(&ledger_file) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("Cannot open ledger at {}: {}", ledger_file.display(), e);
+            return EXIT_INTEGRITY_ERROR;
+        }
+    };
+
+    match ledger.verify() {
+        Ok(()) => {
+            println!(
+                "Chain valid. {} entries, all hashes check out. ({})",
+                ledger.len(),
+                ledger_file.display()
+            );
+            EXIT_SUCCESS
+        }
+        Err(e) => {
+            eprintln!("Chain INVALID: {}", e);
+            eprintln!("Tampering detected.");
+            EXIT_INTEGRITY_ERROR
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ledger checkpoint (Task 12)
+// ---------------------------------------------------------------------------
+
+pub fn cmd_ledger_checkpoint(
+    config_dir: &str,
+    name: &str,
+    scope: &str,
+    snapshot: &str,
+) -> i32 {
+    let config_path = resolve_config_dir(config_dir);
+    let config = match load_config(&config_path) {
+        Ok(c) => c,
+        Err((code, msg)) => {
+            eprintln!("{}", msg);
+            return code;
+        }
+    };
+
+    let reg_path = registry_path_from_config(&config);
+    let registry = match LedgerRegistry::new(&reg_path) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Cannot load registry: {}", e);
+            return EXIT_CONFIG_ERROR;
+        }
+    };
+
+    let entry = match registry.resolve(Some(name)) {
+        Ok(e) => e.clone(),
+        Err(e) => {
+            eprintln!("{}", e);
+            return EXIT_CONFIG_ERROR;
+        }
+    };
+
+    let ledger_file = resolve_registry_path(&entry.path, &config);
+    let mut ledger = match Ledger::open(&ledger_file) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("Cannot open ledger: {}", e);
+            return EXIT_INTEGRITY_ERROR;
+        }
+    };
+
+    match ledger.write_checkpoint(scope, snapshot) {
+        Ok(cp) => {
+            println!(
+                "Checkpoint written at seq {} (scope='{}', snapshot='{}').",
+                cp.seq, scope, snapshot
+            );
+            EXIT_SUCCESS
+        }
+        Err(e) => {
+            eprintln!("Cannot write checkpoint: {}", e);
+            EXIT_INTEGRITY_ERROR
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ledger import (Task 12)
+// ---------------------------------------------------------------------------
+
+pub fn cmd_ledger_import(config_dir: &str, name: &str, path: &str) -> i32 {
+    let config_path = resolve_config_dir(config_dir);
+    let config = match load_config(&config_path) {
+        Ok(c) => c,
+        Err((code, msg)) => {
+            eprintln!("{}", msg);
+            return code;
+        }
+    };
+
+    // Resolve output path
+    let data_dir = resolve_data_dir(&config.paths.data_dir);
+    let ledger_file = if PathBuf::from(path).is_absolute() {
+        PathBuf::from(path)
+    } else {
+        data_dir.join(path)
+    };
+
+    if let Err(e) = std::fs::create_dir_all(ledger_file.parent().unwrap_or(Path::new("."))) {
+        eprintln!("Cannot create directory for ledger: {}", e);
+        return EXIT_CONFIG_ERROR;
+    }
+
+    // Read from stdin
+    let stdin = std::io::stdin();
+    let mut reader = stdin.lock();
+
+    match import_jsonl(
+        &mut reader,
+        &ledger_file,
+        &config.protocol.name,
+        &config.protocol.version,
+    ) {
+        Ok(()) => {}
+        Err(e) => {
+            eprintln!("Import failed: {}", e);
+            return EXIT_INTEGRITY_ERROR;
+        }
+    }
+
+    // Register in the registry
+    let reg_path = registry_path_from_config(&config);
+    let mut registry = match LedgerRegistry::new(&reg_path) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Cannot load registry: {}", e);
+            return EXIT_CONFIG_ERROR;
+        }
+    };
+
+    if let Err(e) = registry.create(name, path, LedgerMode::EventOnly) {
+        eprintln!("Cannot register ledger: {}", e);
+        return EXIT_CONFIG_ERROR;
+    }
+
+    println!(
+        "Imported JSONL into '{}' at {} and registered.",
+        name,
+        ledger_file.display()
+    );
+    EXIT_SUCCESS
+}
+
+// ---------------------------------------------------------------------------
+// query (Task 13)
+// ---------------------------------------------------------------------------
+
+#[allow(clippy::too_many_arguments)]
+pub fn cmd_query(
+    config_dir: &str,
+    sql: Option<&str>,
+    targeting: &LedgerTargeting,
+    glob_pattern: Option<&str>,
+    event_type: Option<&str>,
+    field_filters: &[String],
+    count: bool,
+    format: &str,
+) -> i32 {
+    let config_path = resolve_config_dir(config_dir);
+    let config = match load_config(&config_path) {
+        Ok(c) => c,
+        Err((code, msg)) => {
+            eprintln!("{}", msg);
+            return code;
+        }
+    };
+
+    let engine = QueryEngine::from_config(&config.events);
+
+    // Build SQL from convenience flags if no raw SQL provided
+    let effective_sql = if let Some(raw) = sql {
+        raw.to_string()
+    } else {
+        build_convenience_sql(event_type, field_filters, count)
+    };
+
+    // Execute query via tokio runtime
+    let rt = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(e) => {
+            eprintln!("Cannot create async runtime: {}", e);
+            return EXIT_INTEGRITY_ERROR;
+        }
+    };
+
+    let result = if let Some(pattern) = glob_pattern {
+        rt.block_on(engine.query_glob(pattern, &effective_sql))
+    } else {
+        // Resolve ledger path
+        let (ledger_file, _mode) = match resolve_ledger_from_targeting(&config, targeting) {
+            Ok(lm) => lm,
+            Err((code, msg)) => {
+                eprintln!("{}", msg);
+                return code;
+            }
+        };
+        rt.block_on(engine.query_file(&ledger_file, &effective_sql))
+    };
+
+    match result {
+        Ok(rows) => {
+            format_output(&rows, format);
+            EXIT_SUCCESS
+        }
+        Err(e) => {
+            eprintln!("Query failed: {}", e);
+            EXIT_INTEGRITY_ERROR
+        }
+    }
+}
+
+/// Build SQL from convenience flags (--type, --field, --count).
+fn build_convenience_sql(
+    event_type: Option<&str>,
+    field_filters: &[String],
+    count: bool,
+) -> String {
+    let select = if count {
+        "SELECT count(*) as count"
+    } else {
+        "SELECT *"
+    };
+
+    let mut conditions: Vec<String> = Vec::new();
+
+    if let Some(et) = event_type {
+        conditions.push(format!("type = '{}'", et.replace('\'', "''")));
+    }
+
+    for f in field_filters {
+        if let Some((key, value)) = f.split_once('=') {
+            conditions.push(format!(
+                "{} = '{}'",
+                key,
+                value.replace('\'', "''")
+            ));
+        }
+    }
+
+    if conditions.is_empty() {
+        format!("{} FROM events", select)
+    } else {
+        format!("{} FROM events WHERE {}", select, conditions.join(" AND "))
+    }
+}
+
+/// Format query output in the requested format.
+fn format_output(rows: &[BTreeMap<String, String>], format: &str) {
+    match format {
+        "json" => {
+            let json = serde_json::to_string_pretty(rows).unwrap_or_else(|_| "[]".to_string());
+            println!("{}", json);
+        }
+        "jsonl" => {
+            for row in rows {
+                let line = serde_json::to_string(row).unwrap_or_else(|_| "{}".to_string());
+                println!("{}", line);
+            }
+        }
+        "csv" => {
+            if rows.is_empty() {
+                return;
+            }
+            // Header from first row's keys
+            let keys: Vec<&String> = rows[0].keys().collect();
+            println!("{}", keys.iter().map(|k| k.as_str()).collect::<Vec<_>>().join(","));
+            for row in rows {
+                let vals: Vec<&str> = keys.iter().map(|k| row.get(*k).map(|v| v.as_str()).unwrap_or("")).collect();
+                println!("{}", vals.join(","));
+            }
+        }
+        _ => {
+            // table (default)
+            if rows.is_empty() {
+                println!("(no results)");
+                return;
+            }
+
+            let keys: Vec<&String> = rows[0].keys().collect();
+
+            // Compute column widths
+            let mut widths: Vec<usize> = keys.iter().map(|k| k.len()).collect();
+            for row in rows {
+                for (i, key) in keys.iter().enumerate() {
+                    let val_len = row.get(*key).map(|v| v.len()).unwrap_or(0);
+                    if val_len > widths[i] {
+                        widths[i] = val_len;
+                    }
+                }
+            }
+
+            // Cap column widths at 40 for readability
+            for w in &mut widths {
+                if *w > 40 {
+                    *w = 40;
+                }
+            }
+
+            // Print header
+            let header: Vec<String> = keys
+                .iter()
+                .enumerate()
+                .map(|(i, k)| format!("{:<width$}", k, width = widths[i]))
+                .collect();
+            println!("{}", header.join("  "));
+            let separator: Vec<String> = widths.iter().map(|w| "-".repeat(*w)).collect();
+            println!("{}", separator.join("  "));
+
+            // Print rows
+            for row in rows {
+                let vals: Vec<String> = keys
+                    .iter()
+                    .enumerate()
+                    .map(|(i, k)| {
+                        let v = row.get(*k).map(|v| v.as_str()).unwrap_or("");
+                        let truncated = if v.len() > widths[i] {
+                            format!("{}...", &v[..widths[i].saturating_sub(3)])
+                        } else {
+                            v.to_string()
+                        };
+                        format!("{:<width$}", truncated, width = widths[i])
+                    })
+                    .collect();
+                println!("{}", vals.join("  "));
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1457,10 +2123,49 @@ fn print_entries(entries: &[crate::ledger::entry::LedgerEntry]) {
             }
         }
 
+        // Show JSONL fields if populated
+        if !entry.fields.is_empty() {
+            let pairs: Vec<String> = entry
+                .fields
+                .iter()
+                .map(|(k, v)| format!("{}={}", k, v))
+                .collect();
+            print!(" {{{}}}", pairs.join(", "));
+        }
+
         println!();
     }
 }
 
+fn hex_encode_short(bytes: &[u8; 32], len: usize) -> String {
+    bytes
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect::<String>()[..len]
+        .to_string()
+}
+
 fn hex_encode_full(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+/// Check if stdin is a TTY (rough heuristic).
+fn atty_check() -> bool {
+    // Simple heuristic: check if stdin is a terminal via libc.
+    // For portability, we'll just return true and note this is a stub.
+    // A full implementation would use the `atty` crate or libc isatty.
+    unsafe { libc_isatty() }
+}
+
+#[cfg(unix)]
+unsafe fn libc_isatty() -> bool {
+    extern "C" {
+        fn isatty(fd: i32) -> i32;
+    }
+    unsafe { isatty(0) != 0 }
+}
+
+#[cfg(not(unix))]
+unsafe fn libc_isatty() -> bool {
+    true
 }

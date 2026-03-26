@@ -9,7 +9,7 @@
 //! full columnar access for filtering, grouping, and aggregation — no runtime
 //! JSON parsing during queries.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 

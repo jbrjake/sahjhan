@@ -1018,3 +1018,609 @@ label = "Orphan"
         .success() // warnings don't cause failure
         .stderr(predicate::str::contains("state 'orphan' is unreachable"));
 }
+
+// ===========================================================================
+// Task 12 — ledger subcommand tests
+// ===========================================================================
+
+#[test]
+fn test_ledger_list_empty() {
+    let dir = setup_initialized_dir();
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "ledger", "list"])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("No ledgers registered"));
+}
+
+#[test]
+fn test_ledger_create_and_list() {
+    let dir = setup_initialized_dir();
+
+    // Create a ledger
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "ledger",
+            "create",
+            "--name",
+            "audit",
+            "--path",
+            "audit.jsonl",
+            "--mode",
+            "event-only",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Ledger 'audit' created"));
+
+    // List should show it
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "ledger", "list"])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("audit"))
+        .stdout(predicate::str::contains("event-only"));
+}
+
+#[test]
+fn test_ledger_create_and_remove() {
+    let dir = setup_initialized_dir();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "ledger",
+            "create",
+            "--name",
+            "temp",
+            "--path",
+            "temp.jsonl",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "ledger",
+            "remove",
+            "--name",
+            "temp",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("removed from registry"));
+
+    // Verify the file still exists on disk
+    assert!(dir
+        .path()
+        .join("output/.sahjhan/temp.jsonl")
+        .exists());
+}
+
+#[test]
+fn test_ledger_verify_by_name() {
+    let dir = setup_initialized_dir();
+
+    // Create a named ledger
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "ledger",
+            "create",
+            "--name",
+            "verifiable",
+            "--path",
+            "verifiable.jsonl",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Verify by name
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "ledger",
+            "verify",
+            "--name",
+            "verifiable",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Chain valid"));
+}
+
+#[test]
+fn test_ledger_checkpoint() {
+    let dir = setup_initialized_dir();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "ledger",
+            "create",
+            "--name",
+            "cp-test",
+            "--path",
+            "cp-test.jsonl",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "ledger",
+            "checkpoint",
+            "--name",
+            "cp-test",
+            "--scope",
+            "phase-1",
+            "--snapshot",
+            "midpoint",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Checkpoint written at seq 1"));
+}
+
+#[test]
+fn test_ledger_import_from_stdin() {
+    let dir = setup_initialized_dir();
+
+    // Import JSONL from stdin
+    let input = r#"{"type":"note","fields":{"text":"hello"}}
+{"type":"note","fields":{"text":"world"}}
+"#;
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "ledger",
+            "import",
+            "--name",
+            "imported",
+            "--path",
+            "imported.jsonl",
+        ])
+        .write_stdin(input)
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Imported JSONL"));
+
+    // Verify the imported ledger
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "ledger",
+            "verify",
+            "--name",
+            "imported",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("3 entries")); // genesis + 2 events
+}
+
+#[test]
+fn test_ledger_remove_nonexistent() {
+    let dir = setup_initialized_dir();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "ledger",
+            "remove",
+            "--name",
+            "ghost",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .code(3); // EXIT_CONFIG_ERROR
+}
+
+// ===========================================================================
+// Task 13 — query subcommand tests
+// ===========================================================================
+
+#[test]
+fn test_query_select_all() {
+    let dir = setup_initialized_dir();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "query",
+            "SELECT count(*) as count FROM events",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("count"))
+        .stdout(predicate::str::contains("1")); // genesis only
+}
+
+#[test]
+fn test_query_with_type_filter() {
+    let dir = setup_initialized_dir();
+
+    // Add a transition first
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "transition", "begin"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Query for state_transition events
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "query",
+            "--type",
+            "state_transition",
+            "--count",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1"));
+}
+
+#[test]
+fn test_query_json_output() {
+    let dir = setup_initialized_dir();
+
+    let output = Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "query",
+            "--json",
+            "SELECT type, seq FROM events ORDER BY seq LIMIT 1",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: serde_json::Value =
+        serde_json::from_slice(&output).expect("should produce valid JSON");
+    assert!(json.is_array());
+    let arr = json.as_array().unwrap();
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["type"].as_str().unwrap(), "genesis");
+}
+
+#[test]
+fn test_query_csv_output() {
+    let dir = setup_initialized_dir();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "query",
+            "--format",
+            "csv",
+            "SELECT type, seq FROM events ORDER BY seq LIMIT 1",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("seq,type"))
+        .stdout(predicate::str::contains("0,genesis"));
+}
+
+#[test]
+fn test_query_jsonl_output() {
+    let dir = setup_initialized_dir();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "query",
+            "--format",
+            "jsonl",
+            "SELECT type FROM events ORDER BY seq LIMIT 1",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""type":"genesis""#));
+}
+
+#[test]
+fn test_query_convenience_no_sql() {
+    let dir = setup_initialized_dir();
+
+    // No SQL, just --type
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "query",
+            "--type",
+            "genesis",
+            "--format",
+            "json",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("genesis"));
+}
+
+// ===========================================================================
+// Task 14 — --ledger / --ledger-path targeting tests
+// ===========================================================================
+
+#[test]
+fn test_ledger_path_targeting_log_verify() {
+    let dir = setup_initialized_dir();
+
+    // Verify the default ledger via --ledger-path
+    let ledger_file = dir
+        .path()
+        .join("output/.sahjhan/ledger.bin")
+        .to_str()
+        .unwrap()
+        .to_string();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "--ledger-path",
+            &ledger_file,
+            "log",
+            "verify",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Chain valid"));
+}
+
+#[test]
+fn test_named_ledger_targeting_log_dump() {
+    let dir = setup_initialized_dir();
+
+    // Create a named ledger
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "ledger",
+            "create",
+            "--name",
+            "second",
+            "--path",
+            "second.jsonl",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Use --ledger to target the named ledger for log dump
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "--ledger",
+            "second",
+            "log",
+            "dump",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("genesis"));
+}
+
+#[test]
+fn test_event_only_blocks_transition() {
+    let dir = setup_initialized_dir();
+
+    // Create an event-only ledger
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "ledger",
+            "create",
+            "--name",
+            "eo",
+            "--path",
+            "eo.jsonl",
+            "--mode",
+            "event-only",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Try to transition on the event-only ledger — should fail with code 3
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "--ledger",
+            "eo",
+            "transition",
+            "begin",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("event-only ledger"));
+}
+
+#[test]
+fn test_event_only_blocks_gate_check() {
+    let dir = setup_initialized_dir();
+
+    // Create an event-only ledger
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "ledger",
+            "create",
+            "--name",
+            "eo2",
+            "--path",
+            "eo2.jsonl",
+            "--mode",
+            "event-only",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Try to check gates on event-only ledger — should fail
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "--ledger",
+            "eo2",
+            "gate",
+            "check",
+            "begin",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("event-only ledger"));
+}
+
+#[test]
+fn test_event_only_status_metadata() {
+    let dir = setup_initialized_dir();
+
+    // Create an event-only ledger
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "ledger",
+            "create",
+            "--name",
+            "eo3",
+            "--path",
+            "eo3.jsonl",
+            "--mode",
+            "event-only",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Status on event-only should show metadata
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "--ledger",
+            "eo3",
+            "status",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("event-only"))
+        .stdout(predicate::str::contains("Events:"));
+}
+
+#[test]
+fn test_query_on_named_ledger() {
+    let dir = setup_initialized_dir();
+
+    // Create a named ledger
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "ledger",
+            "create",
+            "--name",
+            "queryable",
+            "--path",
+            "queryable.jsonl",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Query the named ledger using the global --ledger flag
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "--ledger",
+            "queryable",
+            "query",
+            "SELECT count(*) as count FROM events",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1")); // genesis only
+}

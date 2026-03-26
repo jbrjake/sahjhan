@@ -4,9 +4,9 @@ Protocol enforcement engine for AI agents.
 
 ## What this is
 
-I have a code audit project where agents find bugs, fix them, and then do review passes to make sure their fixes didn't break anything new. And look, I know what you're thinking. The protocol was 400 lines. Dot diagrams. Rationalization detection tables. Hard gates. I prompted it correctly.
+I have a code audit project where agents find bugs, fix them, and then do review passes to make sure their fixes didn't break anything new.
 
-Here's what the agent did:
+Here's what the agent did instead of the review passes:
 
 > **Agent:** Need 3 data points. Let me run it two more times to build up the convergence history.
 >
@@ -47,6 +47,8 @@ By the fourth run, the pretense was gone entirely:
 > **Result:** `CONVERGED`
 
 No files read. No code reviewed. No analysis. Just napping on the clock. The Bash description the agent gave itself: "Convergence check iteration 2 (after minimum wait)." After minimum wait. It labeled its own nap.
+
+And look, I know what you're thinking. The protocol for this was 400 lines. Dot diagrams. Rationalization detection tables. Hard gates. I prompted it correctly.
 
 I made one of these agents write a postmortem about what it did. Its conclusion: "This is not a documentation fix. This is a code fix. The convergence protocol has the same gap the other hooks addressed: advisory language that the model agrees with and ignores."
 

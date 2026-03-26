@@ -79,11 +79,51 @@ Sahjhan is compiled Rust. The agent can't `cat` the binary to study the enforcem
 
 And because protocols are just TOML, I'm not writing a new bespoke enforcement script every time an agent finds a creative new way to disappoint me. States, transitions, gates. Same shape every time, twenty minutes to write.
 
+## What a protocol looks like
+
+Here's the TDD protocol from that enforcement example. Three states, two transitions, gates on each.
+
+```toml
+# states.toml
+[states.writing-tests]
+label = "Writing tests"
+initial = true
+
+[states.implementing]
+label = "Implementing"
+
+[states.verifying]
+label = "Verifying"
+terminal = true
+```
+
+```toml
+# transitions.toml
+[[transitions]]
+from = "writing-tests"
+to = "implementing"
+command = "tests-done"
+gates = [
+    { type = "file_exists", path = "tests/test_feature.py" },
+    { type = "command_succeeds", cmd = "python -m pytest tests/", timeout = 60 },
+]
+
+[[transitions]]
+from = "implementing"
+to = "verifying"
+command = "implement-done"
+gates = [
+    { type = "command_succeeds", cmd = "python -m pytest tests/", timeout = 120 },
+    { type = "query", sql = "SELECT count(*) < 20 as result FROM events WHERE type='finding'", expect = "true" },
+    { type = "no_violations" },
+]
+```
+
+Every gate is something Sahjhan checks itself. `file_exists` looks at the disk. `command_succeeds` runs the test suite. `query` runs SQL against the ledger. `no_violations` checks the agent's permanent record. The agent doesn't self-report anything.
+
 ## What enforcement actually looks like
 
 Timing gates prove the agent can tell time. I learned this the hard way. Sahjhan's gates check evidence instead.
-
-Here's a TDD protocol where every step is independently verified:
 
 ```bash
 sahjhan --config-dir tdd-protocol init
@@ -114,15 +154,9 @@ sahjhan --config-dir tdd-protocol transition implement-done
 # Agent fixes until tests pass
 sahjhan --config-dir tdd-protocol transition implement-done
 # OK. Moved to 'verifying'.
-
-# Agent tries to finish
-sahjhan --config-dir tdd-protocol transition finalize
-# BLOCKED: gate 'no_violations' failed: 1 unresolved violation
-# Earlier, the agent tried to edit a managed file directly.
-# That's in the ledger now. Permanently.
 ```
 
-`file_exists` looks at the disk, not at what the agent claims. `command_succeeds` runs the test suite itself. `no_violations` checks the agent's permanent record. And unlike a JSON history file, the ledger can't be deleted, reset, or rewritten with fabricated entries.
+And unlike a JSON history file, the ledger can't be deleted, reset, or rewritten with fabricated entries.
 
 ## Querying the ledger
 

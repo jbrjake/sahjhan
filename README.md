@@ -126,7 +126,7 @@ sahjhan --config-dir tdd-protocol transition finalize
 
 ## Querying the ledger
 
-The ledger is JSONL, which means every event is a line of JSON you can grep, jq, or — as of v0.2.0 — query with SQL. Sahjhan embeds Apache DataFusion, so the entire history is a SQL table.
+The ledger is JSONL. Every event is a line of JSON you can grep, jq, or query with SQL. Sahjhan embeds Apache DataFusion, so the whole history is just a SQL table.
 
 ```bash
 # How many findings, by severity?
@@ -140,7 +140,7 @@ sahjhan query --glob "docs/runs/*/ledger.jsonl" \
 sahjhan query --type finding --count
 ```
 
-Event fields from `events.toml` become native Arrow columns. No JSON parsing at query time — DataFusion gets full columnar access with predicate pushdown, the works. When you define a field called `severity` in your event schema, it's a real column you can filter, group, and aggregate on.
+Event fields from `events.toml` become native Arrow columns. No JSON parsing at query time. When you define a field called `severity` in your event schema, it's a real column you can filter and group on like any other.
 
 You can also use SQL as a gate condition:
 
@@ -148,11 +148,11 @@ You can also use SQL as a gate condition:
 { type = "query", sql = "SELECT count(*) < 15 as result FROM events WHERE type='finding'", expect = "true" }
 ```
 
-The agent accumulates too many findings, it can't advance. The SQL runs inside the gate evaluator, against the live ledger, every time the transition is attempted. No external scripts, no files to tamper with.
+The agent accumulates too many findings, it can't advance. The SQL runs inside the gate evaluator against the live ledger every time the transition is attempted.
 
 ## Multiple ledgers
 
-Not every log is a state machine. Sometimes you just want an append-only accumulator — a project-level event stream alongside the run-level protocol.
+Not every log needs a state machine. Sometimes you just want an append-only accumulator, a project-level event stream that lives alongside the per-run protocol.
 
 ```bash
 # Create a project-wide event-only ledger
@@ -165,13 +165,13 @@ sahjhan --ledger project event finding --field id=BH-042 --field severity=HIGH
 sahjhan query --glob "*.jsonl" "SELECT type, count(*) FROM events GROUP BY 1"
 ```
 
-Stateful ledgers are bound to the state machine. Event-only ledgers just accumulate. Both are hash-chained, both are queryable. `--ledger` and `--ledger-path` work on every command.
+Stateful ledgers are bound to the state machine. Event-only ledgers just accumulate. Both are hash-chained. `--ledger` and `--ledger-path` work on every command.
 
 ## How it works
 
 TOML defines the states, transitions, and gates. The compiled binary enforces them. My agents used to read my Python guard scripts and find the gaps in minutes. There's nothing to read here.
 
-The ledger is the hash chain (I'm still not over it). Every entry is a JSON line with eight envelope fields — sequence number, timestamp, event type, SHA-256 of the previous entry, SHA-256 of the current entry computed over RFC 8785 canonical JSON. Edit one, chain breaks. Delete one, sequence gap. Reset the whole file, the manifest notices.
+The ledger is the hash chain (I'm still not over it). Every entry is a JSON line with eight envelope fields: sequence number, timestamp, event type, SHA-256 of the previous entry, SHA-256 of the current entry computed over RFC 8785 canonical JSON. Edit one, chain breaks. Delete one, sequence gap. Reset the whole file, the manifest notices.
 
 The manifest tracks SHA-256 hashes of every managed file. Touch one through Bash, the hash won't match, violation gets written to the ledger. Permanently. The manifest hash is also in the ledger, so tampering with the manifest means tampering with the ledger, which means defeating the hash chain. Turtles all the way down, but SHA-256 turtles.
 
@@ -258,13 +258,13 @@ gates = [
 ]
 ```
 
-`command_succeeds` is Sahjhan running `cargo test` and checking the exit code. Not the agent reporting its own test results. `query` runs SQL against the live ledger — the agent can't argue with arithmetic.
+`command_succeeds` is Sahjhan running `cargo test` and checking the exit code. Not the agent reporting its own test results. `query` runs SQL against the live ledger. The agent can't argue with arithmetic.
 
 ### `events.toml`
 
 Event types and field schemas. Validated at recording time. The `pattern` regex means the agent can't put "yeah probably fine" in a boolean field.
 
-Fields declared here become native SQL columns when querying. Define your schema once, query it forever.
+Fields declared here become SQL columns. You write the schema once; queries use it from then on.
 
 ```toml
 [events.set_member_complete]
@@ -285,7 +285,7 @@ fields = [
 
 ### `renders.toml`
 
-Optional. Sahjhan renders status files from the ledger. The agent never writes them directly. In multi-ledger setups, each render can target a specific ledger.
+Optional. Sahjhan renders status files from the ledger. The agent never writes them directly. Each render can target a specific ledger if you have more than one.
 
 ```toml
 [[renders]]

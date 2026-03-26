@@ -8,6 +8,15 @@ use clap::{Parser, Subcommand};
 
 use sahjhan::cli::aliases;
 use sahjhan::cli::commands;
+use sahjhan::cli::hooks_cmd;
+use sahjhan::cli::init;
+use sahjhan::cli::ledger;
+use sahjhan::cli::log;
+use sahjhan::cli::manifest_cmd;
+use sahjhan::cli::query;
+use sahjhan::cli::render;
+use sahjhan::cli::status;
+use sahjhan::cli::transition;
 
 #[derive(Parser)]
 #[command(
@@ -302,68 +311,68 @@ fn main() {
     };
 
     let exit_code = match cli.command {
-        Commands::Validate => commands::cmd_validate(&cli.config_dir),
-        Commands::Init => commands::cmd_init(&cli.config_dir),
-        Commands::Status => commands::cmd_status(&cli.config_dir, &targeting),
+        Commands::Validate => init::cmd_validate(&cli.config_dir),
+        Commands::Init => init::cmd_init(&cli.config_dir),
+        Commands::Status => status::cmd_status(&cli.config_dir, &targeting),
         Commands::Log { action } => match action {
-            LogAction::Dump => commands::cmd_log_dump(&cli.config_dir, &targeting),
-            LogAction::Verify => commands::cmd_log_verify(&cli.config_dir, &targeting),
-            LogAction::Tail { n } => commands::cmd_log_tail(&cli.config_dir, n, &targeting),
+            LogAction::Dump => log::cmd_log_dump(&cli.config_dir, &targeting),
+            LogAction::Verify => log::cmd_log_verify(&cli.config_dir, &targeting),
+            LogAction::Tail { n } => log::cmd_log_tail(&cli.config_dir, n, &targeting),
         },
         Commands::Manifest { action } => match action {
-            ManifestAction::Verify => commands::cmd_manifest_verify(&cli.config_dir),
-            ManifestAction::List => commands::cmd_manifest_list(&cli.config_dir),
+            ManifestAction::Verify => manifest_cmd::cmd_manifest_verify(&cli.config_dir),
+            ManifestAction::List => manifest_cmd::cmd_manifest_list(&cli.config_dir),
             ManifestAction::Restore { path } => {
-                commands::cmd_manifest_restore(&cli.config_dir, &path)
+                manifest_cmd::cmd_manifest_restore(&cli.config_dir, &path)
             }
         },
         Commands::Render { dump_context } => {
             if dump_context {
-                commands::cmd_render_dump_context(&cli.config_dir, &targeting)
+                render::cmd_render_dump_context(&cli.config_dir, &targeting)
             } else {
-                commands::cmd_render(&cli.config_dir, &targeting)
+                render::cmd_render(&cli.config_dir, &targeting)
             }
         }
         Commands::Set { action } => match action {
-            SetAction::Status { set } => commands::cmd_set_status(&cli.config_dir, &set, &targeting),
+            SetAction::Status { set } => status::cmd_set_status(&cli.config_dir, &set, &targeting),
             SetAction::Complete { set, member } => {
-                commands::cmd_set_complete(&cli.config_dir, &set, &member, &targeting)
+                status::cmd_set_complete(&cli.config_dir, &set, &member, &targeting)
             }
         },
         Commands::Transition { name, args } => {
-            commands::cmd_transition(&cli.config_dir, &name, &args, &targeting)
+            transition::cmd_transition(&cli.config_dir, &name, &args, &targeting)
         }
         Commands::Gate { action } => match action {
             GateAction::Check { transition } => {
-                commands::cmd_gate_check(&cli.config_dir, &transition, &targeting)
+                transition::cmd_gate_check(&cli.config_dir, &transition, &targeting)
             }
         },
         Commands::Event { event_type, fields } => {
-            commands::cmd_event(&cli.config_dir, &event_type, &fields, &targeting)
+            transition::cmd_event(&cli.config_dir, &event_type, &fields, &targeting)
         }
-        Commands::Reset { confirm, token } => commands::cmd_reset(&cli.config_dir, confirm, &token),
+        Commands::Reset { confirm, token } => init::cmd_reset(&cli.config_dir, confirm, &token),
         Commands::Hook { action } => match action {
             HookAction::Generate {
                 harness,
                 output_dir,
-            } => commands::cmd_hook_generate(&cli.config_dir, &harness, &output_dir),
+            } => hooks_cmd::cmd_hook_generate(&cli.config_dir, &harness, &output_dir),
         },
         Commands::Ledger { action } => match action {
             LedgerAction::Create { name, path, mode } => {
-                commands::cmd_ledger_create(&cli.config_dir, &name, &path, &mode)
+                ledger::cmd_ledger_create(&cli.config_dir, &name, &path, &mode)
             }
-            LedgerAction::List => commands::cmd_ledger_list(&cli.config_dir),
-            LedgerAction::Remove { name } => commands::cmd_ledger_remove(&cli.config_dir, &name),
+            LedgerAction::List => ledger::cmd_ledger_list(&cli.config_dir),
+            LedgerAction::Remove { name } => ledger::cmd_ledger_remove(&cli.config_dir, &name),
             LedgerAction::Verify { name, path } => {
-                commands::cmd_ledger_verify(&cli.config_dir, name.as_deref(), path.as_deref())
+                ledger::cmd_ledger_verify(&cli.config_dir, name.as_deref(), path.as_deref())
             }
             LedgerAction::Checkpoint {
                 name,
                 scope,
                 snapshot,
-            } => commands::cmd_ledger_checkpoint(&cli.config_dir, &name, &scope, &snapshot),
+            } => ledger::cmd_ledger_checkpoint(&cli.config_dir, &name, &scope, &snapshot),
             LedgerAction::Import { name, path } => {
-                commands::cmd_ledger_import(&cli.config_dir, &name, &path)
+                ledger::cmd_ledger_import(&cli.config_dir, &name, &path)
             }
         },
         Commands::Query {
@@ -386,7 +395,7 @@ fn main() {
                 ledger_name: cli.ledger,
                 ledger_path: query_path.or(cli.ledger_path),
             };
-            commands::cmd_query(
+            query::cmd_query(
                 &cli.config_dir,
                 sql.as_deref(),
                 &query_targeting,

@@ -78,7 +78,7 @@ impl Ledger {
         let seq = prev.seq + 1;
         let prev_hash = prev.entry_hash;
 
-        let entry = LedgerEntry::new(seq, prev_hash, event_type.to_string(), payload);
+        let entry = LedgerEntry::new_binary(seq, prev_hash, event_type.to_string(), payload);
         let bytes = entry.to_bytes();
 
         // Append to file under exclusive lock.

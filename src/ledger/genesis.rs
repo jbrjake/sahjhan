@@ -24,5 +24,5 @@ pub fn create_genesis(protocol_name: &str, protocol_version: &str) -> LedgerEntr
     };
     let payload_bytes = rmp_serde::to_vec(&payload).unwrap();
 
-    LedgerEntry::new(0, nonce, "protocol_init".to_string(), payload_bytes)
+    LedgerEntry::new_binary(0, nonce, "protocol_init".to_string(), payload_bytes)
 }

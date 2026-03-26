@@ -1,0 +1,10 @@
+[states.idle]
+label = "Idle"
+initial = true
+
+[states.working]
+label = "Working"
+
+[states.done]
+label = "Done"
+terminal = true

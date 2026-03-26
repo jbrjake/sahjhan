@@ -1,0 +1,13 @@
+[[transitions]]
+from = "idle"
+to = "working"
+command = "begin"
+gates = []
+
+[[transitions]]
+from = "working"
+to = "done"
+command = "complete"
+gates = [
+    { type = "set_covered", set = "check", event = "set_member_complete", field = "member" },
+]

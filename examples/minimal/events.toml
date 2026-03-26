@@ -1,0 +1,6 @@
+[events.set_member_complete]
+description = "A check passed"
+fields = [
+    { name = "set", type = "string" },
+    { name = "member", type = "string" },
+]

@@ -1,0 +1,17 @@
+[protocol]
+name = "minimal"
+version = "1.0.0"
+description = "Minimal example protocol"
+
+[paths]
+managed = ["output"]
+data_dir = "output/.sahjhan"
+render_dir = "output"
+
+[sets.check]
+description = "Verification checks"
+values = ["tests", "lint"]
+
+[aliases]
+"start" = "transition begin"
+"finish" = "transition complete"

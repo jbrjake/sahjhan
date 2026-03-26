@@ -1,0 +1,10 @@
+[[renders]]
+target = "STATUS.md"
+template = "templates/status.md.tera"
+trigger = "on_transition"
+
+[[renders]]
+target = "HISTORY.md"
+template = "templates/history.md.tera"
+trigger = "on_event"
+event_types = ["set_member_complete"]

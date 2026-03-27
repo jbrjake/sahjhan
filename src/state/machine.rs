@@ -93,7 +93,7 @@ impl StateMachine {
     /// Evaluates all gates on the matching transition; if all pass the
     /// `state_transition` event is appended to the ledger and the current
     /// state is updated.
-    pub fn transition(&mut self, command: &str, _args: &[String]) -> Result<(), StateError> {
+    pub fn transition(&mut self, command: &str, args: &[String]) -> Result<(), StateError> {
         // Find a matching transition from the current state.
         let transition = self
             .config
@@ -107,7 +107,15 @@ impl StateMachine {
             .clone(); // clone so we release the borrow on self.config
 
         // Build state_params from the target state's param definitions.
-        let state_params = self.build_state_params(&transition.to);
+        let mut state_params = self.build_state_params(&transition.to);
+
+        // Parse CLI args as key=value pairs and merge into state_params.
+        // CLI args override state params from config.
+        for arg in args {
+            if let Some((key, value)) = arg.split_once('=') {
+                state_params.insert(key.to_string(), value.to_string());
+            }
+        }
 
         // Evaluate gates.
         for gate in &transition.gates {

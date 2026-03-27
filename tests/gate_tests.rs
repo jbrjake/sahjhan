@@ -4,9 +4,10 @@
 // plus additional tests for timeout enforcement, snapshot resolution,
 // violation resolution, and field validation.
 
-use sahjhan::config::{GateConfig, ProtocolConfig};
+use sahjhan::config::{GateConfig, ProtocolConfig, StateParam, TransitionConfig};
 use sahjhan::gates::evaluator::{evaluate_gate, evaluate_gates, GateContext};
 use sahjhan::ledger::chain::Ledger;
+use sahjhan::state::machine::StateMachine;
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use tempfile::tempdir;
@@ -1363,5 +1364,89 @@ fn test_query_gate_missing_sql() {
         result.reason.as_ref().unwrap().contains("sql"),
         "reason should mention 'sql': {:?}",
         result.reason
+    );
+}
+
+// ---------------------------------------------------------------------------
+// transition args as template variables (Issue #6)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_transition_args_interpolated_in_gate_command() {
+    let dir = tempdir().unwrap();
+
+    // Build a config with a command_succeeds gate that uses {{item_id}}.
+    let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+
+    // Add a transition from idle->working with a gate that checks {{item_id}}.
+    config.transitions = vec![
+        TransitionConfig {
+            from: "idle".to_string(),
+            to: "working".to_string(),
+            command: "begin".to_string(),
+            gates: vec![make_gate(
+                "command_succeeds",
+                vec![(
+                    "cmd",
+                    toml::Value::String("test {{item_id}} = 'BH-019'".to_string()),
+                )],
+            )],
+        },
+    ];
+
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let mut machine = StateMachine::new(&config, ledger);
+
+    // Pass item_id=BH-019 as a transition arg.
+    let result = machine.transition("begin", &["item_id=BH-019".to_string()]);
+    assert!(
+        result.is_ok(),
+        "transition should succeed with interpolated arg: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_transition_args_override_state_params() {
+    let dir = tempdir().unwrap();
+
+    let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+
+    // Add a state param that maps "targets" to set "check"
+    config.states.get_mut("working").unwrap().params = Some(vec![
+        StateParam {
+            name: "targets".to_string(),
+            set: "check".to_string(),
+        },
+    ]);
+
+    config.transitions = vec![
+        TransitionConfig {
+            from: "idle".to_string(),
+            to: "working".to_string(),
+            command: "begin".to_string(),
+            gates: vec![make_gate(
+                "command_succeeds",
+                vec![(
+                    "cmd",
+                    toml::Value::String("test {{targets}} = 'override_val'".to_string()),
+                )],
+            )],
+        },
+    ];
+
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let mut machine = StateMachine::new(&config, ledger);
+
+    // CLI arg should override the state_param value
+    let result = machine.transition("begin", &["targets=override_val".to_string()]);
+    assert!(
+        result.is_ok(),
+        "CLI arg should override state param: {:?}",
+        result.err()
     );
 }

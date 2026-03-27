@@ -1694,3 +1694,87 @@ ledger = "run"
     let content = std::fs::read_to_string(dir.path().join("output/STATUS.md")).unwrap();
     assert!(content.contains("idle") || content.contains("Idle"));
 }
+
+#[test]
+fn test_transition_with_template_args() {
+    let dir = setup_initialized_dir();
+
+    // Overwrite transitions.toml with a gate using {{item_id}}
+    std::fs::write(
+        dir.path().join("enforcement/transitions.toml"),
+        r#"
+[[transitions]]
+from = "idle"
+to = "working"
+command = "begin"
+gates = [
+    { type = "command_succeeds", cmd = "test {{item_id}} = 'BH-019'" },
+]
+
+[[transitions]]
+from = "working"
+to = "done"
+command = "complete"
+gates = [
+    { type = "set_covered", set = "check", event = "set_member_complete", field = "member" },
+]
+"#,
+    )
+    .unwrap();
+
+    // Transition with item_id arg should succeed
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "transition",
+            "begin",
+            "item_id=BH-019",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Transition: idle -> working"));
+}
+
+#[test]
+fn test_transition_without_required_arg_fails() {
+    let dir = setup_initialized_dir();
+
+    // Same gate requiring {{item_id}}
+    std::fs::write(
+        dir.path().join("enforcement/transitions.toml"),
+        r#"
+[[transitions]]
+from = "idle"
+to = "working"
+command = "begin"
+gates = [
+    { type = "command_succeeds", cmd = "test {{item_id}} = 'BH-019'" },
+]
+
+[[transitions]]
+from = "working"
+to = "done"
+command = "complete"
+gates = [
+    { type = "set_covered", set = "check", event = "set_member_complete", field = "member" },
+]
+"#,
+    )
+    .unwrap();
+
+    // Transition without the arg — gate should fail because {{item_id}} is literal
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "transition",
+            "begin",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .code(1); // EXIT_GATE_FAILED
+}

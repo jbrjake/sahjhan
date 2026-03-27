@@ -1618,3 +1618,48 @@ fn test_query_on_named_ledger() {
         .success()
         .stdout(predicate::str::contains("1")); // genesis only
 }
+
+#[test]
+fn test_gate_check_with_args() {
+    let dir = setup_initialized_dir();
+
+    // Overwrite transitions.toml with a gate that uses {{item_id}}
+    std::fs::write(
+        dir.path().join("enforcement/transitions.toml"),
+        r#"
+[[transitions]]
+from = "idle"
+to = "working"
+command = "begin"
+gates = [
+    { type = "command_succeeds", cmd = "test {{item_id}} = 'BH-019'" },
+]
+
+[[transitions]]
+from = "working"
+to = "done"
+command = "complete"
+gates = [
+    { type = "set_covered", set = "check", event = "set_member_complete", field = "member" },
+]
+"#,
+    )
+    .unwrap();
+
+    // Gate check with args should show the gate passing
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "gate",
+            "check",
+            "begin",
+            "--",
+            "item_id=BH-019",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("✓"));
+}

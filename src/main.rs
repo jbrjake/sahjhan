@@ -211,6 +211,10 @@ enum GateAction {
     Check {
         /// Transition name
         transition: String,
+
+        /// Additional arguments (key=value pairs for template variables)
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
     },
 }
 
@@ -343,8 +347,8 @@ fn main() {
             transition::cmd_transition(&cli.config_dir, &name, &args, &targeting)
         }
         Commands::Gate { action } => match action {
-            GateAction::Check { transition } => {
-                transition::cmd_gate_check(&cli.config_dir, &transition, &targeting)
+            GateAction::Check { transition, args } => {
+                transition::cmd_gate_check(&cli.config_dir, &transition, &args, &targeting)
             }
         },
         Commands::Event { event_type, fields } => {

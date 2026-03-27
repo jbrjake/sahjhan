@@ -148,7 +148,7 @@ pub fn cmd_transition(
 // ---------------------------------------------------------------------------
 
 // [cmd-gate-check]
-pub fn cmd_gate_check(config_dir: &str, transition_name: &str, targeting: &LedgerTargeting) -> i32 {
+pub fn cmd_gate_check(config_dir: &str, transition_name: &str, args: &[String], targeting: &LedgerTargeting) -> i32 {
     let config_path = resolve_config_dir(config_dir);
     let config = match load_config(&config_path) {
         Ok(c) => c,
@@ -199,7 +199,15 @@ pub fn cmd_gate_check(config_dir: &str, transition_name: &str, targeting: &Ledge
         return EXIT_SUCCESS;
     }
 
-    let state_params = build_state_params(&config, &transition.to);
+    let mut state_params = build_state_params(&config, &transition.to);
+
+    // Parse CLI args as key=value pairs and merge into state_params.
+    for arg in args {
+        if let Some((key, value)) = arg.split_once('=') {
+            state_params.insert(key.to_string(), value.to_string());
+        }
+    }
+
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let ctx = GateContext {
         ledger: machine.ledger(),

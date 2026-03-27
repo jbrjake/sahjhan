@@ -329,7 +329,9 @@ pub fn cmd_set_complete(
 
             // Trigger on_event renders for set_member_complete
             if !config.renders.is_empty() {
+                let registry_path = super::commands::registry_path_from_config(&config);
                 if let Ok(engine) = RenderEngine::new(&config, &config_path) {
+                    let engine = engine.with_registry(registry_path);
                     let render_dir = resolve_data_dir(&config.paths.render_dir);
                     let ledger_seq = machine
                         .ledger()

@@ -49,8 +49,9 @@ pub fn cmd_render(config_dir: &str, targeting: &LedgerTargeting) -> i32 {
         }
     };
 
+    let registry_path = super::commands::registry_path_from_config(&config);
     let engine = match RenderEngine::new(&config, &config_path) {
-        Ok(e) => e,
+        Ok(e) => e.with_registry(registry_path),
         Err(e) => {
             eprintln!("Cannot create render engine: {}", e);
             return EXIT_CONFIG_ERROR;
@@ -105,8 +106,9 @@ pub fn cmd_render_dump_context(config_dir: &str, targeting: &LedgerTargeting) ->
         }
     };
 
+    let registry_path = super::commands::registry_path_from_config(&config);
     let engine = match RenderEngine::new(&config, &config_path) {
-        Ok(e) => e,
+        Ok(e) => e.with_registry(registry_path),
         Err(e) => {
             eprintln!("Cannot create render engine: {}", e);
             return EXIT_CONFIG_ERROR;

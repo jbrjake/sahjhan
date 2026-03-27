@@ -1663,3 +1663,34 @@ gates = [
         .success()
         .stdout(predicate::str::contains("✓"));
 }
+
+#[test]
+fn test_render_with_named_ledger_falls_back_to_default() {
+    let dir = setup_initialized_dir();
+
+    // Overwrite renders.toml to reference a named ledger that doesn't exist
+    std::fs::write(
+        dir.path().join("enforcement/renders.toml"),
+        r#"
+[[renders]]
+target = "STATUS.md"
+template = "templates/status.md.tera"
+trigger = "on_transition"
+ledger = "run"
+"#,
+    )
+    .unwrap();
+
+    // Render should succeed by falling back to the default ledger
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "render"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // STATUS.md should exist and have content from the default ledger
+    assert!(dir.path().join("output/STATUS.md").exists());
+    let content = std::fs::read_to_string(dir.path().join("output/STATUS.md")).unwrap();
+    assert!(content.contains("idle") || content.contains("Idle"));
+}

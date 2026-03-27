@@ -88,7 +88,9 @@ pub fn cmd_transition(
 
             // Trigger on_transition renders
             if !config.renders.is_empty() {
+                let registry_path = super::commands::registry_path_from_config(&config);
                 if let Ok(engine) = RenderEngine::new(&config, &config_path) {
+                    let engine = engine.with_registry(registry_path);
                     let render_dir = resolve_data_dir(&config.paths.render_dir);
                     let ledger_seq = machine
                         .ledger()
@@ -351,7 +353,9 @@ pub fn cmd_event(
 
             // Trigger on_event renders
             if !config.renders.is_empty() {
+                let registry_path = super::commands::registry_path_from_config(&config);
                 if let Ok(engine) = RenderEngine::new(&config, &config_path) {
+                    let engine = engine.with_registry(registry_path);
                     let render_dir = resolve_data_dir(&config.paths.render_dir);
                     let ledger_seq = machine
                         .ledger()

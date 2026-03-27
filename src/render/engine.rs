@@ -80,8 +80,9 @@ impl RenderEngine {
 
     /// Resolve the ledger for a render config.
     ///
-    /// If the render has a `ledger` field, load that ledger from the registry.
-    /// Otherwise return `None` (caller uses the default ledger).
+    /// If the render has a `ledger` field, attempt to load that ledger from the
+    /// registry. If the registry or named ledger doesn't exist, fall back to
+    /// the default ledger (return `Ok(None)`) with a warning on stderr.
     fn resolve_render_ledger(
         &self,
         render_cfg: &crate::config::RenderConfig,
@@ -91,22 +92,38 @@ impl RenderEngine {
             None => return Ok(None),
         };
 
-        let reg_path = self.registry_path.as_ref().ok_or_else(|| {
-            format!(
-                "render '{}' requires ledger '{}' but no registry path was configured",
-                render_cfg.target, ledger_name
-            )
-        })?;
+        let reg_path = match self.registry_path.as_ref() {
+            Some(p) => p,
+            None => {
+                eprintln!(
+                    "  Render '{}': ledger '{}' requested but no registry configured; using default ledger",
+                    render_cfg.target, ledger_name
+                );
+                return Ok(None);
+            }
+        };
 
-        let registry = LedgerRegistry::new(reg_path)
-            .map_err(|e| format!("cannot load ledger registry: {}", e))?;
+        let registry = match LedgerRegistry::new(reg_path) {
+            Ok(r) => r,
+            Err(_) => {
+                eprintln!(
+                    "  Render '{}': cannot load registry; using default ledger for '{}'",
+                    render_cfg.target, ledger_name
+                );
+                return Ok(None);
+            }
+        };
 
-        let entry = registry.resolve(Some(ledger_name)).map_err(|e| {
-            format!(
-                "render '{}': ledger resolution failed: {}",
-                render_cfg.target, e
-            )
-        })?;
+        let entry = match registry.resolve(Some(ledger_name)) {
+            Ok(e) => e,
+            Err(_) => {
+                eprintln!(
+                    "  Render '{}': ledger '{}' not found in registry; using default ledger",
+                    render_cfg.target, ledger_name
+                );
+                return Ok(None);
+            }
+        };
 
         // Resolve relative paths against the registry file's parent directory.
         let ledger_path = {
@@ -121,12 +138,16 @@ impl RenderEngine {
             }
         };
 
-        let ledger = Ledger::open(&ledger_path).map_err(|e| {
-            format!(
-                "render '{}': cannot open ledger '{}': {}",
-                render_cfg.target, ledger_name, e
-            )
-        })?;
+        let ledger = match Ledger::open(&ledger_path) {
+            Ok(l) => l,
+            Err(_) => {
+                eprintln!(
+                    "  Render '{}': cannot open ledger '{}' at {}; using default ledger",
+                    render_cfg.target, ledger_name, ledger_path.display()
+                );
+                return Ok(None);
+            }
+        };
 
         Ok(Some(ledger))
     }

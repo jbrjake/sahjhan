@@ -1768,12 +1768,7 @@ gates = [
     // Transition without the arg — gate should fail because {{item_id}} is literal
     Command::cargo_bin("sahjhan")
         .unwrap()
-        .args([
-            "--config-dir",
-            "enforcement",
-            "transition",
-            "begin",
-        ])
+        .args(["--config-dir", "enforcement", "transition", "begin"])
         .current_dir(dir.path())
         .assert()
         .code(1); // EXIT_GATE_FAILED

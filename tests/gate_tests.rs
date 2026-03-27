@@ -1379,20 +1379,18 @@ fn test_transition_args_interpolated_in_gate_command() {
     let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
 
     // Add a transition from idle->working with a gate that checks {{item_id}}.
-    config.transitions = vec![
-        TransitionConfig {
-            from: "idle".to_string(),
-            to: "working".to_string(),
-            command: "begin".to_string(),
-            gates: vec![make_gate(
-                "command_succeeds",
-                vec![(
-                    "cmd",
-                    toml::Value::String("test {{item_id}} = 'BH-019'".to_string()),
-                )],
+    config.transitions = vec![TransitionConfig {
+        from: "idle".to_string(),
+        to: "working".to_string(),
+        command: "begin".to_string(),
+        gates: vec![make_gate(
+            "command_succeeds",
+            vec![(
+                "cmd",
+                toml::Value::String("test {{item_id}} = 'BH-019'".to_string()),
             )],
-        },
-    ];
+        )],
+    }];
 
     let ledger_path = dir.path().join("ledger.jsonl");
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
@@ -1415,27 +1413,23 @@ fn test_transition_args_override_state_params() {
     let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
 
     // Add a state param that maps "targets" to set "check"
-    config.states.get_mut("working").unwrap().params = Some(vec![
-        StateParam {
-            name: "targets".to_string(),
-            set: "check".to_string(),
-        },
-    ]);
+    config.states.get_mut("working").unwrap().params = Some(vec![StateParam {
+        name: "targets".to_string(),
+        set: "check".to_string(),
+    }]);
 
-    config.transitions = vec![
-        TransitionConfig {
-            from: "idle".to_string(),
-            to: "working".to_string(),
-            command: "begin".to_string(),
-            gates: vec![make_gate(
-                "command_succeeds",
-                vec![(
-                    "cmd",
-                    toml::Value::String("test {{targets}} = 'override_val'".to_string()),
-                )],
+    config.transitions = vec![TransitionConfig {
+        from: "idle".to_string(),
+        to: "working".to_string(),
+        command: "begin".to_string(),
+        gates: vec![make_gate(
+            "command_succeeds",
+            vec![(
+                "cmd",
+                toml::Value::String("test {{targets}} = 'override_val'".to_string()),
             )],
-        },
-    ];
+        )],
+    }];
 
     let ledger_path = dir.path().join("ledger.jsonl");
     let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();

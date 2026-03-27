@@ -150,7 +150,12 @@ pub fn cmd_transition(
 // ---------------------------------------------------------------------------
 
 // [cmd-gate-check]
-pub fn cmd_gate_check(config_dir: &str, transition_name: &str, args: &[String], targeting: &LedgerTargeting) -> i32 {
+pub fn cmd_gate_check(
+    config_dir: &str,
+    transition_name: &str,
+    args: &[String],
+    targeting: &LedgerTargeting,
+) -> i32 {
     let config_path = resolve_config_dir(config_dir);
     let config = match load_config(&config_path) {
         Ok(c) => c,

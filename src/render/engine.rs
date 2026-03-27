@@ -143,7 +143,9 @@ impl RenderEngine {
             Err(_) => {
                 eprintln!(
                     "  Render '{}': cannot open ledger '{}' at {}; using default ledger",
-                    render_cfg.target, ledger_name, ledger_path.display()
+                    render_cfg.target,
+                    ledger_name,
+                    ledger_path.display()
                 );
                 return Ok(None);
             }

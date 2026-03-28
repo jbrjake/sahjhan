@@ -207,7 +207,9 @@ fn test_validate_render_both_ledger_and_ledger_template() {
     });
     let (errors, _) = config.validate_deep(Path::new("examples/minimal"));
     assert!(
-        errors.iter().any(|e| e.contains("bad.md") && e.contains("both")),
+        errors
+            .iter()
+            .any(|e| e.contains("bad.md") && e.contains("both")),
         "Expected error about both ledger and ledger_template: {:?}",
         errors
     );
@@ -227,7 +229,9 @@ fn test_validate_render_ledger_template_references_valid_template() {
     });
     let (errors, _) = config.validate_deep(Path::new("examples/minimal"));
     assert!(
-        errors.iter().any(|e| e.contains("ref.md") && e.contains("nonexistent")),
+        errors
+            .iter()
+            .any(|e| e.contains("ref.md") && e.contains("nonexistent")),
         "Expected error about unknown ledger template: {:?}",
         errors
     );

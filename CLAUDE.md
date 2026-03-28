@@ -21,7 +21,7 @@ When you modify any source file in this repository, you MUST update documentatio
 
 ```
 cargo build                    # Build
-cargo test                     # Run all tests (233 tests)
+cargo test                     # Run all tests (251 tests)
 cargo test <test_name>         # Run one test
 cargo clippy -- -D warnings    # Lint
 cargo fmt                      # Format
@@ -59,6 +59,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | Config validation | `config/mod.rs` | `[validate]` | Basic structural validation |
 | Deep validation | `config/mod.rs` | `[validate-deep]` | File existence, gate types, aliases, ledger template checks |
 | Protocol metadata | `config/protocol.rs` | `ProtocolMeta`, `PathsConfig`, `SetConfig` | protocol.toml structures |
+| Ledger template | `config/protocol.rs` | `LedgerTemplateConfig` | `[ledgers]` section; path or path_template for template-based ledger creation |
 | State definitions | `config/states.rs` | `StateConfig`, `StateParam` | states.toml; `StateParam.source` controls set derivation |
 | Transition defs | `config/transitions.rs` | `TransitionConfig`, `GateConfig` | transitions.toml; `args` declares positional params; gates are `#[serde(flatten)]` |
 | Event definitions | `config/events.rs` | `EventConfig`, `EventFieldConfig` | events.toml; field patterns for validation |
@@ -147,7 +148,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | Resolve by name | `render/engine.rs` | `resolve_ledger_by_name` | Literal registry lookup |
 | Resolve by template | `render/engine.rs` | `resolve_ledger_by_template` | Template metadata lookup (active first, then most recent) |
 | Open registry entry | `render/engine.rs` | `open_registry_entry` | Shared helper to open ledger from registry entry |
-| Build context | `render/engine.rs` | `[build-context]` | Build template vars from ledger + config |
+| Build context | `render/engine.rs` | `[build-context]` | Build template vars from ledger + config; injects `template_instance_id` / `template_name` from registry |
 | Render triggered | `render/engine.rs` | `[render-triggered]` | Render on_transition / on_event |
 | Dump context | `render/engine.rs` | `[dump-context]` | Export render context as JSON |
 

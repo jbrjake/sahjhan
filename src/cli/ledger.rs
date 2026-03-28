@@ -71,12 +71,9 @@ pub fn cmd_ledger_create(
                     if config.ledgers.is_empty() {
                         "(none)".to_string()
                     } else {
-                        config
-                            .ledgers
-                            .keys()
-                            .cloned()
-                            .collect::<Vec<_>>()
-                            .join(", ")
+                        let mut keys: Vec<_> = config.ledgers.keys().cloned().collect();
+                        keys.sort();
+                        keys.join(", ")
                     }
                 );
                 return EXIT_CONFIG_ERROR;

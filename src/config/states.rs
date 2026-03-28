@@ -18,8 +18,14 @@ pub struct StateConfig {
 }
 
 /// A parameter bound to a set (used for state context).
+///
+/// The `source` field controls how the value is derived:
+/// - `"values"` (default): comma-joined set values
+/// - `"current"`: first incomplete member of the set
+/// - `"last_completed"`: most recently completed member of the set
 #[derive(Debug, Deserialize, Clone)]
 pub struct StateParam {
     pub name: String,
     pub set: String,
+    pub source: Option<String>,
 }

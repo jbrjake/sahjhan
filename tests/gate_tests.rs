@@ -1416,6 +1416,7 @@ fn test_transition_args_override_state_params() {
     config.states.get_mut("working").unwrap().params = Some(vec![StateParam {
         name: "targets".to_string(),
         set: "check".to_string(),
+        source: None,
     }]);
 
     config.transitions = vec![TransitionConfig {
@@ -1441,6 +1442,56 @@ fn test_transition_args_override_state_params() {
     assert!(
         result.is_ok(),
         "CLI arg should override state param: {:?}",
+        result.err()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// StateParam source: "current" — derives first incomplete set member
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_state_param_source_current() {
+    let dir = tempdir().unwrap();
+    let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+
+    // Set up: "check" set has ["tests", "lint"].
+    // Mark "tests" as complete in the ledger.
+    // State param with source = "current" should resolve to "lint" (first incomplete).
+    config.states.get_mut("working").unwrap().params = Some(vec![StateParam {
+        name: "current_item".to_string(),
+        set: "check".to_string(),
+        source: Some("current".to_string()),
+    }]);
+
+    // Gate: test that {{current_item}} equals 'lint' (the first incomplete member)
+    config.transitions = vec![TransitionConfig {
+        from: "idle".to_string(),
+        to: "working".to_string(),
+        command: "begin".to_string(),
+        gates: vec![make_gate(
+            "command_succeeds",
+            vec![(
+                "cmd",
+                toml::Value::String("test {{current_item}} = 'lint'".to_string()),
+            )],
+        )],
+    }];
+
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    // Mark "tests" as complete
+    let mut fields = BTreeMap::new();
+    fields.insert("set".to_string(), "check".to_string());
+    fields.insert("member".to_string(), "tests".to_string());
+    ledger.append("set_member_complete", fields).unwrap();
+
+    let mut machine = StateMachine::new(&config, ledger);
+    let result = machine.transition("begin", &[]);
+    assert!(
+        result.is_ok(),
+        "source=current should resolve to 'lint': {:?}",
         result.err()
     );
 }

@@ -210,15 +210,50 @@ impl StateMachine {
     /// Build state_params from a state's param definitions.
     ///
     /// For each `StateParam` in the target state config, the param name is
-    /// mapped to the comma-joined values of the referenced set.
+    /// mapped to a value derived from the set according to `source`:
+    /// - `"values"` (default): comma-joined set values
+    /// - `"current"`: first incomplete member of the set
+    /// - `"last_completed"`: most recently completed member of the set
     fn build_state_params(&self, state_name: &str) -> HashMap<String, String> {
         let mut params = HashMap::new();
 
         if let Some(state_config) = self.config.states.get(state_name) {
             if let Some(state_params) = &state_config.params {
                 for param in state_params {
-                    if let Some(set_config) = self.config.sets.get(&param.set) {
-                        params.insert(param.name.clone(), set_config.values.join(","));
+                    let source = param.source.as_deref().unwrap_or("values");
+                    match source {
+                        "current" => {
+                            if let Some(set_config) = self.config.sets.get(&param.set) {
+                                let completed = self.completed_members_for_set(
+                                    &param.set,
+                                    "set_member_complete",
+                                    "member",
+                                );
+                                if let Some(current) = set_config
+                                    .values
+                                    .iter()
+                                    .find(|v| !completed.contains(v))
+                                {
+                                    params.insert(param.name.clone(), current.clone());
+                                }
+                            }
+                        }
+                        "last_completed" => {
+                            let completed = self.completed_members_for_set(
+                                &param.set,
+                                "set_member_complete",
+                                "member",
+                            );
+                            if let Some(last) = completed.last() {
+                                params.insert(param.name.clone(), last.clone());
+                            }
+                        }
+                        _ => {
+                            // Default: comma-joined set values
+                            if let Some(set_config) = self.config.sets.get(&param.set) {
+                                params.insert(param.name.clone(), set_config.values.join(","));
+                            }
+                        }
                     }
                 }
             }

@@ -1078,7 +1078,7 @@ fn test_ledger_create_and_list() {
         .current_dir(dir.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("Ledger 'audit' created"));
+        .stdout(predicate::str::contains("created: audit"));
 
     // List should show it
     Command::cargo_bin("sahjhan")
@@ -1124,7 +1124,7 @@ fn test_ledger_create_and_remove() {
         .current_dir(dir.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("removed from registry"));
+        .stdout(predicate::str::contains("removed: temp"));
 
     // Verify the file still exists on disk (relative paths resolve against cwd)
     assert!(dir.path().join("temp.jsonl").exists());
@@ -1165,7 +1165,7 @@ fn test_ledger_verify_by_name() {
         .current_dir(dir.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("Chain valid"));
+        .stdout(predicate::str::contains("chain valid"));
 }
 
 #[test]
@@ -1205,7 +1205,7 @@ fn test_ledger_checkpoint() {
         .current_dir(dir.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("Checkpoint written at seq 1"));
+        .stdout(predicate::str::contains("checkpoint: seq"));
 }
 
 #[test]
@@ -1233,7 +1233,7 @@ fn test_ledger_import_from_stdin() {
         .current_dir(dir.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("Imported JSONL"));
+        .stdout(predicate::str::contains("imported: imported"));
 
     // Verify the imported ledger
     Command::cargo_bin("sahjhan")

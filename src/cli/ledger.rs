@@ -49,7 +49,7 @@ pub fn cmd_ledger_create(
         "event-only" => LedgerMode::EventOnly,
         other => {
             eprintln!(
-                "Unknown ledger mode '{}'. Valid: stateful, event-only.",
+                "error: unknown ledger mode '{}'. Valid: stateful, event-only.",
                 other
             );
             return EXIT_USAGE_ERROR;
@@ -66,7 +66,7 @@ pub fn cmd_ledger_create(
             Some(t) => t,
             None => {
                 eprintln!(
-                    "No ledger template '{}' in protocol.toml. Available: {}",
+                    "error: no ledger template '{}' in protocol.toml. Available: {}",
                     template_name,
                     if config.ledgers.is_empty() {
                         "(none)".to_string()
@@ -84,7 +84,7 @@ pub fn cmd_ledger_create(
             Some(pt) => pt,
             None => {
                 eprintln!(
-                    "Ledger '{}' uses a fixed path, not a path_template. Use --name/--path instead.",
+                    "error: ledger '{}' uses a fixed path, not a path_template. Use --name/--path instead.",
                     template_name
                 );
                 return EXIT_USAGE_ERROR;
@@ -95,7 +95,7 @@ pub fn cmd_ledger_create(
             Some(id) => id,
             None => {
                 eprintln!(
-                    "Template '{}' requires an instance_id (e.g., `ledger create --from {} 25`)",
+                    "error: template '{}' requires an instance_id (e.g., `ledger create --from {} 25`)",
                     template_name, template_name
                 );
                 return EXIT_USAGE_ERROR;
@@ -139,7 +139,7 @@ pub fn cmd_ledger_create(
 
     // Initialize the ledger file
     if let Err(e) = std::fs::create_dir_all(ledger_file.parent().unwrap_or(Path::new("."))) {
-        eprintln!("Cannot create directory for ledger: {}", e);
+        eprintln!("error: cannot create directory for ledger: {}", e);
         return EXIT_CONFIG_ERROR;
     }
 
@@ -150,7 +150,7 @@ pub fn cmd_ledger_create(
     ) {
         Ok(_) => {}
         Err(e) => {
-            eprintln!("Cannot initialize ledger: {}", e);
+            eprintln!("error: cannot initialize ledger: {}", e);
             return EXIT_INTEGRITY_ERROR;
         }
     }
@@ -160,7 +160,7 @@ pub fn cmd_ledger_create(
     let mut registry = match LedgerRegistry::new(&reg_path) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("Cannot load registry: {}", e);
+            eprintln!("error: cannot load registry: {}", e);
             return EXIT_CONFIG_ERROR;
         }
     };
@@ -173,15 +173,11 @@ pub fn cmd_ledger_create(
         tmpl_name.as_deref(),
         tmpl_id.as_deref(),
     ) {
-        eprintln!("Cannot register ledger: {}", e);
+        eprintln!("error: cannot register ledger: {}", e);
         return EXIT_CONFIG_ERROR;
     }
 
-    println!(
-        "Ledger '{}' created at {} and registered.",
-        ledger_name,
-        ledger_file.display()
-    );
+    println!("created: {}", ledger_name);
     EXIT_SUCCESS
 }
 
@@ -204,27 +200,23 @@ pub fn cmd_ledger_list(config_dir: &str) -> i32 {
     let registry = match LedgerRegistry::new(&reg_path) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("Cannot load registry: {}", e);
+            eprintln!("error: cannot load registry: {}", e);
             return EXIT_CONFIG_ERROR;
         }
     };
 
     let entries = registry.list();
     if entries.is_empty() {
-        println!("No ledgers registered.");
+        println!("(no ledgers)");
         return EXIT_SUCCESS;
     }
 
-    println!("Registered ledgers ({}):", entries.len());
     for entry in entries {
         let mode_str = match entry.mode {
             LedgerMode::Stateful => "stateful",
             LedgerMode::EventOnly => "event-only",
         };
-        println!(
-            "  {} ({}) -> {} [{}]",
-            entry.name, mode_str, entry.path, entry.created
-        );
+        println!("{} ({}) {}", entry.name, mode_str, entry.path);
     }
 
     EXIT_SUCCESS
@@ -249,20 +241,17 @@ pub fn cmd_ledger_remove(config_dir: &str, name: &str) -> i32 {
     let mut registry = match LedgerRegistry::new(&reg_path) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("Cannot load registry: {}", e);
+            eprintln!("error: cannot load registry: {}", e);
             return EXIT_CONFIG_ERROR;
         }
     };
 
     if let Err(e) = registry.remove(name) {
-        eprintln!("{}", e);
+        eprintln!("error: {}", e);
         return EXIT_CONFIG_ERROR;
     }
 
-    println!(
-        "Ledger '{}' removed from registry. File kept on disk.",
-        name
-    );
+    println!("removed: {} (file kept)", name);
     EXIT_SUCCESS
 }
 
@@ -289,14 +278,14 @@ pub fn cmd_ledger_verify(config_dir: &str, name: Option<&str>, path: Option<&str
         let registry = match LedgerRegistry::new(&reg_path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("Cannot load registry: {}", e);
+                eprintln!("error: cannot load registry: {}", e);
                 return EXIT_CONFIG_ERROR;
             }
         };
         let entry = match registry.resolve(Some(n)) {
             Ok(e) => e.clone(),
             Err(e) => {
-                eprintln!("{}", e);
+                eprintln!("error: {}", e);
                 return EXIT_CONFIG_ERROR;
             }
         };
@@ -310,23 +299,22 @@ pub fn cmd_ledger_verify(config_dir: &str, name: Option<&str>, path: Option<&str
     let ledger = match Ledger::open(&ledger_file) {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("Cannot open ledger at {}: {}", ledger_file.display(), e);
+            eprintln!(
+                "error: cannot open ledger at {}: {}",
+                ledger_file.display(),
+                e
+            );
             return EXIT_INTEGRITY_ERROR;
         }
     };
 
     match ledger.verify() {
         Ok(()) => {
-            println!(
-                "Chain valid. {} entries, all hashes check out. ({})",
-                ledger.len(),
-                ledger_file.display()
-            );
+            println!("chain valid ({} entries)", ledger.len());
             EXIT_SUCCESS
         }
         Err(e) => {
-            eprintln!("Chain INVALID: {}", e);
-            eprintln!("Tampering detected.");
+            eprintln!("error: chain invalid: {} \u{2014} tampering detected", e);
             EXIT_INTEGRITY_ERROR
         }
     }
@@ -351,7 +339,7 @@ pub fn cmd_ledger_checkpoint(config_dir: &str, name: &str, scope: &str, snapshot
     let registry = match LedgerRegistry::new(&reg_path) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("Cannot load registry: {}", e);
+            eprintln!("error: cannot load registry: {}", e);
             return EXIT_CONFIG_ERROR;
         }
     };
@@ -359,7 +347,7 @@ pub fn cmd_ledger_checkpoint(config_dir: &str, name: &str, scope: &str, snapshot
     let entry = match registry.resolve(Some(name)) {
         Ok(e) => e.clone(),
         Err(e) => {
-            eprintln!("{}", e);
+            eprintln!("error: {}", e);
             return EXIT_CONFIG_ERROR;
         }
     };
@@ -368,21 +356,18 @@ pub fn cmd_ledger_checkpoint(config_dir: &str, name: &str, scope: &str, snapshot
     let mut ledger = match Ledger::open(&ledger_file) {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("Cannot open ledger: {}", e);
+            eprintln!("error: cannot open ledger: {}", e);
             return EXIT_INTEGRITY_ERROR;
         }
     };
 
     match ledger.write_checkpoint(scope, snapshot) {
         Ok(cp) => {
-            println!(
-                "Checkpoint written at seq {} (scope='{}', snapshot='{}').",
-                cp.seq, scope, snapshot
-            );
+            println!("checkpoint: seq {} scope={}", cp.seq, scope);
             EXIT_SUCCESS
         }
         Err(e) => {
-            eprintln!("Cannot write checkpoint: {}", e);
+            eprintln!("error: cannot write checkpoint: {}", e);
             EXIT_INTEGRITY_ERROR
         }
     }
@@ -414,7 +399,7 @@ pub fn cmd_ledger_import(config_dir: &str, name: &str, path: &str) -> i32 {
     };
 
     if let Err(e) = std::fs::create_dir_all(ledger_file.parent().unwrap_or(Path::new("."))) {
-        eprintln!("Cannot create directory for ledger: {}", e);
+        eprintln!("error: cannot create directory for ledger: {}", e);
         return EXIT_CONFIG_ERROR;
     }
 
@@ -430,7 +415,7 @@ pub fn cmd_ledger_import(config_dir: &str, name: &str, path: &str) -> i32 {
     ) {
         Ok(()) => {}
         Err(e) => {
-            eprintln!("Import failed: {}", e);
+            eprintln!("error: import failed: {}", e);
             return EXIT_INTEGRITY_ERROR;
         }
     }
@@ -440,21 +425,17 @@ pub fn cmd_ledger_import(config_dir: &str, name: &str, path: &str) -> i32 {
     let mut registry = match LedgerRegistry::new(&reg_path) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("Cannot load registry: {}", e);
+            eprintln!("error: cannot load registry: {}", e);
             return EXIT_CONFIG_ERROR;
         }
     };
 
     let registry_stored_path = compute_registry_path(&ledger_file, &data_dir);
     if let Err(e) = registry.create(name, &registry_stored_path, LedgerMode::EventOnly) {
-        eprintln!("Cannot register ledger: {}", e);
+        eprintln!("error: cannot register ledger: {}", e);
         return EXIT_CONFIG_ERROR;
     }
 
-    println!(
-        "Imported JSONL into '{}' at {} and registered.",
-        name,
-        ledger_file.display()
-    );
+    println!("imported: {}", name);
     EXIT_SUCCESS
 }

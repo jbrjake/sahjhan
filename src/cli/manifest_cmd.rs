@@ -44,28 +44,22 @@ pub fn cmd_manifest_verify(config_dir: &str) -> i32 {
     let result = manifest_verify::verify(&manifest, &cwd);
 
     if result.clean {
-        println!(
-            "Manifest clean. {} files tracked, all hashes match. Nothing out of place. Suspicious.",
-            manifest.entries.len()
-        );
+        println!("manifest clean ({} tracked)", manifest.entries.len());
         EXIT_SUCCESS
     } else {
-        eprintln!("Manifest verification FAILED:");
+        eprintln!("manifest: {} modified", result.mismatches.len());
         for m in &result.mismatches {
             let actual_str = match &m.actual {
-                Some(h) => format!("current {}", &h[..12]),
-                None => "DELETED".to_string(),
+                Some(h) => format!("got {}", &h[..12]),
+                None => "missing".to_string(),
             };
             eprintln!(
-                "  {} — expected {}, {} (last: {} at {})",
+                "  {} \u{2014} expected {}, {}",
                 m.path,
                 &m.expected[..12],
-                actual_str,
-                m.last_operation,
-                m.last_updated
+                actual_str
             );
         }
-        eprintln!("Unauthorized modification detected. Violation recorded.");
         EXIT_INTEGRITY_ERROR
     }
 }
@@ -94,13 +88,12 @@ pub fn cmd_manifest_list(config_dir: &str) -> i32 {
         }
     };
 
-    println!("Tracked files ({}):", manifest.entries.len());
     let mut paths: Vec<_> = manifest.entries.keys().collect();
     paths.sort();
     for path in paths {
         let entry = &manifest.entries[path];
         println!(
-            "  {} {} ({})",
+            "{} {} ({})",
             &entry.sha256[..12],
             path,
             entry.last_operation
@@ -140,24 +133,15 @@ pub fn cmd_manifest_restore(config_dir: &str, path: &str) -> i32 {
             path: p,
             ledger_seq,
         } => {
-            println!(
-                "File '{}' should be re-rendered (last tracked at seq {}). Re-render not yet implemented.",
-                p, ledger_seq
-            );
+            println!("restore: re-render {} (last tracked seq {})", p, ledger_seq);
             EXIT_SUCCESS
         }
         crate::manifest::tracker::RestoreAction::GitCheckout { path: p } => {
-            println!(
-                "File '{}' should be restored via `git checkout -- {}`. I don't run destructive commands — that's your job.",
-                p, p
-            );
+            println!("restore: git checkout -- {}", p);
             EXIT_SUCCESS
         }
         crate::manifest::tracker::RestoreAction::NotTracked { path: p } => {
-            eprintln!(
-                "Path '{}' is not tracked in the manifest. I can't restore what I never knew.",
-                p
-            );
+            eprintln!("error: '{}' not tracked", p);
             EXIT_USAGE_ERROR
         }
     }

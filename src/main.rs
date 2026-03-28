@@ -244,13 +244,21 @@ enum HookAction {
 enum LedgerAction {
     /// Register and initialize a new named ledger
     Create {
-        /// Ledger name
-        #[arg(long)]
-        name: String,
+        /// Ledger name (for direct creation without template)
+        #[arg(long, required_unless_present = "from")]
+        name: Option<String>,
 
-        /// File path for the new ledger
+        /// File path for the new ledger (for direct creation without template)
+        #[arg(long, required_unless_present = "from")]
+        path: Option<String>,
+
+        /// Create from a protocol-declared ledger template
         #[arg(long)]
-        path: String,
+        from: Option<String>,
+
+        /// Instance identifier for the template (e.g., "25" creates run-25)
+        #[arg(requires = "from")]
+        instance_id: Option<String>,
 
         /// Ledger mode: stateful or event-only
         #[arg(long, default_value = "stateful")]
@@ -371,9 +379,20 @@ fn main() {
             } => hooks_cmd::cmd_hook_generate(&cli.config_dir, &harness, &output_dir),
         },
         Commands::Ledger { action } => match action {
-            LedgerAction::Create { name, path, mode } => {
-                ledger::cmd_ledger_create(&cli.config_dir, &name, &path, &mode)
-            }
+            LedgerAction::Create {
+                name,
+                path,
+                from,
+                instance_id,
+                mode,
+            } => ledger::cmd_ledger_create(
+                &cli.config_dir,
+                name.as_deref(),
+                path.as_deref(),
+                from.as_deref(),
+                instance_id.as_deref(),
+                &mode,
+            ),
             LedgerAction::List => ledger::cmd_ledger_list(&cli.config_dir),
             LedgerAction::Remove { name } => ledger::cmd_ledger_remove(&cli.config_dir, &name),
             LedgerAction::Verify { name, path } => {

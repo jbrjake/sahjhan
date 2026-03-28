@@ -11,6 +11,8 @@ use sahjhan::ledger::registry::{LedgerMode, LedgerRegistry};
 fn write_template_protocol(dir: &Path) {
     let data_dir = dir.join(".sahjhan");
     let data_dir_str = data_dir.to_string_lossy();
+    let runs_dir = dir.join("runs");
+    let runs_dir_str = runs_dir.to_string_lossy();
 
     fs::write(
         dir.join("protocol.toml"),
@@ -28,9 +30,9 @@ render_dir = "."
 
 [ledgers.run]
 description = "Per-run ledger"
-path_template = "runs/{{template.instance_id}}/ledger.jsonl"
+path_template = "{}/{{template.instance_id}}/ledger.jsonl"
 "#,
-            data_dir_str
+            data_dir_str, runs_dir_str
         ),
     )
     .unwrap();

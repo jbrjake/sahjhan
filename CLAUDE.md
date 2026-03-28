@@ -60,7 +60,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | Deep validation | `config/mod.rs` | `[validate-deep]` | File existence, gate types, aliases |
 | Protocol metadata | `config/protocol.rs` | `ProtocolMeta`, `PathsConfig`, `SetConfig` | protocol.toml structures |
 | State definitions | `config/states.rs` | `StateConfig`, `StateParam` | states.toml; `StateParam.source` controls set derivation |
-| Transition defs | `config/transitions.rs` | `TransitionConfig`, `GateConfig` | transitions.toml; gates are `#[serde(flatten)]` |
+| Transition defs | `config/transitions.rs` | `TransitionConfig`, `GateConfig` | transitions.toml; `args` declares positional params; gates are `#[serde(flatten)]` |
 | Event definitions | `config/events.rs` | `EventConfig`, `EventFieldConfig` | events.toml; field patterns for validation |
 | Render definitions | `config/renders.rs` | `RenderConfig` | renders.toml; trigger/template/target |
 
@@ -191,7 +191,7 @@ main.rs [cli-main]
     → cli/commands.rs [load-config], [open-targeted]
     → state/machine.rs [transition]
       → state/machine.rs [build-state-params]    ← resolves StateParam.source ("current", "last_completed", "values")
-      → CLI args merged as key=value overrides
+      → CLI args merged: positional mapped to transition.args names, key=value as overrides
       → for each gate:
         → state/machine.rs [evaluate-gate]       ← builds GateContext with state_params
           → gates/evaluator.rs [evaluate-gate]

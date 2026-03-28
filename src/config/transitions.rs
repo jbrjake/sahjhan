@@ -4,7 +4,7 @@
 //
 // ## Index
 // - TransitionsFile         — top-level wrapper
-// - TransitionConfig        — from, to, command, gates
+// - TransitionConfig        — from, to, command, args (positional params), gates
 // - GateConfig              — gate_type + flattened params
 
 use serde::Deserialize;
@@ -22,6 +22,13 @@ pub struct TransitionConfig {
     pub from: String,
     pub to: String,
     pub command: String,
+    /// Named positional arguments for template variable resolution.
+    ///
+    /// When a transition declares `args = ["item_id"]`, the first positional
+    /// CLI argument (one without `=`) is mapped to `item_id` in state_params
+    /// before gate evaluation.
+    #[serde(default)]
+    pub args: Vec<String>,
     #[serde(default)]
     pub gates: Vec<GateConfig>,
 }

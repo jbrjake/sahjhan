@@ -1383,6 +1383,7 @@ fn test_transition_args_interpolated_in_gate_command() {
         from: "idle".to_string(),
         to: "working".to_string(),
         command: "begin".to_string(),
+        args: vec![],
         gates: vec![make_gate(
             "command_succeeds",
             vec![(
@@ -1423,6 +1424,7 @@ fn test_transition_args_override_state_params() {
         from: "idle".to_string(),
         to: "working".to_string(),
         command: "begin".to_string(),
+        args: vec![],
         gates: vec![make_gate(
             "command_succeeds",
             vec![(
@@ -1469,6 +1471,7 @@ fn test_state_param_source_current() {
         from: "idle".to_string(),
         to: "working".to_string(),
         command: "begin".to_string(),
+        args: vec![],
         gates: vec![make_gate(
             "command_succeeds",
             vec![(
@@ -1516,6 +1519,7 @@ fn test_state_param_source_last_completed() {
         from: "idle".to_string(),
         to: "working".to_string(),
         command: "begin".to_string(),
+        args: vec![],
         gates: vec![make_gate(
             "command_succeeds",
             vec![(
@@ -1568,6 +1572,7 @@ fn test_state_param_source_default_unchanged() {
         from: "idle".to_string(),
         to: "working".to_string(),
         command: "begin".to_string(),
+        args: vec![],
         gates: vec![make_gate(
             "command_succeeds",
             vec![(
@@ -1660,6 +1665,187 @@ fn test_validate_rejects_invalid_source() {
             .any(|e| e.contains("source") && e.contains("bogus")),
         "should reject invalid source value, got: {:?}",
         errors
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Positional args mapped to declared transition args (Issue #9)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_positional_arg_mapped_to_declared_transition_arg() {
+    let dir = tempdir().unwrap();
+    let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+
+    // Transition declares args = ["item_id"] — first positional arg maps to item_id.
+    config.transitions = vec![TransitionConfig {
+        from: "idle".to_string(),
+        to: "working".to_string(),
+        command: "begin".to_string(),
+        args: vec!["item_id".to_string()],
+        gates: vec![make_gate(
+            "command_succeeds",
+            vec![(
+                "cmd",
+                toml::Value::String("test {{item_id}} = 'BH-029'".to_string()),
+            )],
+        )],
+    }];
+
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let mut machine = StateMachine::new(&config, ledger);
+
+    // Pass BH-029 as a positional arg (no '=' sign).
+    let result = machine.transition("begin", &["BH-029".to_string()]);
+    assert!(
+        result.is_ok(),
+        "positional arg should be mapped to declared arg name: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_positional_arg_mixed_with_key_value() {
+    let dir = tempdir().unwrap();
+    let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+
+    // Transition declares args = ["item_id"].
+    // Gate checks both {{item_id}} (positional) and {{severity}} (key=value).
+    config.transitions = vec![TransitionConfig {
+        from: "idle".to_string(),
+        to: "working".to_string(),
+        command: "begin".to_string(),
+        args: vec!["item_id".to_string()],
+        gates: vec![make_gate(
+            "command_succeeds",
+            vec![(
+                "cmd",
+                toml::Value::String(
+                    "test {{item_id}} = 'BH-029' && test {{severity}} = 'high'".to_string(),
+                ),
+            )],
+        )],
+    }];
+
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let mut machine = StateMachine::new(&config, ledger);
+
+    // Mix positional and key=value args.
+    let result = machine.transition(
+        "begin",
+        &["BH-029".to_string(), "severity=high".to_string()],
+    );
+    assert!(
+        result.is_ok(),
+        "mixed positional and key=value args should work: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_positional_arg_overrides_state_param() {
+    let dir = tempdir().unwrap();
+    let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+
+    // State param with source="current" would resolve to "tests" (first incomplete).
+    // But positional arg should override it with "lint".
+    config.states.get_mut("working").unwrap().params = Some(vec![StateParam {
+        name: "current_item".to_string(),
+        set: "check".to_string(),
+        source: Some("current".to_string()),
+    }]);
+
+    config.transitions = vec![TransitionConfig {
+        from: "idle".to_string(),
+        to: "working".to_string(),
+        command: "begin".to_string(),
+        args: vec!["current_item".to_string()],
+        gates: vec![make_gate(
+            "command_succeeds",
+            vec![(
+                "cmd",
+                toml::Value::String("test {{current_item}} = 'lint'".to_string()),
+            )],
+        )],
+    }];
+
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let mut machine = StateMachine::new(&config, ledger);
+
+    // Positional arg "lint" should override state_param "tests"
+    let result = machine.transition("begin", &["lint".to_string()]);
+    assert!(
+        result.is_ok(),
+        "positional arg should override state_param: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_excess_positional_args_ignored() {
+    let dir = tempdir().unwrap();
+    let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+
+    // Only one declared arg — extra positional args should be silently ignored.
+    config.transitions = vec![TransitionConfig {
+        from: "idle".to_string(),
+        to: "working".to_string(),
+        command: "begin".to_string(),
+        args: vec!["item_id".to_string()],
+        gates: vec![make_gate(
+            "command_succeeds",
+            vec![(
+                "cmd",
+                toml::Value::String("test {{item_id}} = 'BH-029'".to_string()),
+            )],
+        )],
+    }];
+
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let mut machine = StateMachine::new(&config, ledger);
+
+    // Two positional args, but only one declared — second is ignored.
+    let result = machine.transition("begin", &["BH-029".to_string(), "extra".to_string()]);
+    assert!(
+        result.is_ok(),
+        "excess positional args should be ignored: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_no_declared_args_positional_ignored() {
+    let dir = tempdir().unwrap();
+    let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+
+    // No declared args — positional args should be silently ignored (backward compat).
+    config.transitions = vec![TransitionConfig {
+        from: "idle".to_string(),
+        to: "working".to_string(),
+        command: "begin".to_string(),
+        args: vec![],
+        gates: vec![],
+    }];
+
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let mut machine = StateMachine::new(&config, ledger);
+
+    // Positional arg with no declared args — should not break anything.
+    let result = machine.transition("begin", &["BH-029".to_string()]);
+    assert!(
+        result.is_ok(),
+        "positional args with no declared args should be ignored: {:?}",
+        result.err()
     );
 }
 

@@ -55,6 +55,7 @@ fn test_validate_catches_invalid_transition_state() {
         from: "nonexistent".to_string(),
         to: "also_nonexistent".to_string(),
         command: "bad".to_string(),
+        args: vec![],
         gates: vec![],
     });
     let errors = config.validate();

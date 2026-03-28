@@ -208,10 +208,16 @@ pub fn cmd_gate_check(
 
     let mut state_params = build_state_params(&config, &transition.to, machine.ledger());
 
-    // Parse CLI args as key=value pairs and merge into state_params.
+    // Map CLI args into state_params.
+    // - key=value args are inserted directly (override state params)
+    // - Positional args (no '=') are mapped to declared transition.args names
+    let mut positional_idx = 0;
     for arg in args {
         if let Some((key, value)) = arg.split_once('=') {
             state_params.insert(key.to_string(), value.to_string());
+        } else if positional_idx < transition.args.len() {
+            state_params.insert(transition.args[positional_idx].clone(), arg.clone());
+            positional_idx += 1;
         }
     }
 

@@ -11,14 +11,14 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::gates::evaluator::{evaluate_gates, GateContext};
-use crate::ledger::registry::LedgerMode;
+use crate::ledger::registry::{LedgerMode, LedgerRegistry};
 use crate::manifest::verify as manifest_verify;
 use crate::render::engine::RenderEngine;
 use crate::state::machine::StateMachine;
 
 use super::commands::{
-    build_state_params, load_config, load_manifest, open_targeted_ledger, resolve_config_dir,
-    resolve_data_dir, save_manifest, track_ledger_in_manifest, LedgerTargeting,
+    build_state_params, load_config, load_manifest, open_targeted_ledger, registry_path_from_config,
+    resolve_config_dir, resolve_data_dir, save_manifest, track_ledger_in_manifest, LedgerTargeting,
     EXIT_INTEGRITY_ERROR, EXIT_SUCCESS, EXIT_USAGE_ERROR,
 };
 
@@ -115,16 +115,32 @@ pub fn cmd_status(config_dir: &str, targeting: &LedgerTargeting) -> i32 {
         .map(|s| s.label.as_str())
         .unwrap_or(&current_state);
 
-    // Run number = count of protocol_init events (should be 1 normally)
-    let run_number = machine.ledger().events_of_type("protocol_init").len();
+    // Build instance label from registry metadata
+    let instance_label = if let Some(ref name) = targeting.ledger_name {
+        let reg_path = registry_path_from_config(&config);
+        if let Ok(registry) = LedgerRegistry::new(&reg_path) {
+            if let Ok(entry) = registry.resolve(Some(name)) {
+                match (&entry.template, &entry.instance_id) {
+                    (Some(tmpl), Some(id)) => format!(" · {} {}", tmpl, id),
+                    _ => format!(" · {}", name),
+                }
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
 
     // Header
     let width = 59;
     let bar = "=".repeat(width);
     println!("{}", bar);
     println!(
-        "  sahjhan · {} v{} · Run {}",
-        config.protocol.name, config.protocol.version, run_number
+        "  sahjhan · {} v{}{}",
+        config.protocol.name, config.protocol.version, instance_label
     );
     println!("{}", bar);
     println!();

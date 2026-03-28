@@ -57,7 +57,7 @@ Sahjhan is a protocol enforcement engine. It has:
 |---------|------|-------------|---------|
 | Unified config | `config/mod.rs` | `ProtocolConfig` | Loads all TOML, holds full config |
 | Config validation | `config/mod.rs` | `[validate]` | Basic structural validation |
-| Deep validation | `config/mod.rs` | `[validate-deep]` | File existence, gate types, aliases |
+| Deep validation | `config/mod.rs` | `[validate-deep]` | File existence, gate types, aliases, ledger template checks |
 | Protocol metadata | `config/protocol.rs` | `ProtocolMeta`, `PathsConfig`, `SetConfig` | protocol.toml structures |
 | State definitions | `config/states.rs` | `StateConfig`, `StateParam` | states.toml; `StateParam.source` controls set derivation |
 | Transition defs | `config/transitions.rs` | `TransitionConfig`, `GateConfig` | transitions.toml; `args` declares positional params; gates are `#[serde(flatten)]` |
@@ -270,7 +270,7 @@ cli/commands.rs [load-config]
     → reads events.toml (optional) → config/events.rs EventsFile
     → reads renders.toml (optional) → config/renders.rs RendersFile
   → config/mod.rs [validate] — structural checks
-  → config/mod.rs [validate-deep] (via cmd_validate) — file/alias/gate checks
+  → config/mod.rs [validate-deep] (via cmd_validate) — file/alias/gate/ledger checks
 ```
 
 ---

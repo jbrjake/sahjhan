@@ -2,6 +2,66 @@ use sahjhan::config::ProtocolConfig;
 use std::path::Path;
 
 #[test]
+fn test_validate_ledger_template_both_path_and_template() {
+    use sahjhan::config::*;
+    let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    config.ledgers.insert(
+        "bad".to_string(),
+        LedgerTemplateConfig {
+            description: "bad".to_string(),
+            path: Some("a.jsonl".to_string()),
+            path_template: Some("b/{template.instance_id}.jsonl".to_string()),
+        },
+    );
+    let (errors, _) = config.validate_deep(Path::new("examples/minimal"));
+    assert!(
+        errors.iter().any(|e| e.contains("bad") && e.contains("both")),
+        "Expected error about both path and path_template: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_validate_ledger_template_neither_path_nor_template() {
+    use sahjhan::config::*;
+    let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    config.ledgers.insert(
+        "empty".to_string(),
+        LedgerTemplateConfig {
+            description: "empty".to_string(),
+            path: None,
+            path_template: None,
+        },
+    );
+    let (errors, _) = config.validate_deep(Path::new("examples/minimal"));
+    assert!(
+        errors.iter().any(|e| e.contains("empty") && e.contains("must have")),
+        "Expected error about missing path: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_validate_ledger_template_missing_instance_id_var() {
+    use sahjhan::config::*;
+    let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    config.ledgers.insert(
+        "novar".to_string(),
+        LedgerTemplateConfig {
+            description: "novar".to_string(),
+            path: None,
+            path_template: Some("runs/ledger.jsonl".to_string()),
+        },
+    );
+    let (errors, _) = config.validate_deep(Path::new("examples/minimal"));
+    assert!(
+        errors.iter().any(|e| e.contains("novar") && e.contains("{template.instance_id}")),
+        "Expected error about missing {{template.instance_id}}: {:?}",
+        errors
+    );
+}
+
+#[test]
 fn test_ledger_templates_loaded() {
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     // minimal has no [ledgers] section — should default to empty

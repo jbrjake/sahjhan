@@ -5,7 +5,7 @@
 // ## Index
 // - ProtocolConfig          — unified config loaded from protocol directory
 // - [validate]              ProtocolConfig::validate()       — basic structural validation
-// - [validate-deep]         ProtocolConfig::validate_deep()  — file/alias/gate/render checks
+// - [validate-deep]         ProtocolConfig::validate_deep()  — file/alias/gate/render/ledger checks
 // - initial_state()         — find the state with initial = true
 
 pub mod events;
@@ -229,6 +229,7 @@ impl ProtocolConfig {
     /// - Render event type validation (on_event triggers reference defined events)
     /// - Terminal state outgoing transition warnings
     /// - Unreachable state detection warnings
+    /// - Ledger template validation (exactly one of path/path_template; path_template must contain {template.instance_id})
     ///
     /// Returns `(errors, warnings)` — errors are hard failures, warnings are advisory.
     // [validate-deep]
@@ -379,6 +380,35 @@ impl ProtocolConfig {
                     "states.toml: state '{}' is unreachable (no incoming transitions and not initial)",
                     name
                 ));
+            }
+        }
+
+        // 12. Ledger template validation.
+        for (name, ledger_tmpl) in &self.ledgers {
+            match (&ledger_tmpl.path, &ledger_tmpl.path_template) {
+                (Some(_), Some(_)) => {
+                    errors.push(format!(
+                        "protocol.toml: ledger '{}' has both 'path' and 'path_template' — must have exactly one",
+                        name
+                    ));
+                }
+                (None, None) => {
+                    errors.push(format!(
+                        "protocol.toml: ledger '{}' must have either 'path' or 'path_template'",
+                        name
+                    ));
+                }
+                (None, Some(tmpl)) => {
+                    if !tmpl.contains("{template.instance_id}") {
+                        errors.push(format!(
+                            "protocol.toml: ledger '{}' path_template must contain '{{template.instance_id}}'",
+                            name
+                        ));
+                    }
+                }
+                (Some(_), None) => {
+                    // Fixed path — valid as-is.
+                }
             }
         }
 

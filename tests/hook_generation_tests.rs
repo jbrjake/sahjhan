@@ -25,6 +25,7 @@ fn make_config(managed: Vec<&str>) -> ProtocolConfig {
         events: HashMap::new(),
         renders: vec![],
         checkpoints: Default::default(),
+        ledgers: HashMap::new(),
     }
 }
 

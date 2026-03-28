@@ -15,7 +15,7 @@ pub mod states;
 pub mod transitions;
 
 pub use events::{EventConfig, EventFieldConfig};
-pub use protocol::{CheckpointConfig, PathsConfig, ProtocolMeta, SetConfig};
+pub use protocol::{CheckpointConfig, LedgerTemplateConfig, PathsConfig, ProtocolMeta, SetConfig};
 pub use renders::RenderConfig;
 pub use states::{StateConfig, StateParam};
 pub use transitions::{GateConfig, TransitionConfig};
@@ -35,6 +35,7 @@ pub struct ProtocolConfig {
     pub events: HashMap<String, EventConfig>,
     pub renders: Vec<RenderConfig>,
     pub checkpoints: CheckpointConfig,
+    pub ledgers: HashMap<String, LedgerTemplateConfig>,
 }
 
 impl ProtocolConfig {
@@ -100,6 +101,7 @@ impl ProtocolConfig {
             events: events_map,
             renders: renders_vec,
             checkpoints: proto_file.checkpoints,
+            ledgers: proto_file.ledgers,
         })
     }
 

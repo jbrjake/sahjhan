@@ -2,6 +2,54 @@ use sahjhan::config::ProtocolConfig;
 use std::path::Path;
 
 #[test]
+fn test_ledger_templates_loaded() {
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    // minimal has no [ledgers] section — should default to empty
+    assert!(config.ledgers.is_empty());
+}
+
+#[test]
+fn test_ledger_template_fields() {
+    let toml_str = r#"
+        [protocol]
+        name = "test"
+        version = "1.0.0"
+        description = "test"
+
+        [paths]
+        managed = []
+        data_dir = ".data"
+        render_dir = "."
+
+        [ledgers.run]
+        description = "Per-run ledger"
+        path_template = "runs/{template.instance_id}/ledger.jsonl"
+
+        [ledgers.project]
+        description = "Project ledger"
+        path = "project.jsonl"
+    "#;
+
+    let proto_file: sahjhan::config::protocol::ProtocolFile =
+        toml::from_str(toml_str).unwrap();
+
+    assert_eq!(proto_file.ledgers.len(), 2);
+
+    let run = &proto_file.ledgers["run"];
+    assert_eq!(run.description, "Per-run ledger");
+    assert!(run.path_template.is_some());
+    assert!(run.path.is_none());
+    assert_eq!(
+        run.path_template.as_ref().unwrap(),
+        "runs/{template.instance_id}/ledger.jsonl"
+    );
+
+    let project = &proto_file.ledgers["project"];
+    assert!(project.path.is_some());
+    assert!(project.path_template.is_none());
+}
+
+#[test]
 fn test_load_minimal_protocol() {
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     assert_eq!(config.protocol.name, "minimal");

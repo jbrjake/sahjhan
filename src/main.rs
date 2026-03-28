@@ -2,7 +2,15 @@
 //
 // Sahjhan CLI entry point.
 // Parses arguments with clap, resolves aliases, and delegates to command
-// implementations in cli::commands.
+// implementations in cli/ modules.
+//
+// ## Index
+// - [cli-main]               main()  — CLI entry point, clap parsing, dispatch
+// - Cli                      — top-level clap struct
+// - Commands                 — subcommand enum
+// - SetAction                — set subcommand enum
+// - GateAction               — gate subcommand enum
+// - LedgerAction             — ledger subcommand enum
 
 use clap::{Parser, Subcommand};
 
@@ -292,6 +300,7 @@ enum LedgerAction {
     },
 }
 
+// [cli-main]
 fn main() {
     // Collect raw args for alias resolution
     let raw_args: Vec<String> = std::env::args().collect();

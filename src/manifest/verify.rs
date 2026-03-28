@@ -1,3 +1,12 @@
+// src/manifest/verify.rs
+//
+// Manifest verification — compare files against recorded hashes.
+//
+// ## Index
+// - Mismatch                 — file path + expected/actual hash
+// - VerifyResult             — list of mismatches
+// - [verify]                 verify()  — check all tracked files
+
 use std::path::Path;
 
 use super::tracker::{compute_file_sha256, Manifest};
@@ -26,6 +35,7 @@ pub struct VerifyResult {
     pub mismatches: Vec<Mismatch>,
 }
 
+// [verify]
 /// Verify all entries in the manifest against files on disk.
 ///
 /// For each tracked file, computes its SHA-256 and compares against the

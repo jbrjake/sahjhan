@@ -1,8 +1,15 @@
 // src/render/engine.rs
 //
-// Tera template rendering engine that generates read-only markdown views
-// from ledger state. The agent never writes STATUS.md or other rendered
-// files directly — Sahjhan renders them from the event log.
+// Tera template rendering engine — generates read-only markdown views from ledger state.
+//
+// ## Index
+// - EventSummary             — event data for templates
+// - MemberSummary            — set member status for templates
+// - SetSummary               — set completion status for templates
+// - RenderEngine             — Tera-based renderer with config + templates
+// - [build-context]          build_context()        — build template vars from ledger + config
+// - [render-triggered]       render_triggered()     — render on_transition / on_event
+// - [dump-context]           dump_context()         — export render context as JSON
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -214,6 +221,7 @@ impl RenderEngine {
         Ok(rendered)
     }
 
+    // [render-triggered]
     /// Render only templates that match a specific trigger type.
     ///
     /// - `trigger` is `"on_transition"` or `"on_event"`.
@@ -293,6 +301,7 @@ impl RenderEngine {
         Ok(rendered)
     }
 
+    // [dump-context]
     /// Return the template render context as a JSON value.
     ///
     /// This is the complete set of variables available to Tera templates.
@@ -304,6 +313,7 @@ impl RenderEngine {
             .map_err(|e| format!("failed to serialize render context: {}", e))
     }
 
+    // [build-context]
     /// Build the Tera context from ledger state and config.
     fn build_context(&self, ledger: &Ledger) -> Result<tera::Context, String> {
         let current_state = derive_current_state(&self.config, ledger);

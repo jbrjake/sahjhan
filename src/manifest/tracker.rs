@@ -1,3 +1,16 @@
+// src/manifest/tracker.rs
+//
+// SHA-256 file integrity tracking.
+//
+// ## Index
+// - ManifestEntry            — path, hash, op, seq metadata per tracked file
+// - Manifest                 — BTreeMap of tracked files with load/save/track/restore
+// - RestoreAction            — Restored or NotNeeded
+// - [manifest-load]          Manifest::load()       — load from JSON
+// - [manifest-save]          Manifest::save()       — save to JSON
+// - [manifest-track]         Manifest::track()      — record file hash
+// - [compute-sha256]         compute_file_sha256()  — hash a file
+
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::fs;
@@ -70,6 +83,7 @@ impl Manifest {
         Ok(manifest)
     }
 
+    // [manifest-load]
     /// Load a manifest from a JSON file on disk.
     pub fn load(path: &Path) -> Result<Self, String> {
         let content = fs::read_to_string(path)
@@ -79,6 +93,7 @@ impl Manifest {
         Ok(manifest)
     }
 
+    // [manifest-save]
     /// Save the manifest to a JSON file, recomputing `manifest_hash` first.
     pub fn save(&mut self, path: &Path) -> Result<(), String> {
         self.manifest_hash = self.compute_manifest_hash();
@@ -96,6 +111,7 @@ impl Manifest {
         Ok(())
     }
 
+    // [manifest-track]
     /// Track a file by computing its SHA-256 hash and recording metadata.
     ///
     /// `file_path` is the path relative to the project root (as stored in entries).
@@ -161,6 +177,7 @@ impl Manifest {
     }
 }
 
+// [compute-sha256]
 /// Compute SHA-256 of a file on disk, returning the hex-encoded hash.
 pub fn compute_file_sha256(path: &Path) -> Result<String, String> {
     let content =

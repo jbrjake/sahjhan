@@ -1,8 +1,10 @@
 // src/hooks/generate.rs
 //
 // Hook script generation for Claude Code integration.
-// Produces Python hook scripts that enforce write protection
-// and detect unauthorized modifications.
+//
+// ## Index
+// - GeneratedHook            — hook type + script content
+// - HookGenerator            — produces Python hook scripts for write protection
 
 use std::path::Path;
 

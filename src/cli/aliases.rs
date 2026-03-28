@@ -1,13 +1,18 @@
 // src/cli/aliases.rs
 //
-// Alias resolution: rewrites CLI arguments when the first subcommand matches
-// an alias defined in protocol.toml [aliases].
+// Alias resolution: rewrites CLI arguments when the first subcommand
+// matches an alias defined in protocol.toml [aliases].
+//
+// ## Index
+// - [resolve-alias]          resolve_alias()     — resolve alias from raw CLI args
+// - [resolve-with-map]       resolve_with_map()  — resolve given already-parsed alias map
 
 use std::collections::HashMap;
 use std::path::Path;
 
 use crate::config::ProtocolConfig;
 
+// [resolve-alias]
 /// Attempt to resolve an alias from the raw CLI args.
 ///
 /// If the first positional argument (after flags like `--config-dir`) matches
@@ -90,6 +95,7 @@ fn find_subcommand_index(args: &[String]) -> Option<(Vec<String>, usize)> {
     }
 }
 
+// [resolve-with-map]
 /// Resolve aliases given already-parsed aliases map and the raw args.
 ///
 /// This is a simpler version used when we already have the aliases loaded.

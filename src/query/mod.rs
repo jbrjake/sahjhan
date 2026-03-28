@@ -1,13 +1,12 @@
-//! DataFusion-based SQL query engine over JSONL ledger files.
-//!
-//! Provides [`QueryEngine`] which embeds Apache DataFusion to run SQL queries
-//! over one or more JSONL ledger files. Each file is parsed into Arrow
-//! RecordBatches and registered as an in-memory table called `events`.
-//!
-//! Field columns are derived from the protocol's event definitions (`events.toml`).
-//! Each declared field becomes a native nullable Arrow column, giving DataFusion
-//! full columnar access for filtering, grouping, and aggregation — no runtime
-//! JSON parsing during queries.
+// src/query/mod.rs
+//
+// DataFusion-based SQL query engine over JSONL ledger files.
+//
+// ## Index
+// - QueryEngine              — embeds DataFusion for SQL over ledger events
+// - [query-file]             QueryEngine::query_file()  — SQL against single ledger
+// - [query-glob]             QueryEngine::query_glob()  — SQL against multiple ledgers
+// - [from-config]            QueryEngine::from_config()  — build engine from event definitions
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -36,6 +35,7 @@ pub struct QueryEngine {
 }
 
 impl QueryEngine {
+    // [from-config]
     /// Create a query engine from the protocol's event definitions.
     ///
     /// Collects all unique field names across every event type and creates
@@ -76,6 +76,7 @@ impl QueryEngine {
         }
     }
 
+    // [query-file]
     /// Query a single JSONL ledger file.
     pub async fn query_file(
         &self,
@@ -93,6 +94,7 @@ impl QueryEngine {
         execute_sql(&ctx, sql).await
     }
 
+    // [query-glob]
     /// Query multiple JSONL files matching a glob pattern (UNION ALL).
     ///
     /// A virtual `_source` column contains the originating file path.

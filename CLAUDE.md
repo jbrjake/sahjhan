@@ -62,7 +62,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | State definitions | `config/states.rs` | `StateConfig`, `StateParam` | states.toml; `StateParam.source` controls set derivation |
 | Transition defs | `config/transitions.rs` | `TransitionConfig`, `GateConfig` | transitions.toml; `args` declares positional params; gates are `#[serde(flatten)]` |
 | Event definitions | `config/events.rs` | `EventConfig`, `EventFieldConfig` | events.toml; field patterns for validation |
-| Render definitions | `config/renders.rs` | `RenderConfig` | renders.toml; trigger/template/target |
+| Render definitions | `config/renders.rs` | `RenderConfig` | renders.toml; trigger/template/target/ledger/ledger_template |
 
 ### gates/ — Gate Evaluation
 
@@ -142,6 +142,11 @@ Sahjhan is a protocol enforcement engine. It has:
 | Concept | File | Anchor/Item | Purpose |
 |---------|------|-------------|---------|
 | Render engine | `render/engine.rs` | `RenderEngine` | Tera-based markdown generation |
+| Active ledger name | `render/engine.rs` | `with_active_ledger_name` | Set active ledger for template resolution |
+| Resolve render ledger | `render/engine.rs` | `resolve_render_ledger` | Dispatch to by-name or by-template resolution |
+| Resolve by name | `render/engine.rs` | `resolve_ledger_by_name` | Literal registry lookup |
+| Resolve by template | `render/engine.rs` | `resolve_ledger_by_template` | Template metadata lookup (active first, then most recent) |
+| Open registry entry | `render/engine.rs` | `open_registry_entry` | Shared helper to open ledger from registry entry |
 | Build context | `render/engine.rs` | `[build-context]` | Build template vars from ledger + config |
 | Render triggered | `render/engine.rs` | `[render-triggered]` | Render on_transition / on_event |
 | Dump context | `render/engine.rs` | `[dump-context]` | Export render context as JSON |

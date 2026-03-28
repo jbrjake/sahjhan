@@ -6,7 +6,12 @@
 // - EventSummary             — event data for templates
 // - MemberSummary            — set member status for templates
 // - SetSummary               — set completion status for templates
-// - RenderEngine             — Tera-based renderer with config + templates
+// - RenderEngine             — Tera-based renderer with config + templates + active_ledger_name
+// - with_active_ledger_name  — set active ledger name for template resolution
+// - resolve_render_ledger    — dispatch to by-name or by-template resolution
+// - resolve_ledger_by_name   — literal registry lookup
+// - resolve_ledger_by_template — template metadata lookup (active first, then most recent)
+// - open_registry_entry      — shared helper to open ledger from registry entry
 // - [build-context]          build_context()        — build template vars from ledger + config
 // - [render-triggered]       render_triggered()     — render on_transition / on_event
 // - [dump-context]           dump_context()         — export render context as JSON
@@ -53,6 +58,8 @@ pub struct RenderEngine {
     config: ProtocolConfig,
     /// Path to `ledgers.toml`, used to resolve per-render ledger overrides.
     registry_path: Option<std::path::PathBuf>,
+    /// Name of the active (targeted) ledger, used for template resolution.
+    active_ledger_name: Option<String>,
 }
 
 impl RenderEngine {
@@ -76,6 +83,7 @@ impl RenderEngine {
             tera,
             config: config.clone(),
             registry_path: None,
+            active_ledger_name: None,
         })
     }
 
@@ -85,26 +93,44 @@ impl RenderEngine {
         self
     }
 
+    /// Set the name of the active (targeted) ledger for template resolution.
+    pub fn with_active_ledger_name(mut self, name: String) -> Self {
+        self.active_ledger_name = Some(name);
+        self
+    }
+
     /// Resolve the ledger for a render config.
     ///
     /// If the render has a `ledger` field, attempt to load that ledger from the
-    /// registry. If the registry or named ledger doesn't exist, fall back to
-    /// the default ledger (return `Ok(None)`) with a warning on stderr.
+    /// registry by name. If it has a `ledger_template` field, resolve via
+    /// template metadata (active ledger first, then most recent match).
+    /// Falls back to the default ledger (return `Ok(None)`) with a warning
+    /// on stderr when resolution fails.
     fn resolve_render_ledger(
         &self,
         render_cfg: &crate::config::RenderConfig,
     ) -> Result<Option<Ledger>, String> {
-        let ledger_name = match &render_cfg.ledger {
-            Some(n) => n,
-            None => return Ok(None),
-        };
+        if let Some(ref ledger_name) = render_cfg.ledger {
+            return self.resolve_ledger_by_name(ledger_name, &render_cfg.target);
+        }
+        if let Some(ref tmpl_name) = render_cfg.ledger_template {
+            return self.resolve_ledger_by_template(tmpl_name, &render_cfg.target);
+        }
+        Ok(None)
+    }
 
+    /// Resolve a ledger by literal name from the registry.
+    fn resolve_ledger_by_name(
+        &self,
+        ledger_name: &str,
+        render_target: &str,
+    ) -> Result<Option<Ledger>, String> {
         let reg_path = match self.registry_path.as_ref() {
             Some(p) => p,
             None => {
                 eprintln!(
                     "  Render '{}': ledger '{}' requested but no registry configured; using default ledger",
-                    render_cfg.target, ledger_name
+                    render_target, ledger_name
                 );
                 return Ok(None);
             }
@@ -115,24 +141,92 @@ impl RenderEngine {
             Err(_) => {
                 eprintln!(
                     "  Render '{}': cannot load registry; using default ledger for '{}'",
-                    render_cfg.target, ledger_name
+                    render_target, ledger_name
                 );
                 return Ok(None);
             }
         };
 
         let entry = match registry.resolve(Some(ledger_name)) {
-            Ok(e) => e,
+            Ok(e) => e.clone(),
             Err(_) => {
                 eprintln!(
                     "  Render '{}': ledger '{}' not found in registry; using default ledger",
-                    render_cfg.target, ledger_name
+                    render_target, ledger_name
                 );
                 return Ok(None);
             }
         };
 
-        // Resolve relative paths against the registry file's parent directory.
+        self.open_registry_entry(&entry, render_target)
+    }
+
+    /// Resolve a ledger by template metadata.
+    ///
+    /// First checks if the active (targeted) ledger's template matches; if so,
+    /// uses that ledger. Otherwise falls back to the most recently created
+    /// registry entry with the matching template.
+    fn resolve_ledger_by_template(
+        &self,
+        tmpl_name: &str,
+        render_target: &str,
+    ) -> Result<Option<Ledger>, String> {
+        let reg_path = match self.registry_path.as_ref() {
+            Some(p) => p,
+            None => {
+                eprintln!(
+                    "  Render '{}': ledger_template '{}' requested but no registry configured; using default ledger",
+                    render_target, tmpl_name
+                );
+                return Ok(None);
+            }
+        };
+
+        let registry = match LedgerRegistry::new(reg_path) {
+            Ok(r) => r,
+            Err(_) => {
+                eprintln!(
+                    "  Render '{}': cannot load registry; using default ledger",
+                    render_target
+                );
+                return Ok(None);
+            }
+        };
+
+        // First: check if the active ledger matches this template
+        if let Some(ref active_name) = self.active_ledger_name {
+            if let Ok(entry) = registry.resolve(Some(active_name)) {
+                if entry.template.as_deref() == Some(tmpl_name) {
+                    return self.open_registry_entry(entry, render_target);
+                }
+            }
+        }
+
+        // Fallback: most recently created ledger with this template
+        let matches = registry.resolve_by_template(tmpl_name);
+        if let Some(entry) = matches.last() {
+            return self.open_registry_entry(entry, render_target);
+        }
+
+        eprintln!(
+            "  Render '{}': no ledger found for template '{}'; using default ledger",
+            render_target, tmpl_name
+        );
+        Ok(None)
+    }
+
+    /// Open a ledger from a registry entry, resolving relative paths against
+    /// the registry file's parent directory.
+    fn open_registry_entry(
+        &self,
+        entry: &crate::ledger::registry::LedgerRegistryEntry,
+        render_target: &str,
+    ) -> Result<Option<Ledger>, String> {
+        let reg_path = self
+            .registry_path
+            .as_ref()
+            .expect("open_registry_entry called without registry_path");
+
         let ledger_path = {
             let p = std::path::PathBuf::from(&entry.path);
             if p.is_absolute() {
@@ -150,8 +244,8 @@ impl RenderEngine {
             Err(_) => {
                 eprintln!(
                     "  Render '{}': cannot open ledger '{}' at {}; using default ledger",
-                    render_cfg.target,
-                    ledger_name,
+                    render_target,
+                    entry.name,
                     ledger_path.display()
                 );
                 return Ok(None);

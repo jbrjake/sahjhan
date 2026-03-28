@@ -90,7 +90,10 @@ pub fn cmd_transition(
             if !config.renders.is_empty() {
                 let registry_path = super::commands::registry_path_from_config(&config);
                 if let Ok(engine) = RenderEngine::new(&config, &config_path) {
-                    let engine = engine.with_registry(registry_path);
+                    let mut engine = engine.with_registry(registry_path);
+                    if let Some(ref name) = targeting.ledger_name {
+                        engine = engine.with_active_ledger_name(name.clone());
+                    }
                     let render_dir = resolve_data_dir(&config.paths.render_dir);
                     let ledger_seq = machine
                         .ledger()
@@ -366,7 +369,10 @@ pub fn cmd_event(
             if !config.renders.is_empty() {
                 let registry_path = super::commands::registry_path_from_config(&config);
                 if let Ok(engine) = RenderEngine::new(&config, &config_path) {
-                    let engine = engine.with_registry(registry_path);
+                    let mut engine = engine.with_registry(registry_path);
+                    if let Some(ref name) = targeting.ledger_name {
+                        engine = engine.with_active_ledger_name(name.clone());
+                    }
                     let render_dir = resolve_data_dir(&config.paths.render_dir);
                     let ledger_seq = machine
                         .ledger()

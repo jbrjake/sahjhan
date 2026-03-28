@@ -793,7 +793,7 @@ fn test_validate_clean_config() {
         .current_dir(dir.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("Config valid"));
+        .stdout(predicate::str::contains("valid."));
 }
 
 #[test]

@@ -30,8 +30,7 @@ pub fn cmd_validate(config_dir: &str) -> i32 {
     let config = match ProtocolConfig::load(&config_path) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("  - {}", e);
-            eprintln!("\nFix these before running.");
+            eprintln!("error: {}", e);
             return EXIT_CONFIG_ERROR;
         }
     };
@@ -41,20 +40,16 @@ pub fn cmd_validate(config_dir: &str) -> i32 {
 
     // Print warnings first
     for w in &warnings {
-        eprintln!("  warning: {}", w);
+        eprintln!("warning: {}", w);
     }
 
     if errors.is_empty() {
-        if !warnings.is_empty() {
-            println!();
-        }
-        println!("Config valid.");
+        println!("valid.");
         EXIT_SUCCESS
     } else {
         for e in &errors {
-            eprintln!("  - {}", e);
+            eprintln!("error: {}", e);
         }
-        eprintln!("\nFix these before running.");
         EXIT_CONFIG_ERROR
     }
 }
@@ -78,14 +73,14 @@ pub fn cmd_init(config_dir: &str) -> i32 {
 
     // Create data_dir
     if let Err(e) = std::fs::create_dir_all(&data_dir) {
-        eprintln!("Cannot create data directory {}: {}", data_dir.display(), e);
+        eprintln!("error: cannot create data directory: {}", e);
         return EXIT_CONFIG_ERROR;
     }
 
     let lp = ledger_path(&data_dir);
     if lp.exists() {
         eprintln!(
-            "Already initialized (ledger exists at {}). Run `reset` first if you mean it.",
+            "error: already initialized ({}). run reset first.",
             lp.display()
         );
         return EXIT_USAGE_ERROR;
@@ -99,7 +94,7 @@ pub fn cmd_init(config_dir: &str) -> i32 {
     ) {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("Cannot initialize ledger: {}", e);
+            eprintln!("error: cannot initialize ledger: {}", e);
             return EXIT_INTEGRITY_ERROR;
         }
     };
@@ -115,7 +110,7 @@ pub fn cmd_init(config_dir: &str) -> i32 {
         let mut registry = match crate::ledger::registry::LedgerRegistry::new(&reg_path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("Cannot create ledger registry: {}", e);
+                eprintln!("error: cannot create ledger registry: {}", e);
                 return EXIT_INTEGRITY_ERROR;
             }
         };
@@ -126,7 +121,7 @@ pub fn cmd_init(config_dir: &str) -> i32 {
         ) {
             // If the registry already has a "default" entry, skip — idempotent.
             if !e.contains("already exists") {
-                eprintln!("Cannot register default ledger: {}", e);
+                eprintln!("error: cannot register default ledger: {}", e);
                 return EXIT_INTEGRITY_ERROR;
             }
         }
@@ -145,7 +140,7 @@ pub fn cmd_init(config_dir: &str) -> i32 {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let ledger_rel = pathdiff(&lp, &cwd);
     if let Err(e) = manifest.track(&ledger_rel, &lp, "genesis", 0) {
-        eprintln!("Cannot track ledger in manifest: {}", e);
+        eprintln!("error: cannot track ledger in manifest: {}", e);
         return EXIT_INTEGRITY_ERROR;
     }
 
@@ -155,7 +150,7 @@ pub fn cmd_init(config_dir: &str) -> i32 {
         return code;
     }
 
-    println!("Protocol initialized. Ledger sealed. Good luck.");
+    println!("initialized. good luck.");
     EXIT_SUCCESS
 }
 
@@ -166,7 +161,7 @@ pub fn cmd_init(config_dir: &str) -> i32 {
 // [cmd-reset]
 pub fn cmd_reset(config_dir: &str, confirm: bool, token: &Option<String>) -> i32 {
     if !confirm {
-        eprintln!("Reset requires --confirm flag. This is not something to be done casually.");
+        eprintln!("error: reset requires --confirm");
         return EXIT_USAGE_ERROR;
     }
 
@@ -204,7 +199,7 @@ pub fn cmd_reset(config_dir: &str, confirm: bool, token: &Option<String>) -> i32
             // Token matches — proceed with reset
             if !is_tty {
                 // Programmatic invocation — record violation before reset
-                eprintln!("WARNING: Reset invoked programmatically. This is recorded as a protocol violation.");
+                eprintln!("warning: reset invoked programmatically");
             }
 
             // Archive current ledger and manifest
@@ -216,32 +211,31 @@ pub fn cmd_reset(config_dir: &str, confirm: bool, token: &Option<String>) -> i32
             let mp = manifest_path(&data_dir);
 
             if let Err(e) = std::fs::rename(&lp, &ledger_archive) {
-                eprintln!("Cannot archive ledger: {}", e);
+                eprintln!("error: cannot archive ledger: {}", e);
                 return EXIT_INTEGRITY_ERROR;
             }
             if let Err(e) = std::fs::rename(&mp, &manifest_archive) {
-                eprintln!("Cannot archive manifest: {}", e);
+                eprintln!("error: cannot archive manifest: {}", e);
                 return EXIT_INTEGRITY_ERROR;
             }
 
             // Reinitialize
             let result = cmd_init(config_dir);
             if result == EXIT_SUCCESS {
-                println!("Reset complete. Prior run archived.");
+                println!("reset. prior run archived.");
             }
             result
         }
         Some(provided_token) => {
             eprintln!(
-                "Token mismatch. Expected '{}', got '{}'. Reset denied.",
+                "error: token mismatch. expected '{}', got '{}'",
                 token_str, provided_token
             );
             EXIT_USAGE_ERROR
         }
         None => {
             // Display token and prompt
-            println!("WARNING: This will archive the current ledger and manifest and start fresh.");
-            println!("To confirm, run again with: --token {}", token_str);
+            println!("reset requires --token {}", token_str);
             EXIT_USAGE_ERROR
         }
     }

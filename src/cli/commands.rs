@@ -272,21 +272,73 @@ pub(crate) fn guard_event_only(
 
 // [build-state-params]
 /// Build state_params for a target state (mirrors StateMachine::build_state_params).
+///
+/// Supports `StateParam.source`:
+/// - `"values"` (default): comma-joined set values
+/// - `"current"`: first incomplete member of the set (requires ledger scan)
+/// - `"last_completed"`: most recently completed member (requires ledger scan)
 pub(crate) fn build_state_params(
     config: &ProtocolConfig,
     state_name: &str,
+    ledger: &crate::ledger::chain::Ledger,
 ) -> HashMap<String, String> {
     let mut params = HashMap::new();
     if let Some(state_config) = config.states.get(state_name) {
         if let Some(state_params) = &state_config.params {
             for param in state_params {
-                if let Some(set_config) = config.sets.get(&param.set) {
-                    params.insert(param.name.clone(), set_config.values.join(","));
+                let source = param.source.as_deref().unwrap_or("values");
+                match source {
+                    "current" => {
+                        if let Some(set_config) = config.sets.get(&param.set) {
+                            let completed = completed_members_for_set(ledger, &param.set);
+                            if let Some(current) = set_config
+                                .values
+                                .iter()
+                                .find(|v| !completed.contains(v))
+                            {
+                                params.insert(param.name.clone(), current.clone());
+                            }
+                        }
+                    }
+                    "last_completed" => {
+                        let completed = completed_members_for_set(ledger, &param.set);
+                        if let Some(last) = completed.last() {
+                            params.insert(param.name.clone(), last.clone());
+                        }
+                    }
+                    _ => {
+                        if let Some(set_config) = config.sets.get(&param.set) {
+                            params.insert(param.name.clone(), set_config.values.join(","));
+                        }
+                    }
                 }
             }
         }
     }
     params
+}
+
+/// Scan ledger for completed members of a set.
+fn completed_members_for_set(
+    ledger: &crate::ledger::chain::Ledger,
+    set_name: &str,
+) -> Vec<String> {
+    let mut covered = Vec::new();
+    for entry in ledger.events_of_type("set_member_complete") {
+        let set_matches = entry
+            .fields
+            .get("set")
+            .map(|v| v.as_str() == set_name)
+            .unwrap_or(false);
+        if set_matches {
+            if let Some(member) = entry.fields.get("member") {
+                if !covered.contains(member) {
+                    covered.push(member.clone());
+                }
+            }
+        }
+    }
+    covered
 }
 
 // [hex-encode-short]

@@ -161,7 +161,7 @@ pub fn cmd_status(config_dir: &str, targeting: &LedgerTargeting) -> i32 {
 
     for transition in &available_transitions {
         if !transition.gates.is_empty() {
-            let state_params = build_state_params(&config, &transition.to);
+            let state_params = build_state_params(&config, &transition.to, machine.ledger());
             let ctx = GateContext {
                 ledger: machine.ledger(),
                 config: &config,

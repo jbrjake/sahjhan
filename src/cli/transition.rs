@@ -206,7 +206,7 @@ pub fn cmd_gate_check(
         return EXIT_SUCCESS;
     }
 
-    let mut state_params = build_state_params(&config, &transition.to);
+    let mut state_params = build_state_params(&config, &transition.to, machine.ledger());
 
     // Parse CLI args as key=value pairs and merge into state_params.
     for arg in args {

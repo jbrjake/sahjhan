@@ -15,7 +15,9 @@ fn test_validate_ledger_template_both_path_and_template() {
     );
     let (errors, _) = config.validate_deep(Path::new("examples/minimal"));
     assert!(
-        errors.iter().any(|e| e.contains("bad") && e.contains("both")),
+        errors
+            .iter()
+            .any(|e| e.contains("bad") && e.contains("both")),
         "Expected error about both path and path_template: {:?}",
         errors
     );
@@ -35,7 +37,9 @@ fn test_validate_ledger_template_neither_path_nor_template() {
     );
     let (errors, _) = config.validate_deep(Path::new("examples/minimal"));
     assert!(
-        errors.iter().any(|e| e.contains("empty") && e.contains("must have")),
+        errors
+            .iter()
+            .any(|e| e.contains("empty") && e.contains("must have")),
         "Expected error about missing path: {:?}",
         errors
     );
@@ -55,7 +59,9 @@ fn test_validate_ledger_template_missing_instance_id_var() {
     );
     let (errors, _) = config.validate_deep(Path::new("examples/minimal"));
     assert!(
-        errors.iter().any(|e| e.contains("novar") && e.contains("{template.instance_id}")),
+        errors
+            .iter()
+            .any(|e| e.contains("novar") && e.contains("{template.instance_id}")),
         "Expected error about missing {{template.instance_id}}: {:?}",
         errors
     );
@@ -90,8 +96,7 @@ fn test_ledger_template_fields() {
         path = "project.jsonl"
     "#;
 
-    let proto_file: sahjhan::config::protocol::ProtocolFile =
-        toml::from_str(toml_str).unwrap();
+    let proto_file: sahjhan::config::protocol::ProtocolFile = toml::from_str(toml_str).unwrap();
 
     assert_eq!(proto_file.ledgers.len(), 2);
 

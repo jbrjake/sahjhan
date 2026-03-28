@@ -1108,8 +1108,8 @@ fn test_ledger_create_and_remove() {
         .success()
         .stdout(predicate::str::contains("removed from registry"));
 
-    // Verify the file still exists on disk
-    assert!(dir.path().join("output/.sahjhan/temp.jsonl").exists());
+    // Verify the file still exists on disk (relative paths resolve against cwd)
+    assert!(dir.path().join("temp.jsonl").exists());
 }
 
 #[test]

@@ -21,6 +21,7 @@
 // - [resolve-registry] resolve_registry_path() — resolve registry entry path
 // - [guard-event-only] guard_event_only() — block stateful ops on event-only ledgers
 // - [build-state-params] build_state_params() — build state params for gate context
+// - [compute-registry-path] compute_registry_path() — compute registry-storable path for a ledger file
 // - [hex-encode-short] hex_encode_short() — short hex encoding of hash bytes
 // - [atty-check] atty_check() — check if stdin is a TTY
 
@@ -336,6 +337,19 @@ fn completed_members_for_set(ledger: &crate::ledger::chain::Ledger, set_name: &s
     covered
 }
 
+// [compute-registry-path]
+/// Compute the path to store in the registry for a ledger file.
+///
+/// If `file` is under `data_dir`, returns the relative sub-path so that
+/// `resolve_registry_path` (which joins relative paths with `data_dir`) will
+/// round-trip correctly. Otherwise returns the absolute path.
+pub(crate) fn compute_registry_path(file: &Path, data_dir: &Path) -> String {
+    match file.strip_prefix(data_dir) {
+        Ok(rel) => rel.to_string_lossy().to_string(),
+        Err(_) => file.to_string_lossy().to_string(),
+    }
+}
+
 // [hex-encode-short]
 pub(crate) fn hex_encode_short(bytes: &[u8; 32], len: usize) -> String {
     bytes
@@ -365,4 +379,34 @@ unsafe fn libc_isatty() -> bool {
 #[cfg(not(unix))]
 unsafe fn libc_isatty() -> bool {
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_compute_registry_path_under_data_dir() {
+        let data_dir = PathBuf::from("/project/.sahjhan");
+        let file = PathBuf::from("/project/.sahjhan/runs/25/ledger.jsonl");
+        let result = compute_registry_path(&file, &data_dir);
+        assert_eq!(result, "runs/25/ledger.jsonl");
+    }
+
+    #[test]
+    fn test_compute_registry_path_outside_data_dir() {
+        let data_dir = PathBuf::from("/project/.sahjhan");
+        let file = PathBuf::from("/project/docs/runs/25/ledger.jsonl");
+        let result = compute_registry_path(&file, &data_dir);
+        assert_eq!(result, "/project/docs/runs/25/ledger.jsonl");
+    }
+
+    #[test]
+    fn test_compute_registry_path_absolute_preserved() {
+        let data_dir = PathBuf::from("/project/.sahjhan");
+        let file = PathBuf::from("/tmp/ledger.jsonl");
+        let result = compute_registry_path(&file, &data_dir);
+        assert_eq!(result, "/tmp/ledger.jsonl");
+    }
 }

@@ -174,3 +174,61 @@ fn test_validate_catches_invalid_transition_state() {
     let errors = config.validate();
     assert!(!errors.is_empty());
 }
+
+#[test]
+fn test_render_config_ledger_template_field() {
+    use sahjhan::config::renders::RendersFile;
+
+    let toml_str = r#"
+[[renders]]
+target = "STATUS.md"
+template = "templates/status.md.tera"
+trigger = "on_transition"
+ledger_template = "run"
+"#;
+
+    let rf: RendersFile = toml::from_str(toml_str).unwrap();
+    assert_eq!(rf.renders.len(), 1);
+    assert_eq!(rf.renders[0].ledger_template.as_deref(), Some("run"));
+    assert!(rf.renders[0].ledger.is_none());
+}
+
+#[test]
+fn test_validate_render_both_ledger_and_ledger_template() {
+    use sahjhan::config::*;
+    let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    config.renders.push(RenderConfig {
+        target: "bad.md".to_string(),
+        template: "templates/status.md.tera".to_string(),
+        trigger: "on_transition".to_string(),
+        event_types: None,
+        ledger: Some("default".to_string()),
+        ledger_template: Some("run".to_string()),
+    });
+    let (errors, _) = config.validate_deep(Path::new("examples/minimal"));
+    assert!(
+        errors.iter().any(|e| e.contains("bad.md") && e.contains("both")),
+        "Expected error about both ledger and ledger_template: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_validate_render_ledger_template_references_valid_template() {
+    use sahjhan::config::*;
+    let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    config.renders.push(RenderConfig {
+        target: "ref.md".to_string(),
+        template: "templates/status.md.tera".to_string(),
+        trigger: "on_transition".to_string(),
+        event_types: None,
+        ledger: None,
+        ledger_template: Some("nonexistent".to_string()),
+    });
+    let (errors, _) = config.validate_deep(Path::new("examples/minimal"));
+    assert!(
+        errors.iter().any(|e| e.contains("ref.md") && e.contains("nonexistent")),
+        "Expected error about unknown ledger template: {:?}",
+        errors
+    );
+}

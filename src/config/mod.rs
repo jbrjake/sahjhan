@@ -412,6 +412,24 @@ impl ProtocolConfig {
             }
         }
 
+        // 13. Render ledger/ledger_template validation.
+        for render in &self.renders {
+            if render.ledger.is_some() && render.ledger_template.is_some() {
+                errors.push(format!(
+                    "renders.toml: render for '{}' has both 'ledger' and 'ledger_template' — use one or the other",
+                    render.target
+                ));
+            }
+            if let Some(ref tmpl_name) = render.ledger_template {
+                if !self.ledgers.contains_key(tmpl_name) {
+                    errors.push(format!(
+                        "renders.toml: render for '{}' references ledger_template '{}' which is not declared in protocol.toml [ledgers]",
+                        render.target, tmpl_name
+                    ));
+                }
+            }
+        }
+
         (errors, warnings)
     }
 }

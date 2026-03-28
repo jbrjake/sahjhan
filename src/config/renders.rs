@@ -4,7 +4,7 @@
 //
 // ## Index
 // - RendersFile             — top-level wrapper
-// - RenderConfig            — target, template, trigger, event_types
+// - RenderConfig            — target, template, trigger, event_types, ledger, ledger_template
 
 use serde::Deserialize;
 
@@ -24,4 +24,7 @@ pub struct RenderConfig {
     /// Optional: which named ledger (from ledgers.toml) to read from.
     /// If absent, the default ledger is used.
     pub ledger: Option<String>,
+    /// Optional: which ledger template (from protocol.toml [ledgers]) to resolve.
+    /// Resolves to the active (targeted) ledger if its template matches.
+    pub ledger_template: Option<String>,
 }

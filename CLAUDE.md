@@ -122,7 +122,10 @@ Sahjhan is a protocol enforcement engine. It has:
 | Entry errors | `ledger/entry.rs` | `LedgerError` | Io, Parse, Integrity, etc. |
 | Import | `ledger/import.rs` | `[import-jsonl]` | Wrap bare JSONL in hash-chained ledger |
 | Registry | `ledger/registry.rs` | `LedgerRegistry` | Multi-ledger name→path mapping |
+| Registry entry | `ledger/registry.rs` | `LedgerRegistryEntry` | name, path, mode, created, template, instance_id |
 | Ledger mode | `ledger/registry.rs` | `LedgerMode` | Full vs EventOnly |
+| Register with template | `ledger/registry.rs` | `create_with_template` | Register ledger with template + instance_id metadata |
+| Template query | `ledger/registry.rs` | `resolve_by_template` | Find all entries for a given template name |
 
 ### manifest/ — File Integrity Tracking
 

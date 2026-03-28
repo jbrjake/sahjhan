@@ -180,3 +180,67 @@ fn test_persistence() {
     assert!(!entries[0].created.is_empty());
     assert!(entries[0].created.contains('T'));
 }
+
+// ---------------------------------------------------------------------------
+// 9. template and instance_id fields survive round-trip
+// ---------------------------------------------------------------------------
+#[test]
+fn test_template_metadata_round_trip() {
+    let dir = TempDir::new().unwrap();
+    let path = temp_registry_path(&dir);
+
+    {
+        let mut reg = LedgerRegistry::new(&path).unwrap();
+        reg.create_with_template(
+            "run-25",
+            "docs/holtz/runs/25/ledger.jsonl",
+            LedgerMode::Stateful,
+            Some("run"),
+            Some("25"),
+        )
+        .unwrap();
+    }
+
+    // Reload from disk
+    let reg2 = LedgerRegistry::new(&path).unwrap();
+    let entry = reg2.resolve(Some("run-25")).unwrap();
+    assert_eq!(entry.template.as_deref(), Some("run"));
+    assert_eq!(entry.instance_id.as_deref(), Some("25"));
+}
+
+// ---------------------------------------------------------------------------
+// 10. resolve_by_template returns matching entries
+// ---------------------------------------------------------------------------
+#[test]
+fn test_resolve_by_template() {
+    let dir = TempDir::new().unwrap();
+    let path = temp_registry_path(&dir);
+
+    let mut reg = LedgerRegistry::new(&path).unwrap();
+    reg.create_with_template(
+        "run-24",
+        "runs/24/ledger.jsonl",
+        LedgerMode::Stateful,
+        Some("run"),
+        Some("24"),
+    )
+    .unwrap();
+    reg.create_with_template(
+        "run-25",
+        "runs/25/ledger.jsonl",
+        LedgerMode::Stateful,
+        Some("run"),
+        Some("25"),
+    )
+    .unwrap();
+    reg.create("project", "project.jsonl", LedgerMode::EventOnly)
+        .unwrap();
+
+    let run_entries = reg.resolve_by_template("run");
+    assert_eq!(run_entries.len(), 2);
+    assert_eq!(run_entries[0].name, "run-24");
+    assert_eq!(run_entries[1].name, "run-25");
+
+    let project_entries = reg.resolve_by_template("project");
+    assert!(project_entries.is_empty());
+}

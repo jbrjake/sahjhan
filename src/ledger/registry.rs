@@ -4,8 +4,11 @@
 //
 // ## Index
 // - LedgerMode               — Full or EventOnly
-// - LedgerRegistryEntry       — name, path, mode
+// - LedgerRegistryEntry       — name, path, mode, created, template, instance_id
 // - LedgerRegistry            — TOML-backed name→path registry
+// - LedgerRegistry::create                — register ledger (no template metadata)
+// - LedgerRegistry::create_with_template  — register ledger with template + instance_id
+// - LedgerRegistry::resolve_by_template   — find all entries for a given template
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -32,6 +35,12 @@ pub struct LedgerRegistryEntry {
     pub mode: LedgerMode,
     /// ISO 8601 creation timestamp.
     pub created: String,
+    /// Which protocol template this ledger was created from (if any).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub template: Option<String>,
+    /// Instance identifier within the template (e.g., "25" for run-25).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instance_id: Option<String>,
 }
 
 /// The on-disk TOML shape: `{ ledgers = [...] }`.
@@ -91,6 +100,35 @@ impl LedgerRegistry {
             path: path.to_string(),
             mode,
             created,
+            template: None,
+            instance_id: None,
+        });
+
+        self.save()
+    }
+
+    /// Register a new ledger with optional template metadata.
+    /// Fails if `name` already exists.
+    pub fn create_with_template(
+        &mut self,
+        name: &str,
+        path: &str,
+        mode: LedgerMode,
+        template: Option<&str>,
+        instance_id: Option<&str>,
+    ) -> Result<(), String> {
+        if self.entries.iter().any(|e| e.name == name) {
+            return Err(format!("ledger '{name}' already exists in the registry"));
+        }
+
+        let created = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        self.entries.push(LedgerRegistryEntry {
+            name: name.to_string(),
+            path: path.to_string(),
+            mode,
+            created,
+            template: template.map(|s| s.to_string()),
+            instance_id: instance_id.map(|s| s.to_string()),
         });
 
         self.save()
@@ -134,6 +172,14 @@ impl LedgerRegistry {
                 .first()
                 .ok_or_else(|| "registry is empty — no default ledger".to_string()),
         }
+    }
+
+    /// Find all registry entries created from a given template, in insertion order.
+    pub fn resolve_by_template(&self, template: &str) -> Vec<&LedgerRegistryEntry> {
+        self.entries
+            .iter()
+            .filter(|e| e.template.as_deref() == Some(template))
+            .collect()
     }
 
     // -----------------------------------------------------------------------

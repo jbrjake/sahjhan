@@ -12,7 +12,7 @@
 // - resolve_ledger_by_name   — literal registry lookup
 // - resolve_ledger_by_template — template metadata lookup (active first, then most recent)
 // - open_registry_entry      — shared helper to open ledger from registry entry
-// - [build-context]          build_context()        — build template vars from ledger + config
+// - [build-context]          build_context()        — build template vars from ledger + config; injects template_instance_id/template_name
 // - [render-triggered]       render_triggered()     — render on_transition / on_event
 // - [dump-context]           dump_context()         — export render context as JSON
 
@@ -484,6 +484,22 @@ impl RenderEngine {
 
         let violations = ledger.events_of_type("protocol_violation").len();
         ctx.insert("violations", &violations);
+
+        // Inject template instance_id if active ledger has template metadata
+        if let (Some(ref active_name), Some(ref reg_path)) =
+            (&self.active_ledger_name, &self.registry_path)
+        {
+            if let Ok(registry) = LedgerRegistry::new(reg_path) {
+                if let Ok(entry) = registry.resolve(Some(active_name)) {
+                    if let Some(ref id) = entry.instance_id {
+                        ctx.insert("template_instance_id", id);
+                    }
+                    if let Some(ref tmpl) = entry.template {
+                        ctx.insert("template_name", tmpl);
+                    }
+                }
+            }
+        }
 
         Ok(ctx)
     }

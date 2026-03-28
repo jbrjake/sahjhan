@@ -61,6 +61,7 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
                     gate_type: "snapshot_compare".to_string(),
                     description,
                     reason: Some(reason),
+                    intent: None,
                 }
             }
         }
@@ -80,6 +81,7 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
                     "command '{}' timed out after {}s",
                     cmd, timeout_secs
                 )),
+                intent: None,
             }
         }
         Err(e) => {
@@ -88,6 +90,7 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
                 gate_type: "snapshot_compare".to_string(),
                 description,
                 reason: Some(format!("command failed: {}", e)),
+                intent: None,
             }
         }
     };
@@ -101,6 +104,7 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
                 gate_type: "snapshot_compare".to_string(),
                 description,
                 reason: Some(format!("stdout is not valid JSON: {}", e)),
+                intent: None,
             }
         }
     };
@@ -113,6 +117,7 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
                 gate_type: "snapshot_compare".to_string(),
                 description,
                 reason: Some(format!("JSON field '{}' not found in output", extract)),
+                intent: None,
             }
         }
     };
@@ -140,6 +145,7 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
                         extracted_str, compare, reference
                     ))
                 },
+                intent: None,
             };
         }
     };
@@ -152,6 +158,7 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
                 gate_type: "snapshot_compare".to_string(),
                 description,
                 reason: Some(format!("reference '{}' is not a number: {}", reference, e)),
+                intent: None,
             }
         }
     };
@@ -166,6 +173,7 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
                 gate_type: "snapshot_compare".to_string(),
                 description,
                 reason: Some(format!("unknown compare operator '{}'", other)),
+                intent: None,
             }
         }
     };
@@ -182,6 +190,7 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
                 extracted_num, compare, reference_num
             ))
         },
+        intent: None,
     }
 }
 

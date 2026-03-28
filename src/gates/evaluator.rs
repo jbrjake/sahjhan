@@ -4,7 +4,8 @@
 //
 // ## Index
 // - GateContext              — all inputs needed to evaluate a gate (ledger, config, state_params, etc.)
-// - GateResult               — outcome: passed, gate_type, description, reason
+// - GateResult               — outcome: passed, gate_type, description, reason, intent
+// - default_intent           — returns default intent string for a given gate type
 // - [evaluate-gate]          evaluate_gate()   — evaluate a single gate
 // - [evaluate-gates]         evaluate_gates()  — evaluate all gates, return all results
 
@@ -48,6 +49,29 @@ pub struct GateResult {
     pub description: String,
     /// If `passed` is `false`, a human-readable explanation of why.
     pub reason: Option<String>,
+    /// Why this gate exists — taken from `GateConfig.intent` if set,
+    /// otherwise filled in from `default_intent` by the dispatch wrapper.
+    pub intent: Option<String>,
+}
+
+/// Return the default intent string for a given gate type.
+///
+/// Used when a GateConfig does not specify an explicit intent.
+pub fn default_intent(gate_type: &str) -> &str {
+    match gate_type {
+        "file_exists" | "files_exist" => "required files must exist before proceeding",
+        "command_succeeds" => "command must pass before proceeding",
+        "command_output" => "command output must match expected value",
+        "ledger_has_event" => "required events must be recorded first",
+        "ledger_has_event_since" => "required events must occur since last transition",
+        "set_covered" => "all set members must be completed",
+        "min_elapsed" => "minimum time must elapse before proceeding",
+        "no_violations" => "all protocol violations must be resolved",
+        "field_not_empty" => "required field must have a value",
+        "snapshot_compare" => "snapshot must match expected state",
+        "query" => "query condition must be satisfied",
+        _ => "gate condition must be met",
+    }
 }
 
 // ---------------------------------------------------------------------------

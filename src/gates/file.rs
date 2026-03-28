@@ -33,6 +33,7 @@ pub(super) fn eval_file_exists(gate: &GateConfig, ctx: &GateContext) -> GateResu
         } else {
             Some(format!("file '{}' does not exist", resolved))
         },
+        intent: None,
     }
 }
 
@@ -68,5 +69,6 @@ pub(super) fn eval_files_exist(gate: &GateConfig, ctx: &GateContext) -> GateResu
         } else {
             Some(format!("missing files: {}", missing.join(", ")))
         },
+        intent: None,
     }
 }

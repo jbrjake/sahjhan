@@ -21,7 +21,7 @@ When you modify any source file in this repository, you MUST update documentatio
 
 ```
 cargo build                    # Build
-cargo test                     # Run all tests (251 tests)
+cargo test                     # Run all tests (253 tests)
 cargo test <test_name>         # Run one test
 cargo clippy -- -D warnings    # Lint
 cargo fmt                      # Format
@@ -61,7 +61,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | Protocol metadata | `config/protocol.rs` | `ProtocolMeta`, `PathsConfig`, `SetConfig` | protocol.toml structures |
 | Ledger template | `config/protocol.rs` | `LedgerTemplateConfig` | `[ledgers]` section; path or path_template for template-based ledger creation |
 | State definitions | `config/states.rs` | `StateConfig`, `StateParam` | states.toml; `StateParam.source` controls set derivation |
-| Transition defs | `config/transitions.rs` | `TransitionConfig`, `GateConfig` | transitions.toml; `args` declares positional params; gates are `#[serde(flatten)]` |
+| Transition defs | `config/transitions.rs` | `TransitionConfig`, `GateConfig` | transitions.toml; `args` declares positional params; `intent` is optional per-gate "why"; gates are `#[serde(flatten)]` |
 | Event definitions | `config/events.rs` | `EventConfig`, `EventFieldConfig` | events.toml; field patterns for validation |
 | Render definitions | `config/renders.rs` | `RenderConfig` | renders.toml; trigger/template/target/ledger/ledger_template |
 
@@ -74,7 +74,8 @@ Sahjhan is a protocol enforcement engine. It has:
 | Field validation | `gates/types.rs` | `[validate-template-fields]` | Validates var values against event field patterns |
 | Entry filter | `gates/types.rs` | `[entry-matches-filter]` | Checks ledger entry against k/v filter |
 | Gate context | `gates/evaluator.rs` | `GateContext` | All inputs needed to evaluate a gate |
-| Gate result | `gates/evaluator.rs` | `GateResult` | Outcome: passed, gate_type, description, reason |
+| Gate result | `gates/evaluator.rs` | `GateResult` | Outcome: passed, gate_type, description, reason, intent |
+| Default intent | `gates/evaluator.rs` | `default_intent` | Returns default intent string for each gate type |
 | evaluate_gate | `gates/evaluator.rs` | `[evaluate-gate]` | Evaluate single gate |
 | evaluate_gates | `gates/evaluator.rs` | `[evaluate-gates]` | Evaluate all gates, returns all results |
 | Shell command gate | `gates/command.rs` | `[eval-command-succeeds]` | Run command, pass if exit 0 |

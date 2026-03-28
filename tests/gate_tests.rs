@@ -19,6 +19,7 @@ use tempfile::tempdir;
 fn make_gate(gate_type: &str, params: Vec<(&str, toml::Value)>) -> GateConfig {
     GateConfig {
         gate_type: gate_type.to_string(),
+        intent: None,
         params: params
             .into_iter()
             .map(|(k, v)| (k.to_string(), v))
@@ -1846,6 +1847,86 @@ fn test_no_declared_args_positional_ignored() {
         result.is_ok(),
         "positional args with no declared args should be ignored: {:?}",
         result.err()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// intent field on GateConfig and GateResult
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_gate_result_has_intent_from_config() {
+    // A GateConfig with an explicit intent should propagate it to GateResult.intent.
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let test_file = dir.path().join("existing.txt");
+    std::fs::write(&test_file, "content").unwrap();
+
+    let gate = GateConfig {
+        gate_type: "file_exists".to_string(),
+        intent: Some("spec must have real content".to_string()),
+        params: vec![(
+            "path".to_string(),
+            toml::Value::String(test_file.to_str().unwrap().to_string()),
+        )]
+        .into_iter()
+        .collect(),
+    };
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(result.passed, "gate should pass: {:?}", result.reason);
+    assert_eq!(
+        result.intent.as_deref(),
+        Some("spec must have real content"),
+        "intent should be taken from GateConfig"
+    );
+}
+
+#[test]
+fn test_gate_result_has_default_intent_when_missing() {
+    // A GateConfig with intent=None should have a default intent filled in.
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let test_file = dir.path().join("existing.txt");
+    std::fs::write(&test_file, "content").unwrap();
+
+    let gate = GateConfig {
+        gate_type: "file_exists".to_string(),
+        intent: None,
+        params: vec![(
+            "path".to_string(),
+            toml::Value::String(test_file.to_str().unwrap().to_string()),
+        )]
+        .into_iter()
+        .collect(),
+    };
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(result.passed, "gate should pass: {:?}", result.reason);
+    assert_eq!(
+        result.intent.as_deref(),
+        Some("required files must exist before proceeding"),
+        "intent should be the default for file_exists"
     );
 }
 

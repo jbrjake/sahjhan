@@ -58,6 +58,7 @@ pub(super) fn eval_command_succeeds(gate: &GateConfig, ctx: &GateContext) -> Gat
             gate_type: "command_succeeds".to_string(),
             description: format!("command succeeds: {}", raw_cmd),
             reason: Some(reason),
+            intent: None,
         };
     }
 
@@ -80,6 +81,7 @@ pub(super) fn eval_command_succeeds(gate: &GateConfig, ctx: &GateContext) -> Gat
                         status.code().unwrap_or(-1)
                     ))
                 },
+                intent: None,
             }
         }
         Ok(CommandOutcome::TimedOut) => GateResult {
@@ -90,12 +92,14 @@ pub(super) fn eval_command_succeeds(gate: &GateConfig, ctx: &GateContext) -> Gat
                 "command '{}' timed out after {}s",
                 cmd, timeout_secs
             )),
+            intent: None,
         },
         Err(e) => GateResult {
             passed: false,
             gate_type: "command_succeeds".to_string(),
             description: format!("command succeeds: {}", cmd),
             reason: Some(format!("failed to run command '{}': {}", cmd, e)),
+            intent: None,
         },
     }
 }
@@ -129,6 +133,7 @@ pub(super) fn eval_command_output(gate: &GateConfig, ctx: &GateContext) -> GateR
             gate_type: "command_output".to_string(),
             description: format!("command output matches '{}'", expect),
             reason: Some(reason),
+            intent: None,
         };
     }
 
@@ -148,6 +153,7 @@ pub(super) fn eval_command_output(gate: &GateConfig, ctx: &GateContext) -> GateR
                 } else {
                     Some(format!("expected '{}', got '{}'", expect, trimmed))
                 },
+                intent: None,
             }
         }
         Ok(CommandOutputOutcome::TimedOut) => GateResult {
@@ -158,12 +164,14 @@ pub(super) fn eval_command_output(gate: &GateConfig, ctx: &GateContext) -> GateR
                 "command '{}' timed out after {}s",
                 cmd, timeout_secs
             )),
+            intent: None,
         },
         Err(e) => GateResult {
             passed: false,
             gate_type: "command_output".to_string(),
             description: format!("command output matches '{}'", expect),
             reason: Some(format!("failed to run command '{}': {}", cmd, e)),
+            intent: None,
         },
     }
 }

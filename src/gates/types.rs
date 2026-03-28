@@ -23,8 +23,11 @@ use super::evaluator::{GateContext, GateResult};
 
 // [eval]
 /// Evaluate a single gate by dispatching on `gate.gate_type`.
+///
+/// After the gate module returns a result, the dispatch wrapper fills in
+/// `result.intent` from `gate.intent` (if set) or the default for the gate type.
 pub fn eval(gate: &GateConfig, ctx: &GateContext) -> GateResult {
-    match gate.gate_type.as_str() {
+    let mut result = match gate.gate_type.as_str() {
         "file_exists" => super::file::eval_file_exists(gate, ctx),
         "files_exist" => super::file::eval_files_exist(gate, ctx),
         "command_succeeds" => super::command::eval_command_succeeds(gate, ctx),
@@ -42,8 +45,15 @@ pub fn eval(gate: &GateConfig, ctx: &GateContext) -> GateResult {
             gate_type: other.to_string(),
             description: format!("unknown gate type '{}'", other),
             reason: Some(format!("gate type '{}' is not implemented", other)),
+            intent: None,
         },
-    }
+    };
+    result.intent = Some(
+        gate.intent
+            .clone()
+            .unwrap_or_else(|| super::evaluator::default_intent(&gate.gate_type).to_string()),
+    );
+    result
 }
 
 // ---------------------------------------------------------------------------

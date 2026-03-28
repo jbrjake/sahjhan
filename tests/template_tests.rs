@@ -67,11 +67,11 @@ fn test_template_create_full_stack() {
 
     let result = sahjhan::cli::ledger::cmd_ledger_create(
         &config_dir,
-        None,          // name (not used in template mode)
-        None,          // path (not used in template mode)
-        Some("run"),   // from_template
-        Some("25"),    // instance_id
-        "stateful",    // mode
+        None,        // name (not used in template mode)
+        None,        // path (not used in template mode)
+        Some("run"), // from_template
+        Some("25"),  // instance_id
+        "stateful",  // mode
     );
 
     assert_eq!(result, 0, "cmd_ledger_create should succeed");

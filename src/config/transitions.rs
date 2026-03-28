@@ -5,7 +5,7 @@
 // ## Index
 // - TransitionsFile         — top-level wrapper
 // - TransitionConfig        — from, to, command, args (positional params), gates
-// - GateConfig              — gate_type + flattened params
+// - GateConfig              — gate_type + optional intent + flattened params
 
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -42,6 +42,10 @@ pub struct TransitionConfig {
 pub struct GateConfig {
     #[serde(rename = "type")]
     pub gate_type: String,
+    /// Optional human-readable explanation of why this gate exists.
+    /// If absent, a default intent is derived from the gate type at evaluation time.
+    #[serde(default)]
+    pub intent: Option<String>,
     #[serde(flatten)]
     pub params: HashMap<String, toml::Value>,
 }

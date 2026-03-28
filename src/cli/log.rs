@@ -65,12 +65,11 @@ pub fn cmd_log_verify(config_dir: &str, targeting: &LedgerTargeting) -> i32 {
 
     match ledger.verify() {
         Ok(()) => {
-            println!("OK: {} events, chain intact.", ledger.len());
+            println!("chain valid ({} events)", ledger.len());
             EXIT_SUCCESS
         }
         Err(e) => {
-            eprintln!("Chain INVALID: {}", e);
-            eprintln!("Tampering detected.");
+            eprintln!("error: chain invalid: {} \u{2014} tampering detected", e);
             EXIT_INTEGRITY_ERROR
         }
     }

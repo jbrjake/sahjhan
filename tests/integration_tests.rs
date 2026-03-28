@@ -431,8 +431,7 @@ fn test_render_reports_files() {
         .current_dir(dir.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("Rendered: STATUS.md"))
-        .stdout(predicate::str::contains("Rendered: HISTORY.md"));
+        .stdout(predicate::str::contains("rendered:"));
 }
 
 #[test]
@@ -1443,7 +1442,7 @@ fn test_ledger_path_targeting_log_verify() {
         .current_dir(dir.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("OK:"));
+        .stdout(predicate::str::contains("chain valid"));
 }
 
 #[test]

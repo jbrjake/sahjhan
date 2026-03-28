@@ -29,7 +29,7 @@ pub fn cmd_render(config_dir: &str, targeting: &LedgerTargeting) -> i32 {
     };
 
     if config.renders.is_empty() {
-        println!("No renders configured. Nothing to do.");
+        println!("(no renders configured)");
         return EXIT_SUCCESS;
     }
 
@@ -70,20 +70,14 @@ pub fn cmd_render(config_dir: &str, targeting: &LedgerTargeting) -> i32 {
     match engine.render_all(&ledger, &render_dir, &mut manifest, ledger_seq) {
         Ok(rendered) => {
             if let Err((code, msg)) = save_manifest(&mut manifest, &data_dir) {
-                eprintln!("{}", msg);
+                eprintln!("error: {}", msg);
                 return code;
             }
-            for target in &rendered {
-                println!("Rendered: {}", target);
-            }
-            println!(
-                "All templates rendered. {} file(s) written. The ledger made manifest.",
-                rendered.len()
-            );
+            println!("rendered: {} file(s)", rendered.len());
             EXIT_SUCCESS
         }
         Err(e) => {
-            eprintln!("Render failed: {}", e);
+            eprintln!("error: render failed: {}", e);
             EXIT_INTEGRITY_ERROR
         }
     }

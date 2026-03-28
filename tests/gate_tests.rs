@@ -1611,7 +1611,8 @@ fn test_query_gate_interpolates_template_vars() {
             (
                 "sql",
                 toml::Value::String(
-                    "SELECT count(*) >= 2 as result FROM events WHERE type = '{{target_type}}'".to_string(),
+                    "SELECT count(*) >= 2 as result FROM events WHERE type = '{{target_type}}'"
+                        .to_string(),
                 ),
             ),
             ("expect", toml::Value::String("true".to_string())),
@@ -1654,7 +1655,9 @@ fn test_validate_rejects_invalid_source() {
 
     let errors = config.validate();
     assert!(
-        errors.iter().any(|e| e.contains("source") && e.contains("bogus")),
+        errors
+            .iter()
+            .any(|e| e.contains("source") && e.contains("bogus")),
         "should reject invalid source value, got: {:?}",
         errors
     );

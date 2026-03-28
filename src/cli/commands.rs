@@ -291,10 +291,8 @@ pub(crate) fn build_state_params(
                     "current" => {
                         if let Some(set_config) = config.sets.get(&param.set) {
                             let completed = completed_members_for_set(ledger, &param.set);
-                            if let Some(current) = set_config
-                                .values
-                                .iter()
-                                .find(|v| !completed.contains(v))
+                            if let Some(current) =
+                                set_config.values.iter().find(|v| !completed.contains(v))
                             {
                                 params.insert(param.name.clone(), current.clone());
                             }
@@ -319,10 +317,7 @@ pub(crate) fn build_state_params(
 }
 
 /// Scan ledger for completed members of a set.
-fn completed_members_for_set(
-    ledger: &crate::ledger::chain::Ledger,
-    set_name: &str,
-) -> Vec<String> {
+fn completed_members_for_set(ledger: &crate::ledger::chain::Ledger, set_name: &str) -> Vec<String> {
     let mut covered = Vec::new();
     for entry in ledger.events_of_type("set_member_complete") {
         let set_matches = entry

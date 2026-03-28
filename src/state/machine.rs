@@ -229,10 +229,8 @@ impl StateMachine {
                                     "set_member_complete",
                                     "member",
                                 );
-                                if let Some(current) = set_config
-                                    .values
-                                    .iter()
-                                    .find(|v| !completed.contains(v))
+                                if let Some(current) =
+                                    set_config.values.iter().find(|v| !completed.contains(v))
                                 {
                                     params.insert(param.name.clone(), current.clone());
                                 }

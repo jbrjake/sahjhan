@@ -1,4 +1,13 @@
 // src/config/mod.rs
+//
+// Unified protocol configuration and validation.
+//
+// ## Index
+// - ProtocolConfig          — unified config loaded from protocol directory
+// - [validate]              ProtocolConfig::validate()       — basic structural validation
+// - [validate-deep]         ProtocolConfig::validate_deep()  — file/alias/gate/render checks
+// - initial_state()         — find the state with initial = true
+
 pub mod events;
 pub mod protocol;
 pub mod renders;
@@ -110,6 +119,7 @@ impl ProtocolConfig {
     /// - All `set_covered` gates reference existing set names.
     /// - All sets referenced in state params exist.
     /// - Event field types are one of "string", "number", "boolean".
+    // [validate]
     pub fn validate(&self) -> Vec<String> {
         let mut errors: Vec<String> = Vec::new();
 
@@ -219,6 +229,7 @@ impl ProtocolConfig {
     /// - Unreachable state detection warnings
     ///
     /// Returns `(errors, warnings)` — errors are hard failures, warnings are advisory.
+    // [validate-deep]
     pub fn validate_deep(&self, config_dir: &Path) -> (Vec<String>, Vec<String>) {
         // Start with the basic checks.
         let mut errors = self.validate();

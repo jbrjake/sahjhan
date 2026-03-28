@@ -1,3 +1,12 @@
+// src/config/transitions.rs
+//
+// Deserialization structs for transitions.toml.
+//
+// ## Index
+// - TransitionsFile         — top-level wrapper
+// - TransitionConfig        — from, to, command, gates
+// - GateConfig              — gate_type + flattened params
+
 use serde::Deserialize;
 use std::collections::HashMap;
 

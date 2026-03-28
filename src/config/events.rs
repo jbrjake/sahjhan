@@ -1,3 +1,12 @@
+// src/config/events.rs
+//
+// Deserialization structs for events.toml.
+//
+// ## Index
+// - EventsFile              — top-level wrapper
+// - EventConfig             — single event type definition
+// - EventFieldConfig        — field name, type, pattern, allowed values
+
 use serde::Deserialize;
 use std::collections::HashMap;
 

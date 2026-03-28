@@ -1,3 +1,11 @@
+// src/config/renders.rs
+//
+// Deserialization structs for renders.toml.
+//
+// ## Index
+// - RendersFile             — top-level wrapper
+// - RenderConfig            — target, template, trigger, event_types
+
 use serde::Deserialize;
 
 /// Wrapper for the full renders.toml file.

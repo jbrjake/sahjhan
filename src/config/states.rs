@@ -1,3 +1,12 @@
+// src/config/states.rs
+//
+// Deserialization structs for states.toml.
+//
+// ## Index
+// - StatesFile              — top-level wrapper
+// - StateConfig             — label, initial, terminal, params, metadata
+// - StateParam              — name, set, source (controls set-derived value resolution)
+
 use serde::Deserialize;
 use std::collections::HashMap;
 

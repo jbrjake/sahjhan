@@ -1,3 +1,14 @@
+// src/config/protocol.rs
+//
+// Deserialization structs for protocol.toml.
+//
+// ## Index
+// - ProtocolFile            — top-level wrapper (protocol, paths, sets, aliases, checkpoints)
+// - ProtocolMeta            — name, version, description
+// - PathsConfig             — managed, data_dir, render_dir
+// - SetConfig               — description + ordered values
+// - CheckpointConfig        — checkpoint interval
+
 use serde::Deserialize;
 use std::collections::HashMap;
 

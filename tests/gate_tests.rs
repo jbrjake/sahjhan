@@ -1588,3 +1588,52 @@ fn test_state_param_source_default_unchanged() {
         result.err()
     );
 }
+
+// ---------------------------------------------------------------------------
+// query gate — template interpolation
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_query_gate_interpolates_template_vars() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    // Append events of a specific type
+    ledger.append("tagged_event", BTreeMap::new()).unwrap();
+    ledger.append("tagged_event", BTreeMap::new()).unwrap();
+
+    // Query using {{target_type}} template var — should be interpolated
+    let gate = make_gate(
+        "query",
+        vec![
+            (
+                "sql",
+                toml::Value::String(
+                    "SELECT count(*) >= 2 as result FROM events WHERE type = '{{target_type}}'".to_string(),
+                ),
+            ),
+            ("expect", toml::Value::String("true".to_string())),
+        ],
+    );
+
+    let mut state_params = HashMap::new();
+    state_params.insert("target_type".to_string(), "tagged_event".to_string());
+
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params,
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(
+        result.passed,
+        "query with interpolated template var should pass: {:?}",
+        result.reason
+    );
+}

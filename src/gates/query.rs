@@ -6,10 +6,12 @@
 use crate::config::GateConfig;
 
 use super::evaluator::{GateContext, GateResult};
+use super::template::resolve_template_plain;
+use super::types::{build_template_vars, validate_template_fields};
 
 // [eval-query-gate]
 pub(super) fn eval_query_gate(gate: &GateConfig, ctx: &GateContext) -> GateResult {
-    let sql = match gate.params.get("sql").and_then(|v| v.as_str()) {
+    let raw_sql = match gate.params.get("sql").and_then(|v| v.as_str()) {
         Some(s) => s.to_string(),
         None => {
             return GateResult {
@@ -20,6 +22,20 @@ pub(super) fn eval_query_gate(gate: &GateConfig, ctx: &GateContext) -> GateResul
             }
         }
     };
+
+    // Validate template fields before interpolation.
+    if let Err(reason) = validate_template_fields(&raw_sql, ctx) {
+        return GateResult {
+            passed: false,
+            gate_type: "query".to_string(),
+            description: format!("SQL: {}", raw_sql),
+            reason: Some(reason),
+        };
+    }
+
+    // Interpolate template variables (plain — no shell escaping for SQL).
+    let vars = build_template_vars(ctx);
+    let sql = resolve_template_plain(&raw_sql, &vars);
 
     let expect = gate
         .params

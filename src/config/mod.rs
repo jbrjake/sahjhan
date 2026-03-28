@@ -172,6 +172,26 @@ impl ProtocolConfig {
             }
         }
 
+        // 4b. State param source values are valid.
+        let valid_sources = ["values", "current", "last_completed"];
+        for (state_name, state) in &self.states {
+            if let Some(params) = &state.params {
+                for p in params {
+                    if let Some(ref source) = p.source {
+                        if !valid_sources.contains(&source.as_str()) {
+                            errors.push(format!(
+                                "state '{}' param '{}' has invalid source '{}' (valid: {})",
+                                state_name,
+                                p.name,
+                                source,
+                                valid_sources.join(", ")
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
         // 5. Event field types are valid.
         let valid_types = ["string", "number", "boolean"];
         for (event_name, event) in &self.events {
@@ -217,6 +237,7 @@ impl ProtocolConfig {
             ("no_violations", vec![]),
             ("field_not_empty", vec!["field"]),
             ("snapshot_compare", vec!["cmd", "extract", "reference"]),
+            ("query", vec!["sql"]),
         ]);
 
         // 6. Gate type validation.

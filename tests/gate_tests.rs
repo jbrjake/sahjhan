@@ -1637,3 +1637,61 @@ fn test_query_gate_interpolates_template_vars() {
         result.reason
     );
 }
+
+// ---------------------------------------------------------------------------
+// Config validation: StateParam source
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_validate_rejects_invalid_source() {
+    let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+
+    config.states.get_mut("working").unwrap().params = Some(vec![StateParam {
+        name: "item".to_string(),
+        set: "check".to_string(),
+        source: Some("bogus".to_string()),
+    }]);
+
+    let errors = config.validate();
+    assert!(
+        errors.iter().any(|e| e.contains("source") && e.contains("bogus")),
+        "should reject invalid source value, got: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_validate_accepts_valid_sources() {
+    let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+
+    config.states.get_mut("working").unwrap().params = Some(vec![
+        StateParam {
+            name: "a".to_string(),
+            set: "check".to_string(),
+            source: Some("values".to_string()),
+        },
+        StateParam {
+            name: "b".to_string(),
+            set: "check".to_string(),
+            source: Some("current".to_string()),
+        },
+        StateParam {
+            name: "c".to_string(),
+            set: "check".to_string(),
+            source: Some("last_completed".to_string()),
+        },
+        StateParam {
+            name: "d".to_string(),
+            set: "check".to_string(),
+            source: None,
+        },
+    ]);
+
+    let errors = config.validate();
+    let source_errors: Vec<_> = errors.iter().filter(|e| e.contains("source")).collect();
+    assert!(
+        source_errors.is_empty(),
+        "valid sources should not produce errors: {:?}",
+        source_errors
+    );
+}

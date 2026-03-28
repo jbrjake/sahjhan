@@ -1495,3 +1495,96 @@ fn test_state_param_source_current() {
         result.err()
     );
 }
+
+// ---------------------------------------------------------------------------
+// StateParam source: "last_completed" — derives last completed set member
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_state_param_source_last_completed() {
+    let dir = tempdir().unwrap();
+    let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+
+    // Mark "tests" then "lint" as complete. last_completed should be "lint".
+    config.states.get_mut("working").unwrap().params = Some(vec![StateParam {
+        name: "completed_item".to_string(),
+        set: "check".to_string(),
+        source: Some("last_completed".to_string()),
+    }]);
+
+    config.transitions = vec![TransitionConfig {
+        from: "idle".to_string(),
+        to: "working".to_string(),
+        command: "begin".to_string(),
+        gates: vec![make_gate(
+            "command_succeeds",
+            vec![(
+                "cmd",
+                toml::Value::String("test {{completed_item}} = 'lint'".to_string()),
+            )],
+        )],
+    }];
+
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    // Complete "tests" first, then "lint"
+    let mut fields = BTreeMap::new();
+    fields.insert("set".to_string(), "check".to_string());
+    fields.insert("member".to_string(), "tests".to_string());
+    ledger.append("set_member_complete", fields).unwrap();
+
+    let mut fields = BTreeMap::new();
+    fields.insert("set".to_string(), "check".to_string());
+    fields.insert("member".to_string(), "lint".to_string());
+    ledger.append("set_member_complete", fields).unwrap();
+
+    let mut machine = StateMachine::new(&config, ledger);
+    let result = machine.transition("begin", &[]);
+    assert!(
+        result.is_ok(),
+        "source=last_completed should resolve to 'lint': {:?}",
+        result.err()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// StateParam source: default (None) — backwards-compatible comma-joined values
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_state_param_source_default_unchanged() {
+    let dir = tempdir().unwrap();
+    let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+
+    // No source field — should produce comma-joined set values ("tests,lint").
+    config.states.get_mut("working").unwrap().params = Some(vec![StateParam {
+        name: "all_items".to_string(),
+        set: "check".to_string(),
+        source: None,
+    }]);
+
+    config.transitions = vec![TransitionConfig {
+        from: "idle".to_string(),
+        to: "working".to_string(),
+        command: "begin".to_string(),
+        gates: vec![make_gate(
+            "command_succeeds",
+            vec![(
+                "cmd",
+                toml::Value::String("test {{all_items}} = 'tests,lint'".to_string()),
+            )],
+        )],
+    }];
+
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let mut machine = StateMachine::new(&config, ledger);
+    let result = machine.transition("begin", &[]);
+    assert!(
+        result.is_ok(),
+        "default source should produce comma-joined values: {:?}",
+        result.err()
+    );
+}

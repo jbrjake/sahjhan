@@ -1,6 +1,13 @@
 // src/gates/template.rs
 //
 // Template variable resolution with configurable escaping strategy.
+//
+// ## Index
+// - EscapeStrategy                    — Shell or None
+// - [shell-escape]                    shell_escape()            — POSIX single-quote escaping
+// - [resolve-template-with]           resolve_template_with()   — replace {{key}} with strategy
+// - [resolve-template]                resolve_template()        — shell-escaped substitution
+// - [resolve-template-plain]          resolve_template_plain()  — raw substitution (for SQL)
 
 use std::collections::HashMap;
 
@@ -13,6 +20,7 @@ pub enum EscapeStrategy {
     None,
 }
 
+// [shell-escape]
 /// POSIX shell-escape a string by wrapping in single quotes and replacing
 /// any interior single quotes with `'\''`.
 ///
@@ -27,6 +35,7 @@ pub fn shell_escape(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
+// [resolve-template-with]
 /// Replace `{{key}}` placeholders in `template` with the corresponding
 /// values from `vars`, applying the given escaping strategy.
 ///
@@ -47,6 +56,7 @@ pub fn resolve_template_with(
     result
 }
 
+// [resolve-template]
 /// Replace `{{key}}` placeholders with shell-escaped values.
 ///
 /// Convenience wrapper around `resolve_template_with` using `EscapeStrategy::Shell`.
@@ -54,6 +64,7 @@ pub fn resolve_template(template: &str, vars: &HashMap<String, String>) -> Strin
     resolve_template_with(template, vars, EscapeStrategy::Shell)
 }
 
+// [resolve-template-plain]
 /// Replace `{{key}}` placeholders with raw (unescaped) values.
 ///
 /// Convenience wrapper around `resolve_template_with` using `EscapeStrategy::None`.

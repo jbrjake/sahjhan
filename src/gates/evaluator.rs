@@ -1,7 +1,12 @@
 // src/gates/evaluator.rs
 //
-// GateContext, GateResult, and the top-level evaluate_gate / evaluate_gates
-// functions.
+// GateContext, GateResult, and the top-level evaluate_gate / evaluate_gates functions.
+//
+// ## Index
+// - GateContext              — all inputs needed to evaluate a gate (ledger, config, state_params, etc.)
+// - GateResult               — outcome: passed, gate_type, description, reason
+// - [evaluate-gate]          evaluate_gate()   — evaluate a single gate
+// - [evaluate-gates]         evaluate_gates()  — evaluate all gates, return all results
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -49,11 +54,13 @@ pub struct GateResult {
 // Public API
 // ---------------------------------------------------------------------------
 
+// [evaluate-gate]
 /// Evaluate a single gate against the provided context.
 pub fn evaluate_gate(gate: &GateConfig, ctx: &GateContext) -> GateResult {
     types::eval(gate, ctx)
 }
 
+// [evaluate-gates]
 /// Evaluate every gate in `gates` and return all results.
 ///
 /// All gates are evaluated even when earlier ones fail, so callers can

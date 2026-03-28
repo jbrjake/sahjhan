@@ -80,11 +80,7 @@ pub fn cmd_transition(
                 return code;
             }
 
-            println!(
-                "Transition: {} -> {}. Recorded.",
-                from_state,
-                machine.current_state()
-            );
+            let mut render_count = 0usize;
 
             // Trigger on_transition renders
             if !config.renders.is_empty() {
@@ -110,39 +106,41 @@ pub fn cmd_transition(
                         ledger_seq,
                     ) {
                         Ok(rendered) => {
-                            for target in &rendered {
-                                println!("  Rendered: {}", target);
-                            }
+                            render_count = rendered.len();
                             if !rendered.is_empty() {
                                 let _ = save_manifest(&mut manifest, &data_dir);
                             }
                         }
                         Err(e) => {
-                            eprintln!("  Render warning: {}", e);
+                            eprintln!("error: render: {}", e);
                         }
                     }
                 }
             }
 
+            if render_count > 0 {
+                println!(
+                    "{} \u{2192} {} ({} rendered)",
+                    from_state,
+                    machine.current_state(),
+                    render_count
+                );
+            } else {
+                println!("{} \u{2192} {}", from_state, machine.current_state());
+            }
+
             EXIT_SUCCESS
         }
         Err(crate::state::machine::StateError::GateBlocked { gate_type, reason }) => {
-            eprintln!(
-                "The '{}' gate says no. I don't make the rules. Well, I do. But I had good reasons.",
-                gate_type
-            );
-            eprintln!("  Reason: {}", reason);
+            eprintln!("\u{2717} {}: {}", gate_type, reason);
             EXIT_GATE_FAILED
         }
         Err(crate::state::machine::StateError::NoTransition { command, state }) => {
-            eprintln!(
-                "No transition '{}' from state '{}'. The protocol is clear on this matter.",
-                command, state
-            );
+            eprintln!("error: no transition '{}' from state '{}'", command, state);
             EXIT_USAGE_ERROR
         }
         Err(e) => {
-            eprintln!("Transition failed: {}", e);
+            eprintln!("error: transition failed: {}", e);
             EXIT_INTEGRITY_ERROR
         }
     }
@@ -194,18 +192,17 @@ pub fn cmd_gate_check(
         Some(t) => t.clone(),
         None => {
             eprintln!(
-                "No transition '{}' from state '{}'. Can't check gates for something that doesn't exist.",
+                "error: no transition '{}' from state '{}'",
                 transition_name, current_state
             );
             return EXIT_USAGE_ERROR;
         }
     };
 
+    println!("gate-check: {}", transition_name);
+
     if transition.gates.is_empty() {
-        println!(
-            "Transition '{}': no gates configured. Free passage.",
-            transition_name
-        );
+        println!("result: ready (no gates)");
         return EXIT_SUCCESS;
     }
 
@@ -237,24 +234,29 @@ pub fn cmd_gate_check(
     let results = evaluate_gates(&transition.gates, &ctx);
     let all_passed = results.iter().all(|r| r.passed);
 
-    println!("Gate check for transition '{}':", transition_name);
     for result in &results {
-        let marker = if result.passed { "✓" } else { "✗" };
-        let extra = if result.passed {
-            String::new()
+        if result.passed {
+            println!("  \u{2713} {}", result.description);
         } else {
-            format!(" ({})", result.reason.as_deref().unwrap_or("failed"))
-        };
-        println!("  {} {}{}", marker, result.description, extra);
+            println!(
+                "  \u{2717} {}: {} \u{2014} {}",
+                result.gate_type,
+                result.reason.as_deref().unwrap_or("failed"),
+                result
+                    .intent
+                    .as_deref()
+                    .unwrap_or("gate condition must be met")
+            );
+        }
     }
 
     if all_passed {
-        println!("All gates pass. The way is open.");
-        EXIT_SUCCESS
+        println!("result: ready");
     } else {
-        println!("Gate check: one or more gates failed.");
-        EXIT_SUCCESS // dry-run always returns 0
+        println!("result: blocked");
     }
+
+    EXIT_SUCCESS // dry-run always returns 0
 }
 
 // ---------------------------------------------------------------------------
@@ -300,7 +302,7 @@ pub fn cmd_event(
         if let Some((key, value)) = f.split_once('=') {
             fields.insert(key.to_string(), value.to_string());
         } else {
-            eprintln!("Invalid field format '{}': expected key=value", f);
+            eprintln!("error: invalid field '{}': expected key=value", f);
             return EXIT_USAGE_ERROR;
         }
     }
@@ -311,7 +313,7 @@ pub fn cmd_event(
         for field_def in &event_config.fields {
             if !fields.contains_key(&field_def.name) {
                 eprintln!(
-                    "Missing required field '{}' for event '{}'",
+                    "error: missing field '{}' for event '{}'",
                     field_def.name, event_type
                 );
                 return EXIT_USAGE_ERROR;
@@ -325,7 +327,7 @@ pub fn cmd_event(
                     if let Ok(re) = regex::Regex::new(pattern) {
                         if !re.is_match(value) {
                             eprintln!(
-                                "Field '{}' value '{}' does not match pattern '{}'",
+                                "error: field '{}' value '{}' doesn't match pattern '{}'",
                                 field_def.name, value, pattern
                             );
                             return EXIT_USAGE_ERROR;
@@ -338,7 +340,7 @@ pub fn cmd_event(
                 if let Some(value) = fields.get(&field_def.name) {
                     if !allowed.contains(value) {
                         eprintln!(
-                            "Field '{}' value '{}' is not in allowed values {:?}",
+                            "error: field '{}' value '{}' not in allowed values {:?}",
                             field_def.name, value, allowed
                         );
                         return EXIT_USAGE_ERROR;
@@ -363,7 +365,7 @@ pub fn cmd_event(
                 return code;
             }
 
-            println!("Event '{}' recorded.", event_type);
+            let mut render_count = 0usize;
 
             // Trigger on_event renders
             if !config.renders.is_empty() {
@@ -389,24 +391,28 @@ pub fn cmd_event(
                         ledger_seq,
                     ) {
                         Ok(rendered) => {
-                            for target in &rendered {
-                                println!("  Rendered: {}", target);
-                            }
+                            render_count = rendered.len();
                             if !rendered.is_empty() {
                                 let _ = save_manifest(&mut manifest, &data_dir);
                             }
                         }
                         Err(e) => {
-                            eprintln!("  Render warning: {}", e);
+                            eprintln!("error: render: {}", e);
                         }
                     }
                 }
             }
 
+            if render_count > 0 {
+                println!("recorded: {} ({} rendered)", event_type, render_count);
+            } else {
+                println!("recorded: {}", event_type);
+            }
+
             EXIT_SUCCESS
         }
         Err(e) => {
-            eprintln!("Cannot record event: {}", e);
+            eprintln!("error: cannot record event: {}", e);
             EXIT_INTEGRITY_ERROR
         }
     }

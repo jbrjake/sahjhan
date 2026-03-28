@@ -1752,7 +1752,36 @@ gates = [
         .current_dir(dir.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("Transition: idle -> working"));
+        .stdout(predicate::str::contains("\u{2192}"));
+}
+
+#[test]
+fn test_transition_terse_output() {
+    let dir = setup_initialized_dir();
+    let output = Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "transition", "begin"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\u{2192}"), "expected arrow in: {}", stdout);
+    assert!(stdout.contains("idle"), "expected old state in: {}", stdout);
+    assert!(
+        stdout.contains("working"),
+        "expected new state in: {}",
+        stdout
+    );
+    assert!(
+        !stdout.contains("Transition:"),
+        "should not have old prefix in: {}",
+        stdout
+    );
+    assert!(
+        !stdout.contains("Recorded"),
+        "should not have old suffix in: {}",
+        stdout
+    );
 }
 
 #[test]

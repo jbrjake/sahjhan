@@ -188,7 +188,7 @@ How `sahjhan transition <command>` executes:
 ```
 main.rs [cli-main]
   → cli/transition.rs [cmd-transition]
-    → cli/commands.rs [load-config], [open-targeted-ledger]
+    → cli/commands.rs [load-config], [open-targeted]
     → state/machine.rs [transition]
       → state/machine.rs [build-state-params]    ← resolves StateParam.source ("current", "last_completed", "values")
       → CLI args merged as key=value overrides

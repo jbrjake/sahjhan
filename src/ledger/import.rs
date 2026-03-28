@@ -1,9 +1,9 @@
-//! Ledger import — wrap bare JSONL events in a hash-chained ledger.
-//!
-//! `import_jsonl` reads one JSON object per line from any `BufRead` source
-//! and appends each event to a freshly-created ledger at `output_path`.
-//! The function preserves the original `ts` field when present; otherwise
-//! the current time is used.
+// src/ledger/import.rs
+//
+// Import bare JSONL events into a hash-chained ledger.
+//
+// ## Index
+// - [import-jsonl]           import_jsonl()  — wrap bare JSONL in hash-chained ledger
 
 use std::collections::BTreeMap;
 use std::io::BufRead;
@@ -12,6 +12,7 @@ use std::path::Path;
 use super::chain::Ledger;
 use super::entry::LedgerError;
 
+// [import-jsonl]
 /// Import bare JSONL events from `reader` into a new ledger at `output_path`.
 ///
 /// Each input line must be a JSON object with at minimum a `"type"` key.

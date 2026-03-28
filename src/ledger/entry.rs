@@ -1,3 +1,11 @@
+// src/ledger/entry.rs
+//
+// Ledger entry type and error definitions.
+//
+// ## Index
+// - LedgerError              — Io, Parse, Integrity, SchemaVersion, etc.
+// - LedgerEntry              — seq, ts, event_type, fields, hash, prev_hash
+
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

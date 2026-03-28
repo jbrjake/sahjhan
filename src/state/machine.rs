@@ -1,4 +1,17 @@
 // src/state/machine.rs
+//
+// Core state machine: derives state from ledger, executes transitions with gate checks.
+//
+// ## Index
+// - StateError               — NoTransition, GateBlocked, Ledger, Serialization, UnknownSet
+// - StateMachine             — owns config + ledger, executes transitions
+// - [transition]             transition()              — execute named command (gates → append)
+// - [record-event]           record_event()            — append event to ledger
+// - [set-status]             set_status()              — completion status of a named set
+// - [build-state-params]     build_state_params()      — derive params from state config + source field
+// - [derive-state]           derive_state_from_ledger() — find current state from ledger
+// - [evaluate-gate]          evaluate_gate()           — evaluate single gate with context
+// - [completed-members]      completed_members_for_set() — scan ledger for completed set members
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
@@ -88,6 +101,7 @@ impl StateMachine {
     // Transitions
     // -----------------------------------------------------------------------
 
+    // [transition]
     /// Attempt to execute a named command from the current state.
     ///
     /// Evaluates all gates on the matching transition; if all pass the
@@ -145,6 +159,7 @@ impl StateMachine {
     // Event recording
     // -----------------------------------------------------------------------
 
+    // [record-event]
     /// Append an event to the ledger with the given fields.
     pub fn record_event(
         &mut self,
@@ -161,6 +176,7 @@ impl StateMachine {
     // Set status
     // -----------------------------------------------------------------------
 
+    // [set-status]
     /// Return the completion status of the named set.
     pub fn set_status(&self, set_name: &str) -> SetStatus {
         let set_config = self
@@ -195,6 +211,7 @@ impl StateMachine {
     // Internal helpers
     // -----------------------------------------------------------------------
 
+    // [derive-state]
     /// Read the ledger to find the most recent `state_transition` event and
     /// extract the `"to"` field.  Falls back to the config initial state.
     fn derive_state_from_ledger(config: &ProtocolConfig, ledger: &Ledger) -> String {
@@ -207,6 +224,7 @@ impl StateMachine {
         config.initial_state().unwrap_or("idle").to_string()
     }
 
+    // [build-state-params]
     /// Build state_params from a state's param definitions.
     ///
     /// For each `StateParam` in the target state config, the param name is
@@ -260,6 +278,7 @@ impl StateMachine {
         params
     }
 
+    // [evaluate-gate]
     /// Evaluate a single gate using the full gate evaluator.
     fn evaluate_gate(
         &self,
@@ -287,6 +306,7 @@ impl StateMachine {
         Ok(())
     }
 
+    // [completed-members]
     /// Scan ledger events of `event_type` and collect unique values of
     /// `field_name` where the entry also contains `"set" == set_name`.
     fn completed_members_for_set(

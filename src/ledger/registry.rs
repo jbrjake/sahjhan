@@ -1,8 +1,11 @@
-//! Multi-ledger registry — maps human-friendly names to JSONL file paths.
-//!
-//! The registry is stored at `.sahjhan/ledgers.toml` (or any caller-supplied
-//! path) as a TOML array-of-tables.  It is a convenience index, not a critical
-//! data path; the ledger files themselves are the source of truth.
+// src/ledger/registry.rs
+//
+// Multi-ledger registry — maps human-friendly names to JSONL file paths.
+//
+// ## Index
+// - LedgerMode               — Full or EventOnly
+// - LedgerRegistryEntry       — name, path, mode
+// - LedgerRegistry            — TOML-backed name→path registry
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};

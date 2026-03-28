@@ -1,3 +1,16 @@
+// src/ledger/chain.rs
+//
+// Append-only, hash-chained ledger stored as JSONL.
+//
+// ## Index
+// - Ledger                   — core ledger struct (open, append, reload, verify, tail)
+// - [ledger-init]            Ledger::init()       — create new ledger with genesis entry
+// - [ledger-open]            Ledger::open()       — open existing ledger file
+// - [ledger-append]          Ledger::append()     — append hash-chained entry
+// - [ledger-reload]          Ledger::reload()     — re-read from disk
+// - [ledger-verify]          Ledger::verify()     — verify hash chain integrity
+// - [parse-file-entries]     parse_file_entries()  — parse JSONL file into entries
+
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
@@ -32,6 +45,7 @@ impl Ledger {
     // Construction
     // -----------------------------------------------------------------------
 
+    // [ledger-init]
     /// Create a new ledger at `path` with a genesis entry for the given
     /// protocol. Fails if the file already exists.
     pub fn init(
@@ -59,6 +73,7 @@ impl Ledger {
         })
     }
 
+    // [ledger-open]
     /// Open an existing ledger, parsing and validating every entry.
     pub fn open(path: &Path) -> Result<Self, LedgerError> {
         let file = File::open(path)?;
@@ -93,6 +108,7 @@ impl Ledger {
     // Mutation
     // -----------------------------------------------------------------------
 
+    // [ledger-append]
     /// Append a new entry to the ledger.
     ///
     /// The entry's `seq` is `last_seq + 1` and its `prev` is the
@@ -166,6 +182,7 @@ impl Ledger {
         Ok(())
     }
 
+    // [ledger-reload]
     /// Re-read the ledger file from disk, replacing the in-memory entries.
     ///
     /// Call this after any operation that may have let an external process
@@ -190,6 +207,7 @@ impl Ledger {
     // Verification
     // -----------------------------------------------------------------------
 
+    // [ledger-verify]
     /// Verify the full integrity of the in-memory ledger.
     ///
     /// Checks:
@@ -349,6 +367,7 @@ fn create_genesis(protocol_name: &str, protocol_version: &str) -> LedgerEntry {
 // Public file parsing (for query module)
 // ---------------------------------------------------------------------------
 
+// [parse-file-entries]
 /// Parse a JSONL ledger file into entries without creating a full `Ledger`.
 ///
 /// This is useful for the query module (Task 10) which needs to parse JSONL

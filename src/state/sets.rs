@@ -1,4 +1,10 @@
 // src/state/sets.rs
+//
+// Completion set status types.
+//
+// ## Index
+// - MemberStatus             — individual member: name + done flag
+// - SetStatus                — aggregate: name, total, completed, members list
 
 /// Status of an individual set member.
 pub struct MemberStatus {

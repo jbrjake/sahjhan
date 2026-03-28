@@ -167,12 +167,12 @@ Sahjhan is a protocol enforcement engine. It has:
 |---------|------|--------|---------|
 | CLI entry point | `main.rs` | `[cli-main]` | clap arg parsing, alias resolution, dispatch |
 | Alias resolution | `cli/aliases.rs` | `[resolve-alias]` | Rewrite CLI args via protocol aliases |
-| Shared helpers | `cli/commands.rs` | (see file index) | Exit codes, ledger targeting, config loading |
+| Shared helpers | `cli/commands.rs` | (see file index) | Exit codes, ledger targeting, config loading, `[compute-registry-path]` |
 | Init/validate/reset | `cli/init.rs` | `[cmd-init]`, `[cmd-validate]`, `[cmd-reset]` | Lifecycle commands |
 | Transition/gate/event | `cli/transition.rs` | `[cmd-transition]`, `[cmd-gate-check]`, `[cmd-event]` | State machine commands |
 | Status/sets | `cli/status.rs` | `[cmd-status]`, `[cmd-set-status]`, `[cmd-set-complete]` | Status display + set management |
 | Log inspection | `cli/log.rs` | `[cmd-log-dump]`, `[cmd-log-verify]`, `[cmd-log-tail]` | Ledger viewing |
-| Ledger management | `cli/ledger.rs` | `[cmd-ledger-create]`, `[cmd-ledger-list]`, etc. | Multi-ledger CRUD |
+| Ledger management | `cli/ledger.rs` | `[cmd-ledger-create]`, `[cmd-ledger-list]`, etc. | Multi-ledger CRUD; create supports `--from` template mode |
 | Query | `cli/query.rs` | `[cmd-query]` | SQL queries over events |
 | Render | `cli/render.rs` | `[cmd-render]`, `[cmd-render-dump-context]` | Template rendering |
 | Manifest | `cli/manifest_cmd.rs` | `[cmd-manifest-verify]`, `[cmd-manifest-list]` | File integrity |

@@ -11,8 +11,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::gates::evaluator::{evaluate_gates, GateContext};
-use crate::ledger::registry::{LedgerMode, LedgerRegistry};
-use crate::manifest::verify as manifest_verify;
+use crate::ledger::registry::LedgerMode;
 use crate::render::engine::RenderEngine;
 use crate::state::machine::StateMachine;
 
@@ -33,7 +32,7 @@ pub fn cmd_status(config_dir: &str, targeting: &LedgerTargeting) -> i32 {
     let config = match load_config(&config_path) {
         Ok(c) => c,
         Err((code, msg)) => {
-            eprintln!("{}", msg);
+            eprintln!("error: {}", msg);
             return code;
         }
     };
@@ -41,44 +40,27 @@ pub fn cmd_status(config_dir: &str, targeting: &LedgerTargeting) -> i32 {
     let (ledger, mode) = match open_targeted_ledger(&config, targeting) {
         Ok(lm) => lm,
         Err((code, msg)) => {
-            eprintln!("{}", msg);
+            eprintln!("error: {}", msg);
             return code;
         }
     };
 
-    // Event-only ledger: show metadata without state machine fields
+    // Event-only ledger: terse single-line output
     if let Some(LedgerMode::EventOnly) = mode {
         let ledger_len = ledger.len();
         let chain_status = match ledger.verify() {
-            Ok(()) => "valid".to_string(),
-            Err(e) => format!("INVALID ({})", e),
+            Ok(()) => "chain valid".to_string(),
+            Err(e) => format!("chain INVALID ({})", e),
         };
-        let last_ts = ledger
-            .entries()
-            .last()
-            .map(|e| e.ts.as_str())
-            .unwrap_or("none");
-
-        let width = 59;
-        let bar = "=".repeat(width);
-        println!("{}", bar);
-        println!("  sahjhan · event-only ledger");
-        println!("{}", bar);
-        println!();
-        println!("  Mode:      event-only");
-        println!("  Events:    {}", ledger_len);
-        println!("  Chain:     {}", chain_status);
-        println!("  Last:      {}", last_ts);
-        println!();
-        println!("{}", bar);
+        println!("event-only: {} events, {}", ledger_len, chain_status);
         return EXIT_SUCCESS;
     }
 
-    let data_dir = resolve_data_dir(&config.paths.data_dir);
-    let manifest = match load_manifest(&data_dir) {
+    let _data_dir = resolve_data_dir(&config.paths.data_dir);
+    let _manifest = match load_manifest(&_data_dir) {
         Ok(m) => m,
         Err((code, msg)) => {
-            eprintln!("{}", msg);
+            eprintln!("error: {}", msg);
             return code;
         }
     };
@@ -86,98 +68,55 @@ pub fn cmd_status(config_dir: &str, targeting: &LedgerTargeting) -> i32 {
     let machine = StateMachine::new(&config, ledger);
     let current_state = machine.current_state().to_string();
 
-    // Ledger status
     let ledger_len = machine.ledger().len();
     let chain_status = match machine.ledger().verify() {
-        Ok(()) => "valid".to_string(),
-        Err(e) => format!("INVALID ({})", e),
-    };
-    let violations = machine.ledger().events_of_type("protocol_violation").len();
-    let violation_str = if violations == 0 {
-        "clean".to_string()
-    } else {
-        format!("{} violation(s)", violations)
+        Ok(()) => "chain valid".to_string(),
+        Err(e) => format!("chain INVALID ({})", e),
     };
 
-    // Manifest status
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let manifest_files = manifest.entries.len();
-    let verify_result = manifest_verify::verify(&manifest, &cwd);
-    let manifest_status = if verify_result.clean {
-        "clean".to_string()
-    } else {
-        format!("{} modified", verify_result.mismatches.len())
-    };
-
-    // State label
-    let state_label = config
-        .states
-        .get(&current_state)
-        .map(|s| s.label.as_str())
-        .unwrap_or(&current_state);
-
-    // Build instance label from registry metadata
-    let instance_label = if let Some(ref name) = targeting.ledger_name {
-        let reg_path = registry_path_from_config(&config);
-        if let Ok(registry) = LedgerRegistry::new(&reg_path) {
-            if let Ok(entry) = registry.resolve(Some(name)) {
-                match (&entry.template, &entry.instance_id) {
-                    (Some(tmpl), Some(id)) => format!(" · {} {}", tmpl, id),
-                    _ => format!(" · {}", name),
-                }
-            } else {
-                String::new()
-            }
-        } else {
-            String::new()
-        }
-    } else {
-        String::new()
-    };
-
-    // Header
-    let width = 59;
-    let bar = "=".repeat(width);
-    println!("{}", bar);
+    // Line 1: state: {current_state} ({event_count} events, {chain_status})
     println!(
-        "  sahjhan · {} v{}{}",
-        config.protocol.name, config.protocol.version, instance_label
-    );
-    println!("{}", bar);
-    println!();
-    println!("  State:     {} ({})", state_label, current_state);
-    println!(
-        "  Ledger:    {} events, chain {}, {}",
-        ledger_len, chain_status, violation_str
-    );
-    println!(
-        "  Manifest:  {} files tracked, {}",
-        manifest_files, manifest_status
+        "state: {} ({} events, {})",
+        current_state, ledger_len, chain_status
     );
 
-    // Sets
-    for set_name in config.sets.keys() {
-        let set_status = machine.set_status(set_name);
-        println!();
-        println!(
-            "  Set: {} ({}/{} complete)",
-            set_name, set_status.completed, set_status.total
-        );
-        for member in &set_status.members {
-            let marker = if member.done { "✓" } else { "·" };
-            println!("    {} {}", marker, member.name);
+    // Sets: one line each, only if there are sets
+    if !config.sets.is_empty() {
+        println!("sets:");
+        for set_name in config.sets.keys() {
+            let set_status = machine.set_status(set_name);
+            let members_str: Vec<String> = set_status
+                .members
+                .iter()
+                .map(|m| {
+                    if m.done {
+                        format!("\u{2713} {}", m.name)
+                    } else {
+                        format!("\u{00B7} {}", m.name)
+                    }
+                })
+                .collect();
+            println!(
+                "  {}: {}/{} [{}]",
+                set_name,
+                set_status.completed,
+                set_status.total,
+                members_str.join(", ")
+            );
         }
     }
 
-    // Next available transition and its gates
+    // Next transitions from current state
     let available_transitions: Vec<_> = config
         .transitions
         .iter()
         .filter(|t| t.from == current_state)
         .collect();
 
-    for transition in &available_transitions {
-        if !transition.gates.is_empty() {
+    if !available_transitions.is_empty() {
+        println!("next:");
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        for transition in &available_transitions {
             let state_params = build_state_params(&config, &transition.to, machine.ledger());
             let ctx = GateContext {
                 ledger: machine.ledger(),
@@ -188,27 +127,31 @@ pub fn cmd_status(config_dir: &str, targeting: &LedgerTargeting) -> i32 {
                 event_fields: None,
             };
 
-            let results = evaluate_gates(&transition.gates, &ctx);
-            println!();
-            println!("  Next gate ({}):", transition.command);
-            for result in &results {
-                let marker = if result.passed { "✓" } else { "✗" };
-                let extra = if result.passed {
-                    String::new()
+            let results = if transition.gates.is_empty() {
+                vec![]
+            } else {
+                evaluate_gates(&transition.gates, &ctx)
+            };
+
+            let all_passed = results.iter().all(|r| r.passed);
+            let readiness = if all_passed { "ready" } else { "blocked" };
+            println!("  {}: {}", transition.command, readiness);
+
+            for r in &results {
+                if r.passed {
+                    println!("    \u{2713} {}", r.description);
                 } else {
-                    format!(" ({})", result.reason.as_deref().unwrap_or("failed"))
-                };
-                println!("    {} {}{}", marker, result.description, extra);
+                    let intent = r.intent.as_deref().unwrap_or("gate condition must be met");
+                    println!(
+                        "    \u{2717} {}: {} \u{2014} {}",
+                        r.gate_type,
+                        r.reason.as_deref().unwrap_or("failed"),
+                        intent
+                    );
+                }
             }
         }
     }
-
-    println!();
-    if current_state == config.initial_state().unwrap_or("idle") {
-        println!("  Awaiting first transition.");
-    }
-    println!();
-    println!("{}", bar);
 
     EXIT_SUCCESS
 }
@@ -223,23 +166,20 @@ pub fn cmd_set_status(config_dir: &str, set_name: &str, targeting: &LedgerTarget
     let config = match load_config(&config_path) {
         Ok(c) => c,
         Err((code, msg)) => {
-            eprintln!("{}", msg);
+            eprintln!("error: {}", msg);
             return code;
         }
     };
 
     if !config.sets.contains_key(set_name) {
-        eprintln!(
-            "Unknown set '{}'. I know every set in this protocol. That one isn't among them.",
-            set_name
-        );
+        eprintln!("error: unknown set '{}'", set_name);
         return EXIT_USAGE_ERROR;
     }
 
     let (ledger, _mode) = match open_targeted_ledger(&config, targeting) {
         Ok(lm) => lm,
         Err((code, msg)) => {
-            eprintln!("{}", msg);
+            eprintln!("error: {}", msg);
             return code;
         }
     };
@@ -247,14 +187,25 @@ pub fn cmd_set_status(config_dir: &str, set_name: &str, targeting: &LedgerTarget
     let machine = StateMachine::new(&config, ledger);
     let status = machine.set_status(set_name);
 
+    let members_str: Vec<String> = status
+        .members
+        .iter()
+        .map(|m| {
+            if m.done {
+                format!("\u{2713} {}", m.name)
+            } else {
+                format!("\u{00B7} {}", m.name)
+            }
+        })
+        .collect();
+
     println!(
-        "Set: {} ({}/{} complete)",
-        set_name, status.completed, status.total
+        "{}: {}/{} [{}]",
+        set_name,
+        status.completed,
+        status.total,
+        members_str.join(", ")
     );
-    for member in &status.members {
-        let marker = if member.done { "✓" } else { "·" };
-        println!("  {} {}", marker, member.name);
-    }
 
     EXIT_SUCCESS
 }
@@ -274,7 +225,7 @@ pub fn cmd_set_complete(
     let config = match load_config(&config_path) {
         Ok(c) => c,
         Err((code, msg)) => {
-            eprintln!("{}", msg);
+            eprintln!("error: {}", msg);
             return code;
         }
     };
@@ -283,29 +234,21 @@ pub fn cmd_set_complete(
     let set_config = match config.sets.get(set_name) {
         Some(s) => s,
         None => {
-            eprintln!(
-                "Unknown set '{}'. I know every set in this protocol. That one isn't among them.",
-                set_name
-            );
+            eprintln!("error: unknown set '{}'", set_name);
             return EXIT_USAGE_ERROR;
         }
     };
 
     // Validate member exists in set
     if !set_config.values.contains(&member.to_string()) {
-        eprintln!(
-            "Unknown member '{}' in set '{}'. The valid members are: {}",
-            member,
-            set_name,
-            set_config.values.join(", ")
-        );
+        eprintln!("error: unknown member '{}' in set '{}'", member, set_name);
         return EXIT_USAGE_ERROR;
     }
 
     let (ledger, _mode) = match open_targeted_ledger(&config, targeting) {
         Ok(lm) => lm,
         Err((code, msg)) => {
-            eprintln!("{}", msg);
+            eprintln!("error: {}", msg);
             return code;
         }
     };
@@ -314,7 +257,7 @@ pub fn cmd_set_complete(
     let mut manifest = match load_manifest(&data_dir) {
         Ok(m) => m,
         Err((code, msg)) => {
-            eprintln!("{}", msg);
+            eprintln!("error: {}", msg);
             return code;
         }
     };
@@ -330,23 +273,18 @@ pub fn cmd_set_complete(
             if let Err((code, msg)) =
                 track_ledger_in_manifest(&mut manifest, &data_dir, machine.ledger())
             {
-                eprintln!("{}", msg);
+                eprintln!("error: {}", msg);
                 return code;
             }
             if let Err((code, msg)) = save_manifest(&mut manifest, &data_dir) {
-                eprintln!("{}", msg);
+                eprintln!("error: {}", msg);
                 return code;
             }
 
-            let status = machine.set_status(set_name);
-            println!(
-                "Set {}: {} complete ({}/{}).",
-                set_name, member, status.completed, status.total
-            );
-
-            // Trigger on_event renders for set_member_complete
+            // Trigger on_event renders BEFORE printing, so we have render_count
+            let mut render_count = 0usize;
             if !config.renders.is_empty() {
-                let registry_path = super::commands::registry_path_from_config(&config);
+                let registry_path = registry_path_from_config(&config);
                 if let Ok(engine) = RenderEngine::new(&config, &config_path) {
                     let mut engine = engine.with_registry(registry_path);
                     if let Some(ref name) = targeting.ledger_name {
@@ -368,24 +306,35 @@ pub fn cmd_set_complete(
                         ledger_seq,
                     ) {
                         Ok(rendered) => {
-                            for target in &rendered {
-                                println!("  Rendered: {}", target);
-                            }
+                            render_count = rendered.len();
                             if !rendered.is_empty() {
                                 let _ = save_manifest(&mut manifest, &data_dir);
                             }
                         }
                         Err(e) => {
-                            eprintln!("  Render warning: {}", e);
+                            eprintln!("error: render: {}", e);
                         }
                     }
                 }
             }
 
+            let status = machine.set_status(set_name);
+            if render_count > 0 {
+                println!(
+                    "set {}: {} done ({}/{}, {} rendered)",
+                    set_name, member, status.completed, status.total, render_count
+                );
+            } else {
+                println!(
+                    "set {}: {} done ({}/{})",
+                    set_name, member, status.completed, status.total
+                );
+            }
+
             EXIT_SUCCESS
         }
         Err(e) => {
-            eprintln!("Cannot record set completion: {}", e);
+            eprintln!("error: {}", e);
             EXIT_INTEGRITY_ERROR
         }
     }

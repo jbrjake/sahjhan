@@ -61,8 +61,8 @@ fn test_status_shows_current_state() {
         .current_dir(dir.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("State:"))
-        .stdout(predicate::str::contains("Idle"));
+        .stdout(predicate::str::contains("state:"))
+        .stdout(predicate::str::contains("idle"));
 }
 
 #[test]
@@ -80,7 +80,7 @@ fn test_transition_advances_state() {
         .args(["--config-dir", "enforcement", "status"])
         .current_dir(dir.path())
         .assert()
-        .stdout(predicate::str::contains("Working"));
+        .stdout(predicate::str::contains("working"));
 }
 
 #[test]
@@ -178,13 +178,13 @@ fn test_full_workflow() {
         .assert()
         .success();
 
-    // status should show Done
+    // status should show done
     Command::cargo_bin("sahjhan")
         .unwrap()
         .args(["--config-dir", "enforcement", "status"])
         .current_dir(dir.path())
         .assert()
-        .stdout(predicate::str::contains("Done"));
+        .stdout(predicate::str::contains("done"));
 }
 
 #[test]
@@ -223,7 +223,7 @@ fn test_alias_resolution() {
         .args(["--config-dir", "enforcement", "status"])
         .current_dir(dir.path())
         .assert()
-        .stdout(predicate::str::contains("Working"));
+        .stdout(predicate::str::contains("working"));
 }
 
 #[test]
@@ -612,6 +612,24 @@ fn test_status_shows_set_progress() {
 }
 
 #[test]
+fn test_status_terse_format() {
+    let dir = setup_initialized_dir();
+    let output = Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "status"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.starts_with("state:"), "stdout was: {}", stdout);
+    assert!(stdout.contains("next:"), "stdout was: {}", stdout);
+    assert!(!stdout.contains("===="), "stdout was: {}", stdout);
+    assert!(!stdout.contains("State:"), "stdout was: {}", stdout);
+    assert!(!stdout.contains("Ledger:"), "stdout was: {}", stdout);
+    assert!(!stdout.contains("Manifest:"), "stdout was: {}", stdout);
+}
+
+#[test]
 fn test_finish_alias() {
     let dir = setup_initialized_dir();
 
@@ -653,7 +671,7 @@ fn test_finish_alias() {
         .args(["--config-dir", "enforcement", "status"])
         .current_dir(dir.path())
         .assert()
-        .stdout(predicate::str::contains("Done"));
+        .stdout(predicate::str::contains("done"));
 }
 
 // ---------------------------------------------------------------------------
@@ -1577,8 +1595,7 @@ fn test_event_only_status_metadata() {
         .current_dir(dir.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("event-only"))
-        .stdout(predicate::str::contains("Events:"));
+        .stdout(predicate::str::contains("event-only"));
 }
 
 #[test]

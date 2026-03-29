@@ -2046,7 +2046,10 @@ fn test_ledger_lacks_event_with_filter() {
     ledger.append("finding", recon_payload).unwrap();
 
     let mut filter = toml::value::Table::new();
-    filter.insert("phase".to_string(), toml::Value::String("audit".to_string()));
+    filter.insert(
+        "phase".to_string(),
+        toml::Value::String("audit".to_string()),
+    );
 
     let gate = make_gate(
         "ledger_lacks_event",

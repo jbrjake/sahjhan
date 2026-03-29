@@ -121,11 +121,19 @@ fn test_ledger_create_generates_per_ledger_key() {
         "per-ledger session.key should exist after ledger create"
     );
     let key_bytes = std::fs::read(&key_path).unwrap();
-    assert_eq!(key_bytes.len(), 32, "per-ledger session key should be 32 bytes");
+    assert_eq!(
+        key_bytes.len(),
+        32,
+        "per-ledger session key should be 32 bytes"
+    );
 
     // Per-ledger key should differ from global key
     let global_key = std::fs::read(dir.path().join("output/.sahjhan/session.key")).unwrap();
-    assert_ne!(key_bytes, global_key.as_slice(), "per-ledger key should differ from global");
+    assert_ne!(
+        key_bytes,
+        global_key.as_slice(),
+        "per-ledger key should differ from global"
+    );
 }
 
 #[test]
@@ -251,7 +259,8 @@ fn test_guards_returns_json_with_auto_included_key() {
         .success();
 
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
-    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).expect("should be valid JSON");
+    let parsed: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("should be valid JSON");
 
     let read_blocked = parsed["read_blocked"]
         .as_array()
@@ -312,7 +321,8 @@ render_dir = "output"
         .success();
 
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
-    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).expect("should be valid JSON");
+    let parsed: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("should be valid JSON");
 
     let read_blocked = parsed["read_blocked"]
         .as_array()

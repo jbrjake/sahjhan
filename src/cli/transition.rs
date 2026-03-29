@@ -267,6 +267,7 @@ pub fn cmd_gate_check(
 // [record-and-render]
 /// Shared event recording + render triggering logic.
 /// Used by both cmd_event and cmd_authed_event after their respective validations.
+#[allow(clippy::too_many_arguments)]
 pub fn record_and_render(
     config: &crate::config::ProtocolConfig,
     config_path: &std::path::Path,
@@ -279,8 +280,7 @@ pub fn record_and_render(
 ) -> i32 {
     match machine.record_event(event_type, fields) {
         Ok(()) => {
-            if let Err((code, msg)) =
-                track_ledger_in_manifest(manifest, data_dir, machine.ledger())
+            if let Err((code, msg)) = track_ledger_in_manifest(manifest, data_dir, machine.ledger())
             {
                 eprintln!("{}", msg);
                 return code;

@@ -53,11 +53,16 @@ command = "finish"
 
     let config = ProtocolConfig::load(p).unwrap();
 
-    let guards = config.guards.expect("guards should be Some when [guards] section is present");
-    assert_eq!(guards.read_blocked.len(), 2, "read_blocked should have 2 entries");
+    let guards = config
+        .guards
+        .expect("guards should be Some when [guards] section is present");
     assert_eq!(
-        guards.read_blocked[0],
-        ".sahjhan/session.key",
+        guards.read_blocked.len(),
+        2,
+        "read_blocked should have 2 entries"
+    );
+    assert_eq!(
+        guards.read_blocked[0], ".sahjhan/session.key",
         "first entry should be .sahjhan/session.key"
     );
 }
@@ -110,7 +115,10 @@ command = "finish"
     .unwrap();
 
     let config = ProtocolConfig::load(p).unwrap();
-    assert!(config.guards.is_none(), "guards should be None when [guards] section is absent");
+    assert!(
+        config.guards.is_none(),
+        "guards should be None when [guards] section is absent"
+    );
 }
 
 #[test]
@@ -177,17 +185,22 @@ fields = []
 
     let config = ProtocolConfig::load(p).unwrap();
 
-    let audit = config.events.get("audit_logged").expect("audit_logged event should exist");
+    let audit = config
+        .events
+        .get("audit_logged")
+        .expect("audit_logged event should exist");
     assert_eq!(
         audit.restricted,
         Some(true),
         "audit_logged should have restricted = Some(true)"
     );
 
-    let note = config.events.get("normal_note").expect("normal_note event should exist");
+    let note = config
+        .events
+        .get("normal_note")
+        .expect("normal_note event should exist");
     assert_eq!(
-        note.restricted,
-        None,
+        note.restricted, None,
         "normal_note should have restricted = None when field is absent"
     );
 }

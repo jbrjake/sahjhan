@@ -29,7 +29,10 @@ type HmacSha256 = Hmac<Sha256>;
 /// 1. If --ledger <name>, check <data_dir>/ledgers/<name>/session.key
 /// 2. If that exists, use it
 /// 3. Fall back to <data_dir>/session.key
-pub fn resolve_session_key_path(data_dir: &std::path::Path, targeting: &LedgerTargeting) -> PathBuf {
+pub fn resolve_session_key_path(
+    data_dir: &std::path::Path,
+    targeting: &LedgerTargeting,
+) -> PathBuf {
     if let Some(ref name) = targeting.ledger_name {
         let per_ledger = data_dir.join("ledgers").join(name).join("session.key");
         if per_ledger.exists() {
@@ -44,7 +47,10 @@ pub fn resolve_session_key_path(data_dir: &std::path::Path, targeting: &LedgerTa
 /// Format: `event_type\0field1_name=field1_value\0field2_name=field2_value`
 /// Fields sorted lexicographically by name.
 fn build_canonical_payload(event_type: &str, fields: &HashMap<String, String>) -> String {
-    let mut sorted_fields: Vec<(&str, &str)> = fields.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let mut sorted_fields: Vec<(&str, &str)> = fields
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
     sorted_fields.sort_by_key(|(k, _)| *k);
 
     let mut payload = event_type.to_string();

@@ -132,7 +132,7 @@ pub fn cmd_init(config_dir: &str) -> i32 {
         let key_path = data_dir.join("session.key");
         let mut key = [0u8; 32];
         getrandom::getrandom(&mut key).expect("failed to generate random key");
-        if let Err(e) = std::fs::write(&key_path, &key) {
+        if let Err(e) = std::fs::write(&key_path, key) {
             eprintln!("error: cannot write session key: {}", e);
             return EXIT_CONFIG_ERROR;
         }

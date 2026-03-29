@@ -82,9 +82,7 @@ fn filter_where_eq(value: &Value, args: &HashMap<String, Value>) -> tera::Result
         .filter(|item| {
             let resolved = attribute
                 .split('.')
-                .fold(Some((*item).clone()), |acc, key| {
-                    acc.and_then(|v| v.get(key).cloned())
-                });
+                .try_fold((*item).clone(), |acc, key| acc.get(key).cloned());
             resolved
                 .and_then(|v| v.as_str().map(|s| s == target))
                 .unwrap_or(false)
@@ -113,12 +111,10 @@ fn filter_unique_by(value: &Value, args: &HashMap<String, Value>) -> tera::Resul
     for (i, item) in arr.iter().enumerate() {
         let key = attribute
             .split('.')
-            .fold(Some(item.clone()), |acc, k| {
-                acc.and_then(|v| v.get(k).cloned())
-            })
-            .and_then(|v| match v {
-                Value::String(s) => Some(s),
-                other => Some(other.to_string()),
+            .try_fold(item.clone(), |acc, k| acc.get(k).cloned())
+            .map(|v| match v {
+                Value::String(s) => s,
+                other => other.to_string(),
             })
             .unwrap_or_default();
         seen.insert(key, i);

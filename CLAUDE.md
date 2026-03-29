@@ -77,7 +77,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | Field validation | `gates/types.rs` | `[validate-template-fields]` | Validates var values against event field patterns |
 | Entry filter | `gates/types.rs` | `[entry-matches-filter]` | Checks ledger entry against k/v filter |
 | Gate context | `gates/evaluator.rs` | `GateContext` | All inputs needed to evaluate a gate |
-| Gate result | `gates/evaluator.rs` | `GateResult` | Outcome: passed, gate_type, description, reason, intent |
+| Gate result | `gates/evaluator.rs` | `GateResult` | Outcome: passed, evaluable, gate_type, description, reason, intent |
 | Default intent | `gates/evaluator.rs` | `default_intent` | Returns default intent string for each gate type |
 | evaluate_gate | `gates/evaluator.rs` | `[evaluate-gate]` | Evaluate single gate |
 | evaluate_gates | `gates/evaluator.rs` | `[evaluate-gates]` | Evaluate all gates, returns all results |
@@ -365,4 +365,4 @@ cli/authed_event.rs [cmd-reseal]
 | `tests/auth_tests.rs` | Session key generation, restricted events, HMAC auth |
 | `tests/mermaid_tests.rs` | Mermaid stateDiagram-v2 output, hyphen sanitization, gate labels, ASCII tree, cycle detection |
 | `tests/config_integrity_tests.rs` | Config sealing, tamper detection, reseal, backward compat |
-| `tests/render_filter_tests.rs` | Custom Tera filters registered by the render engine (where_eq) |
+| `tests/render_filter_tests.rs` | Custom Tera filters (where_eq, unique_by) |

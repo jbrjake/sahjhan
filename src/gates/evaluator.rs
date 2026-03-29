@@ -4,7 +4,7 @@
 //
 // ## Index
 // - GateContext              — all inputs needed to evaluate a gate (ledger, config, state_params, etc.)
-// - GateResult               — outcome: passed, gate_type, description, reason, intent
+// - GateResult               — outcome: passed, evaluable, gate_type, description, reason, intent
 // - default_intent           — returns default intent string for a given gate type
 // - [evaluate-gate]          evaluate_gate()   — evaluate a single gate
 // - [evaluate-gates]         evaluate_gates()  — evaluate all gates, return all results

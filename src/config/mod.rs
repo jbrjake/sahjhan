@@ -5,7 +5,7 @@
 // ## Index
 // - ProtocolConfig          — unified config loaded from protocol directory (includes guards: Option<GuardsConfig>)
 // - [validate]              ProtocolConfig::validate()       — basic structural validation
-// - [validate-deep]         ProtocolConfig::validate_deep()  — file/alias/gate/render/ledger checks
+// - [validate-deep]         ProtocolConfig::validate_deep()  — file/alias/gate/render/ledger/branching checks
 // - [validate-gate]         ProtocolConfig::validate_gate()  — recursive gate validator (composite + leaf)
 // - initial_state()         — find the state with initial = true
 
@@ -234,6 +234,7 @@ impl ProtocolConfig {
     /// - Render event type validation (on_event triggers reference defined events)
     /// - Terminal state outgoing transition warnings
     /// - Unreachable state detection warnings
+    /// - Branching transitions without a gateless fallback (warning)
     /// - Ledger template validation (exactly one of path/path_template; path_template must contain {template.instance_id})
     ///
     /// Returns `(errors, warnings)` — errors are hard failures, warnings are advisory.
@@ -369,6 +370,25 @@ impl ProtocolConfig {
                     "states.toml: state '{}' is unreachable (no incoming transitions and not initial)",
                     name
                 ));
+            }
+        }
+
+        // 11b. Branching transitions without fallback (warning).
+        {
+            let mut groups: HashMap<(&str, &str), Vec<&TransitionConfig>> = HashMap::new();
+            for t in &self.transitions {
+                groups
+                    .entry((t.from.as_str(), t.command.as_str()))
+                    .or_default()
+                    .push(t);
+            }
+            for ((from, command), members) in &groups {
+                if members.len() > 1 && !members.iter().any(|t| t.gates.is_empty()) {
+                    warnings.push(format!(
+                        "transitions.toml: command '{}' from '{}' has {} candidates but no fallback (all have gates \u{2014} agent may get stuck)",
+                        command, from, members.len()
+                    ));
+                }
             }
         }
 

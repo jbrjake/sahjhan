@@ -609,3 +609,41 @@ fn test_validate_composite_validates_children_recursively() {
         errors
     );
 }
+
+#[test]
+fn test_validate_branching_no_fallback_warning() {
+    use sahjhan::config::*;
+    let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    config.transitions.push(TransitionConfig {
+        from: "idle".to_string(),
+        to: "working".to_string(),
+        command: "go".to_string(),
+        args: vec![],
+        gates: vec![GateConfig {
+            gate_type: "file_exists".to_string(),
+            intent: None,
+            gates: vec![],
+            params: vec![("path".to_string(), toml::Value::String("a.txt".to_string()))]
+                .into_iter().collect(),
+        }],
+    });
+    config.transitions.push(TransitionConfig {
+        from: "idle".to_string(),
+        to: "done".to_string(),
+        command: "go".to_string(),
+        args: vec![],
+        gates: vec![GateConfig {
+            gate_type: "file_exists".to_string(),
+            intent: None,
+            gates: vec![],
+            params: vec![("path".to_string(), toml::Value::String("b.txt".to_string()))]
+                .into_iter().collect(),
+        }],
+    });
+    let (_, warnings) = config.validate_deep(Path::new("examples/minimal"));
+    assert!(
+        warnings.iter().any(|w| w.contains("go") && w.contains("no fallback")),
+        "Expected warning about no fallback: {:?}",
+        warnings
+    );
+}

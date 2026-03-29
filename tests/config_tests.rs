@@ -2,6 +2,34 @@ use sahjhan::config::ProtocolConfig;
 use std::path::Path;
 
 #[test]
+fn test_event_field_optional_defaults_false() {
+    let toml_str = r#"
+[events.test_event]
+description = "Test"
+fields = [
+    { name = "required_field", type = "string" },
+]
+"#;
+    let events_file: sahjhan::config::events::EventsFile = toml::from_str(toml_str).unwrap();
+    let event = &events_file.events["test_event"];
+    assert!(!event.fields[0].optional);
+}
+
+#[test]
+fn test_event_field_optional_true() {
+    let toml_str = r#"
+[events.test_event]
+description = "Test"
+fields = [
+    { name = "opt_field", type = "string", optional = true },
+]
+"#;
+    let events_file: sahjhan::config::events::EventsFile = toml::from_str(toml_str).unwrap();
+    let event = &events_file.events["test_event"];
+    assert!(event.fields[0].optional);
+}
+
+#[test]
 fn test_guards_config_parsed() {
     use tempfile::tempdir;
 

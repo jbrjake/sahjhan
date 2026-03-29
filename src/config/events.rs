@@ -5,7 +5,7 @@
 // ## Index
 // - EventsFile              — top-level wrapper
 // - EventConfig             — single event type definition; `restricted` marks HMAC-only events
-// - EventFieldConfig        — field name, type, pattern, allowed values
+// - EventFieldConfig        — field name, type, pattern, allowed values, optional flag
 
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -33,4 +33,6 @@ pub struct EventFieldConfig {
     pub field_type: String,
     pub pattern: Option<String>,
     pub values: Option<Vec<String>>,
+    #[serde(default)]
+    pub optional: bool,
 }

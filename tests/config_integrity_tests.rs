@@ -99,3 +99,130 @@ fn test_init_without_seals_unchanged() {
     assert_eq!(genesis.fields.len(), 2); // Only protocol_name and protocol_version
     assert!(!genesis.fields.contains_key("config_seal_protocol"));
 }
+
+#[test]
+fn test_find_effective_seal_from_genesis() {
+    let dir = tempdir().unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+
+    let mut seals = BTreeMap::new();
+    seals.insert("config_seal_protocol".to_string(), "aaa".to_string());
+    seals.insert("config_seal_states".to_string(), "bbb".to_string());
+
+    let ledger = Ledger::init_with_seals(&ledger_path, "test", "1.0.0", seals).unwrap();
+
+    let effective = ledger.find_effective_seal().unwrap();
+    assert_eq!(effective.get("config_seal_protocol").unwrap(), "aaa");
+    assert_eq!(effective.get("config_seal_states").unwrap(), "bbb");
+}
+
+#[test]
+fn test_find_effective_seal_legacy_ledger_returns_none() {
+    let dir = tempdir().unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    assert!(ledger.find_effective_seal().is_none());
+}
+
+#[test]
+fn test_find_effective_seal_prefers_reseal_over_genesis() {
+    let dir = tempdir().unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+
+    let mut seals = BTreeMap::new();
+    seals.insert("config_seal_protocol".to_string(), "old_hash".to_string());
+
+    let mut ledger = Ledger::init_with_seals(&ledger_path, "test", "1.0.0", seals).unwrap();
+
+    // Append a config_reseal event with new hashes
+    let mut reseal_fields = BTreeMap::new();
+    reseal_fields.insert("config_seal_protocol".to_string(), "new_hash".to_string());
+    ledger.append("config_reseal", reseal_fields).unwrap();
+
+    let effective = ledger.find_effective_seal().unwrap();
+    assert_eq!(effective.get("config_seal_protocol").unwrap(), "new_hash");
+}
+
+#[test]
+fn test_verify_config_seal_happy_path() {
+    let config_dir = tempdir().unwrap();
+    std::fs::write(config_dir.path().join("protocol.toml"), b"proto content").unwrap();
+    std::fs::write(config_dir.path().join("states.toml"), b"states content").unwrap();
+    std::fs::write(config_dir.path().join("transitions.toml"), b"trans content").unwrap();
+
+    let seals = sahjhan::config::compute_config_seals(config_dir.path());
+
+    let ledger_dir = tempdir().unwrap();
+    let ledger_path = ledger_dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init_with_seals(&ledger_path, "test", "1.0.0", seals).unwrap();
+
+    // Files unchanged — should pass
+    assert!(ledger.verify_config_seal(config_dir.path()).is_ok());
+}
+
+#[test]
+fn test_verify_config_seal_detects_tamper() {
+    let config_dir = tempdir().unwrap();
+    std::fs::write(config_dir.path().join("protocol.toml"), b"proto content").unwrap();
+    std::fs::write(config_dir.path().join("states.toml"), b"states content").unwrap();
+    std::fs::write(config_dir.path().join("transitions.toml"), b"trans content").unwrap();
+
+    let seals = sahjhan::config::compute_config_seals(config_dir.path());
+
+    let ledger_dir = tempdir().unwrap();
+    let ledger_path = ledger_dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init_with_seals(&ledger_path, "test", "1.0.0", seals).unwrap();
+
+    // Tamper with transitions.toml
+    std::fs::write(config_dir.path().join("transitions.toml"), b"TAMPERED").unwrap();
+
+    let err = ledger.verify_config_seal(config_dir.path()).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("config integrity violation"));
+    assert!(msg.contains("transitions"));
+}
+
+#[test]
+fn test_verify_config_seal_skips_legacy_ledger() {
+    let config_dir = tempdir().unwrap();
+    std::fs::write(config_dir.path().join("protocol.toml"), b"proto").unwrap();
+    std::fs::write(config_dir.path().join("states.toml"), b"states").unwrap();
+    std::fs::write(config_dir.path().join("transitions.toml"), b"trans").unwrap();
+
+    let ledger_dir = tempdir().unwrap();
+    let ledger_path = ledger_dir.path().join("ledger.jsonl");
+    // Legacy ledger — no seals
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    // Should pass silently even though config exists
+    assert!(ledger.verify_config_seal(config_dir.path()).is_ok());
+}
+
+#[test]
+fn test_verify_config_seal_after_reseal() {
+    let config_dir = tempdir().unwrap();
+    std::fs::write(config_dir.path().join("protocol.toml"), b"proto v1").unwrap();
+    std::fs::write(config_dir.path().join("states.toml"), b"states v1").unwrap();
+    std::fs::write(config_dir.path().join("transitions.toml"), b"trans v1").unwrap();
+
+    let seals_v1 = sahjhan::config::compute_config_seals(config_dir.path());
+
+    let ledger_dir = tempdir().unwrap();
+    let ledger_path = ledger_dir.path().join("ledger.jsonl");
+    let mut ledger = Ledger::init_with_seals(&ledger_path, "test", "1.0.0", seals_v1).unwrap();
+
+    // Modify config
+    std::fs::write(config_dir.path().join("transitions.toml"), b"trans v2").unwrap();
+
+    // Verify should fail now
+    assert!(ledger.verify_config_seal(config_dir.path()).is_err());
+
+    // Reseal with new hashes
+    let seals_v2 = sahjhan::config::compute_config_seals(config_dir.path());
+    ledger.append("config_reseal", seals_v2).unwrap();
+
+    // Now verify should pass
+    assert!(ledger.verify_config_seal(config_dir.path()).is_ok());
+}

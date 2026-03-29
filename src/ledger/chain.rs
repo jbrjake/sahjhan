@@ -10,6 +10,8 @@
 // - [ledger-append]          Ledger::append()          — append hash-chained entry
 // - [ledger-reload]          Ledger::reload()          — re-read from disk
 // - [ledger-verify]          Ledger::verify()          — verify hash chain integrity
+// - [find-effective-seal]    Ledger::find_effective_seal() — find effective config seal (reseal or genesis)
+// - [verify-config-seal]     Ledger::verify_config_seal()  — verify config files match sealed hashes
 // - [parse-file-entries]     parse_file_entries()      — parse JSONL file into entries
 
 use std::collections::BTreeMap;
@@ -366,6 +368,84 @@ impl Ledger {
     /// The protocol identifier (e.g. "my-proto/1.0.0").
     pub fn protocol(&self) -> &str {
         &self.protocol
+    }
+
+    // [find-effective-seal]
+    /// Find the effective config seal: most recent `config_reseal` event,
+    /// or genesis entry seals. Returns `None` for legacy ledgers without seals.
+    pub fn find_effective_seal(&self) -> Option<BTreeMap<String, String>> {
+        // Scan from end for most recent config_reseal event
+        for entry in self.entries.iter().rev() {
+            if entry.event_type == "config_reseal" {
+                let seals: BTreeMap<String, String> = entry
+                    .fields
+                    .iter()
+                    .filter(|(k, _)| k.starts_with("config_seal_"))
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                if !seals.is_empty() {
+                    return Some(seals);
+                }
+            }
+        }
+
+        // Fall back to genesis entry
+        if self.entries.is_empty() {
+            return None;
+        }
+        let genesis = &self.entries[0];
+        let seals: BTreeMap<String, String> = genesis
+            .fields
+            .iter()
+            .filter(|(k, _)| k.starts_with("config_seal_"))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+
+        if seals.is_empty() {
+            None
+        } else {
+            Some(seals)
+        }
+    }
+
+    // [verify-config-seal]
+    /// Verify that current config files match the sealed hashes.
+    ///
+    /// Returns `Ok(())` if:
+    /// - The ledger has no config seals (legacy ledger — backward compatible)
+    /// - All config file hashes match the sealed values
+    ///
+    /// Returns `Err(ConfigIntegrityViolation)` if any file has been modified.
+    pub fn verify_config_seal(&self, config_dir: &Path) -> Result<(), LedgerError> {
+        let sealed = match self.find_effective_seal() {
+            Some(s) => s,
+            None => return Ok(()), // Legacy ledger — skip verification
+        };
+
+        let current = crate::config::compute_config_seals(config_dir);
+
+        let mut mismatches = Vec::new();
+        for (key, expected) in &sealed {
+            if let Some(actual) = current.get(key) {
+                if actual != expected {
+                    let filename = key.strip_prefix("config_seal_").unwrap_or(key);
+                    mismatches.push(format!(
+                        "  - {}.toml (expected: {}..., found: {}...)",
+                        filename,
+                        &expected[..12.min(expected.len())],
+                        &actual[..12.min(actual.len())],
+                    ));
+                }
+            }
+        }
+
+        if mismatches.is_empty() {
+            Ok(())
+        } else {
+            Err(LedgerError::ConfigIntegrityViolation {
+                details: mismatches,
+            })
+        }
     }
 }
 

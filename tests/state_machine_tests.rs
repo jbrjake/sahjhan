@@ -1,3 +1,4 @@
+use sahjhan::config::transitions::{GateConfig, TransitionConfig};
 use sahjhan::config::ProtocolConfig;
 use sahjhan::ledger::chain::Ledger;
 use sahjhan::state::machine::StateMachine;
@@ -99,4 +100,127 @@ fn test_set_status() {
     assert_eq!(status.completed, 1);
     assert!(status.members[0].done); // "tests" is first in order
     assert!(!status.members[1].done); // "lint" is not done
+}
+
+// ---------------------------------------------------------------------------
+// Branching transition tests
+// ---------------------------------------------------------------------------
+
+/// Helper: build a file_exists GateConfig pointing at the given path.
+fn file_exists_gate(path: &str) -> GateConfig {
+    let mut params = HashMap::new();
+    params.insert(
+        "path".to_string(),
+        toml::Value::String(path.to_string()),
+    );
+    GateConfig {
+        gate_type: "file_exists".to_string(),
+        intent: None,
+        gates: vec![],
+        params,
+    }
+}
+
+#[test]
+fn test_branching_fallback_transition() {
+    let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+
+    // Two transitions sharing from="idle", command="go":
+    //   1. idle→working with file_exists gate for nonexistent file (will fail)
+    //   2. idle→done with no gates (fallback)
+    config.transitions = vec![
+        TransitionConfig {
+            from: "idle".to_string(),
+            to: "working".to_string(),
+            command: "go".to_string(),
+            args: vec![],
+            gates: vec![file_exists_gate("/nonexistent_file_that_does_not_exist")],
+        },
+        TransitionConfig {
+            from: "idle".to_string(),
+            to: "done".to_string(),
+            command: "go".to_string(),
+            args: vec![],
+            gates: vec![],
+        },
+    ];
+
+    let dir = tempdir().unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "minimal", "1.0.0").unwrap();
+    let mut sm = StateMachine::new(&config, ledger);
+
+    let result = sm.transition("go", &[]);
+    assert!(result.is_ok(), "fallback candidate should succeed: {:?}", result);
+    assert_eq!(sm.current_state(), "done");
+}
+
+#[test]
+fn test_branching_first_candidate_wins() {
+    let dir = tempdir().unwrap();
+
+    // Create the file so the first candidate's gate passes.
+    let gate_file = dir.path().join("exists.txt");
+    std::fs::write(&gate_file, "present").unwrap();
+
+    let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    config.transitions = vec![
+        TransitionConfig {
+            from: "idle".to_string(),
+            to: "working".to_string(),
+            command: "go".to_string(),
+            args: vec![],
+            gates: vec![file_exists_gate(gate_file.to_str().unwrap())],
+        },
+        TransitionConfig {
+            from: "idle".to_string(),
+            to: "done".to_string(),
+            command: "go".to_string(),
+            args: vec![],
+            gates: vec![],
+        },
+    ];
+
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "minimal", "1.0.0").unwrap();
+    let mut sm = StateMachine::new(&config, ledger);
+
+    let result = sm.transition("go", &[]);
+    assert!(result.is_ok(), "first candidate should win: {:?}", result);
+    assert_eq!(sm.current_state(), "working");
+}
+
+#[test]
+fn test_branching_all_candidates_blocked() {
+    let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    config.transitions = vec![
+        TransitionConfig {
+            from: "idle".to_string(),
+            to: "working".to_string(),
+            command: "go".to_string(),
+            args: vec![],
+            gates: vec![file_exists_gate("/nonexistent_a")],
+        },
+        TransitionConfig {
+            from: "idle".to_string(),
+            to: "done".to_string(),
+            command: "go".to_string(),
+            args: vec![],
+            gates: vec![file_exists_gate("/nonexistent_b")],
+        },
+    ];
+
+    let dir = tempdir().unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "minimal", "1.0.0").unwrap();
+    let mut sm = StateMachine::new(&config, ledger);
+
+    let result = sm.transition("go", &[]);
+    assert!(result.is_err(), "all candidates blocked should error");
+    let err_msg = format!("{}", result.unwrap_err());
+    assert!(
+        err_msg.contains("all transition candidates"),
+        "expected AllCandidatesBlocked error, got: {}",
+        err_msg
+    );
 }

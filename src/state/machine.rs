@@ -3,9 +3,9 @@
 // Core state machine: derives state from ledger, executes transitions with gate checks.
 //
 // ## Index
-// - StateError               — NoTransition, GateBlocked, Ledger, Serialization, UnknownSet
+// - StateError               — NoTransition, GateBlocked, AllCandidatesBlocked, Ledger, Serialization, UnknownSet
 // - StateMachine             — owns config + ledger, executes transitions
-// - [transition]             transition()              — execute named command (gates → append)
+// - [transition]             transition()              — execute named command (multi-candidate branching with fallthrough)
 // - [record-event]           record_event()            — append event to ledger
 // - [set-status]             set_status()              — completion status of a named set
 // - [build-state-params]     build_state_params()      — derive params from state config + source field
@@ -20,7 +20,7 @@ use thiserror::Error;
 
 use super::sets::{MemberStatus, SetStatus};
 use crate::config::ProtocolConfig;
-use crate::gates::evaluator::{evaluate_gate, GateContext};
+use crate::gates::evaluator::{evaluate_gate, evaluate_gates, GateContext};
 use crate::ledger::chain::Ledger;
 use crate::ledger::entry::LedgerError;
 
@@ -35,6 +35,14 @@ pub enum StateError {
 
     #[error("gate '{gate_type}' blocked transition: {reason}")]
     GateBlocked { gate_type: String, reason: String },
+
+    #[error("all transition candidates for '{command}' from '{state}' were blocked")]
+    AllCandidatesBlocked {
+        command: String,
+        state: String,
+        /// (target_state, gate_type, reason) per failed candidate
+        candidates: Vec<(String, String, String)>,
+    },
 
     #[error("ledger error: {0}")]
     Ledger(#[from] LedgerError),
@@ -104,60 +112,109 @@ impl StateMachine {
     // [transition]
     /// Attempt to execute a named command from the current state.
     ///
-    /// Evaluates all gates on the matching transition; if all pass the
-    /// `state_transition` event is appended to the ledger and the current
-    /// state is updated.
+    /// Collects all transitions matching `command + from` (preserving TOML
+    /// declaration order) and tries each in turn.  The first candidate whose
+    /// gates all pass wins — its `state_transition` event is appended to the
+    /// ledger and the current state is updated.
+    ///
+    /// If a single candidate is blocked, the backward-compatible `GateBlocked`
+    /// error is returned.  If multiple candidates all fail,
+    /// `AllCandidatesBlocked` is returned with per-candidate failure details.
     pub fn transition(&mut self, command: &str, args: &[String]) -> Result<(), StateError> {
-        // Find a matching transition from the current state.
-        let transition = self
+        // Collect ALL matching candidates (preserving TOML order).
+        let candidates: Vec<_> = self
             .config
             .transitions
             .iter()
-            .find(|t| t.command == command && t.from == self.current_state)
-            .ok_or_else(|| StateError::NoTransition {
+            .filter(|t| t.command == command && t.from == self.current_state)
+            .cloned()
+            .collect();
+
+        if candidates.is_empty() {
+            return Err(StateError::NoTransition {
                 command: command.to_string(),
                 state: self.current_state.clone(),
-            })?
-            .clone(); // clone so we release the borrow on self.config
+            });
+        }
 
-        // Build state_params from the target state's param definitions.
-        let mut state_params = self.build_state_params(&transition.to);
+        // Track failures so we can report them if every candidate is blocked.
+        // Each entry: (target_state, gate_type, reason)
+        let mut failures: Vec<(String, String, String)> = Vec::new();
 
-        // Map CLI args into state_params.
-        // - key=value args are inserted directly (override state params)
-        // - Positional args (no '=') are mapped to declared transition.args names
-        let mut positional_idx = 0;
-        for arg in args {
-            if let Some((key, value)) = arg.split_once('=') {
-                state_params.insert(key.to_string(), value.to_string());
-            } else if positional_idx < transition.args.len() {
-                state_params.insert(transition.args[positional_idx].clone(), arg.clone());
-                positional_idx += 1;
+        for candidate in &candidates {
+            // Build state_params from the target state's param definitions.
+            let mut state_params = self.build_state_params(&candidate.to);
+
+            // Map CLI args into state_params.
+            let mut positional_idx = 0;
+            for arg in args {
+                if let Some((key, value)) = arg.split_once('=') {
+                    state_params.insert(key.to_string(), value.to_string());
+                } else if positional_idx < candidate.args.len() {
+                    state_params.insert(candidate.args[positional_idx].clone(), arg.clone());
+                    positional_idx += 1;
+                }
             }
+
+            // Evaluate all gates for this candidate via the evaluator module.
+            let ctx = GateContext {
+                ledger: &self.ledger,
+                config: &self.config,
+                current_state: &self.current_state,
+                state_params: state_params.clone(),
+                working_dir: self.working_dir.clone(),
+                event_fields: None,
+            };
+
+            let results = evaluate_gates(&candidate.gates, &ctx);
+            let first_failure = results.iter().find(|r| !r.passed);
+
+            if let Some(failed) = first_failure {
+                // Stash the first failure for this candidate and try the next.
+                failures.push((
+                    candidate.to.clone(),
+                    failed.gate_type.clone(),
+                    failed
+                        .reason
+                        .clone()
+                        .unwrap_or_else(|| "gate failed".to_string()),
+                ));
+                continue;
+            }
+
+            // All gates passed — commit this candidate.
+
+            // Reload ledger from disk in case gate commands (e.g. command_succeeds
+            // running `sahjhan event ...`) appended entries via a subprocess.
+            // Without this, our in-memory seq/prev_hash would be stale. (Issue #3)
+            self.ledger.reload().map_err(StateError::Ledger)?;
+
+            // Record the transition event.
+            let mut fields = BTreeMap::new();
+            fields.insert("from".to_string(), self.current_state.clone());
+            fields.insert("to".to_string(), candidate.to.clone());
+            fields.insert("command".to_string(), command.to_string());
+
+            self.ledger
+                .append("state_transition", fields)
+                .map_err(StateError::Ledger)?;
+
+            self.current_state = candidate.to.clone();
+            return Ok(());
         }
 
-        // Evaluate gates.
-        for gate in &transition.gates {
-            self.evaluate_gate(gate, &state_params)?;
+        // No candidate passed. Choose error style based on candidate count.
+        if candidates.len() == 1 {
+            // Backward-compatible: single candidate returns GateBlocked.
+            let (_, gate_type, reason) = failures.into_iter().next().unwrap();
+            Err(StateError::GateBlocked { gate_type, reason })
+        } else {
+            Err(StateError::AllCandidatesBlocked {
+                command: command.to_string(),
+                state: self.current_state.clone(),
+                candidates: failures,
+            })
         }
-
-        // Reload ledger from disk in case gate commands (e.g. command_succeeds
-        // running `sahjhan event ...`) appended entries via a subprocess.
-        // Without this, our in-memory seq/prev_hash would be stale. (Issue #3)
-        self.ledger.reload().map_err(StateError::Ledger)?;
-
-        // Record the transition event.
-        let mut fields = BTreeMap::new();
-        fields.insert("from".to_string(), self.current_state.clone());
-        fields.insert("to".to_string(), transition.to.clone());
-        fields.insert("command".to_string(), command.to_string());
-
-        self.ledger
-            .append("state_transition", fields)
-            .map_err(StateError::Ledger)?;
-
-        self.current_state = transition.to.clone();
-        Ok(())
     }
 
     // -----------------------------------------------------------------------
@@ -285,6 +342,10 @@ impl StateMachine {
 
     // [evaluate-gate]
     /// Evaluate a single gate using the full gate evaluator.
+    ///
+    /// Retained for reference; the `transition()` method now uses
+    /// `evaluate_gates()` directly for multi-candidate branching.
+    #[allow(dead_code)]
     fn evaluate_gate(
         &self,
         gate: &crate::config::GateConfig,

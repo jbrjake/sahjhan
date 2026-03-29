@@ -98,6 +98,10 @@ Sahjhan is a protocol enforcement engine. It has:
 | Template resolution | `gates/template.rs` | `[resolve-template]` | `{{var}}` → shell-escaped value |
 | Plain resolution | `gates/template.rs` | `[resolve-template-plain]` | `{{var}}` → raw value (for SQL) |
 | Shell escaping | `gates/template.rs` | `[shell-escape]` | POSIX single-quote escaping |
+| any_of gate | `gates/types.rs` | `[eval]` (inline) | Composite: pass if any child gate passes |
+| all_of gate | `gates/types.rs` | `[eval]` (inline) | Composite: pass if all child gates pass |
+| not gate | `gates/types.rs` | `[eval]` (inline) | Composite: invert result of single child gate |
+| k_of_n gate | `gates/types.rs` | `[eval]` (inline) | Composite: pass if >= k of n child gates pass |
 
 ### state/ — State Machine
 
@@ -112,6 +116,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | Completed members | `state/machine.rs` | `[completed-members]` | Scan ledger for set_member_complete events |
 | Set types | `state/sets.rs` | `MemberStatus`, `SetStatus` | Completion tracking structs |
 | State errors | `state/machine.rs` | `StateError` | NoTransition, GateBlocked, Ledger, etc. |
+| All blocked error | `state/machine.rs` | `StateError::AllCandidatesBlocked` | All candidate transitions for a command were gate-blocked; carries per-candidate results |
 
 ### ledger/ — Append-Only Hash-Chained Event Log
 
@@ -197,6 +202,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | Guards | `cli/guards.rs` | `[cmd-guards]` | Output JSON manifest of read-blocked paths for enforcement hooks |
 | Hooks | `cli/hooks_cmd.rs` | `[cmd-hook-generate]` | Hook script generation |
 | Config queries | `cli/config_cmd.rs` | `[cmd-session-key-path]` | Print resolved session key path |
+| Mermaid | `cli/mermaid.rs` | `[cmd-mermaid]` | Diagram generation command (stateDiagram-v2 or ASCII) |
 
 ---
 
@@ -215,15 +221,19 @@ main.rs [cli-main]
     → state/machine.rs [transition]
       → state/machine.rs [build-state-params]    ← resolves StateParam.source ("current", "last_completed", "values")
       → CLI args merged: positional mapped to transition.args names, key=value as overrides
-      → for each gate:
-        → state/machine.rs [evaluate-gate]       ← builds GateContext with state_params
-          → gates/evaluator.rs [evaluate-gate]
-            → gates/types.rs [eval]              ← dispatches by gate_type string
-              → gates/command.rs [eval-command-succeeds]  (or other gate module)
-                → gates/types.rs [build-template-vars]    ← clones state_params + injects config paths/sets
-                → gates/types.rs [validate-template-fields]
-                → gates/template.rs [resolve-template]    ← {{var}} → shell-escaped value
-                → gates/command.rs [run-shell-with-timeout]
+      → for each candidate transition (in TOML order):
+        → for each gate:
+          → state/machine.rs [evaluate-gate]     ← builds GateContext with state_params
+            → gates/evaluator.rs [evaluate-gate]
+              → gates/types.rs [eval]            ← dispatches by gate_type string
+                → gates/command.rs [eval-command-succeeds]  (or other gate module)
+                  → gates/types.rs [build-template-vars]    ← clones state_params + injects config paths/sets
+                  → gates/types.rs [validate-template-fields]
+                  → gates/template.rs [resolve-template]    ← {{var}} → shell-escaped value
+                  → gates/command.rs [run-shell-with-timeout]
+        → if all gates pass: take this candidate, break
+        → if any gate fails: try next candidate
+      → if no candidate passed: StateError::AllCandidatesBlocked
       → ledger/chain.rs [ledger-reload]          ← re-read after gate commands may have appended
       → ledger/chain.rs [ledger-append]           ← state_transition event
     → render/engine.rs [render-triggered]         ← on_transition renders

@@ -1833,7 +1833,12 @@ fn setup_dir_with_custom_transitions(transitions_toml: &str) -> tempfile::TempDi
     let dir = tempdir().unwrap();
     let config_dir = dir.path().join("enforcement");
     std::fs::create_dir_all(&config_dir).unwrap();
-    for file in &["protocol.toml", "states.toml", "events.toml", "renders.toml"] {
+    for file in &[
+        "protocol.toml",
+        "states.toml",
+        "events.toml",
+        "renders.toml",
+    ] {
         std::fs::copy(format!("examples/minimal/{}", file), config_dir.join(file)).unwrap();
     }
     // Write the custom transitions.toml before init so the seal covers it
@@ -1865,7 +1870,12 @@ fn setup_dir_with_custom_renders(renders_toml: &str) -> tempfile::TempDir {
     let dir = tempdir().unwrap();
     let config_dir = dir.path().join("enforcement");
     std::fs::create_dir_all(&config_dir).unwrap();
-    for file in &["protocol.toml", "states.toml", "transitions.toml", "events.toml"] {
+    for file in &[
+        "protocol.toml",
+        "states.toml",
+        "transitions.toml",
+        "events.toml",
+    ] {
         std::fs::copy(format!("examples/minimal/{}", file), config_dir.join(file)).unwrap();
     }
     // Write the custom renders.toml before init so the seal covers it

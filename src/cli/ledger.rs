@@ -325,10 +325,7 @@ pub fn cmd_ledger_verify(config_dir: &str, name: Option<&str>, path: Option<&str
     };
 
     if let Err(e) = ledger.verify_config_seal(&config_path) {
-        eprintln!(
-            "warning: {}\n\nRun 'sahjhan reseal' to update the seal.",
-            e
-        );
+        eprintln!("warning: {}\n\nRun 'sahjhan reseal' to update the seal.", e);
         // Don't fail — the user explicitly asked to verify the chain, show the result
     }
 
@@ -386,7 +383,10 @@ pub fn cmd_ledger_checkpoint(config_dir: &str, name: &str, scope: &str, snapshot
     };
 
     if let Err(e) = ledger.verify_config_seal(&config_path) {
-        eprintln!("{}\n\nRun 'sahjhan reseal' with a valid session key to update the seal.", e);
+        eprintln!(
+            "{}\n\nRun 'sahjhan reseal' with a valid session key to update the seal.",
+            e
+        );
         return EXIT_INTEGRITY_ERROR;
     }
 

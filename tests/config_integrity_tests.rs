@@ -12,11 +12,31 @@ use predicates::prelude::*;
 #[test]
 fn test_compute_config_seals_all_files_present() {
     let dir = tempdir().unwrap();
-    std::fs::write(dir.path().join("protocol.toml"), b"[protocol]\nname = \"test\"\n").unwrap();
-    std::fs::write(dir.path().join("states.toml"), b"[states.idle]\nlabel = \"Idle\"\n").unwrap();
-    std::fs::write(dir.path().join("transitions.toml"), b"[[transitions]]\nfrom = \"idle\"\n").unwrap();
-    std::fs::write(dir.path().join("events.toml"), b"[events.e1]\ndescription = \"E1\"\n").unwrap();
-    std::fs::write(dir.path().join("renders.toml"), b"[[renders]]\ntarget = \"out.md\"\n").unwrap();
+    std::fs::write(
+        dir.path().join("protocol.toml"),
+        b"[protocol]\nname = \"test\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("states.toml"),
+        b"[states.idle]\nlabel = \"Idle\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("transitions.toml"),
+        b"[[transitions]]\nfrom = \"idle\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("events.toml"),
+        b"[events.e1]\ndescription = \"E1\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("renders.toml"),
+        b"[[renders]]\ntarget = \"out.md\"\n",
+    )
+    .unwrap();
 
     let seals = sahjhan::config::compute_config_seals(dir.path());
 
@@ -82,9 +102,15 @@ fn test_init_with_seals_stores_hashes_in_genesis() {
     let ledger = Ledger::init_with_seals(&ledger_path, "test", "1.0.0", seals).unwrap();
 
     let genesis = &ledger.entries()[0];
-    assert_eq!(genesis.fields.get("config_seal_protocol").unwrap(), "aaa111");
+    assert_eq!(
+        genesis.fields.get("config_seal_protocol").unwrap(),
+        "aaa111"
+    );
     assert_eq!(genesis.fields.get("config_seal_states").unwrap(), "bbb222");
-    assert_eq!(genesis.fields.get("config_seal_transitions").unwrap(), "ccc333");
+    assert_eq!(
+        genesis.fields.get("config_seal_transitions").unwrap(),
+        "ccc333"
+    );
     assert_eq!(genesis.fields.get("config_seal_events").unwrap(), "ddd444");
     assert_eq!(genesis.fields.get("config_seal_renders").unwrap(), "eee555");
     // Original fields still present

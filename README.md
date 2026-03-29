@@ -196,12 +196,12 @@ states.toml            transitions.toml              events.toml
 └──────────────┘       │     ├ cmd_succeeds │        │   complete       │
                        │     └ ledger_has   │        │   set, member    │
 protocol.toml          │   set_covered──┐   │        └──────────────────┘
-┌──────────────┐       │                │   │               ▲
-│ sets:        │◀──────┼────────────────┘   │               │
-│   suites:    │       │ submit (2 routes)  │               │
-│   - unit     │       │   → verifying      │               │
-│   - integr.  │       │     cmd_succeeds   │               │
-└──────────────┘       │     k_of_n (2/3)   │               │
+┌──────────────────┐   │                │   │               ▲
+│ sets:            │◀──┼────────────────┘   │               │
+│  test-suites:    │   │ submit (2 routes)  │               │
+│  - unit-tests    │   │   → verifying      │               │
+│  - integ.-tests  │   │     cmd_succeeds   │               │
+└──────────────────┘   │     k_of_n (2/3)   │               │
                        │     no_violations  │               │
                        │   → fix-and-retry  │               │
                        │     (fallback)     │               │
@@ -271,7 +271,7 @@ gates = [
         { type = "command_succeeds", cmd = "python -m pytest tests/", timeout = 60 },
         { type = "ledger_has_event", event = "manual_test_override" },
     ]},
-    { type = "set_covered", set = "suites",
+    { type = "set_covered", set = "test-suites",
       event = "set_member_complete", field = "member",
       intent = "every test suite must be written before implementing" },
 ]
@@ -317,9 +317,9 @@ The `intent` field is optional but worth writing. When a gate blocks, Sahjhan pr
 
 ### Protocol: sets and project config
 
-That `set_covered` gate references something called `suites`. Here's the idea: sometimes you need the agent to do something for every item in a list. Write unit tests *and* integration tests. Review file A *and* file B *and* file C. Not just one. All of them.
+That `set_covered` gate references something called `test-suites`. Here's the idea: sometimes you need the agent to do something for every item in a list. Write unit tests *and* integration tests. Review file A *and* file B *and* file C. Not just one. All of them.
 
-A set is that list. You declare the members up front, and the agent has to check them off one by one. Sahjhan tracks which ones are done in the ledger — when the agent runs `sahjhan set complete suites unit-tests`, Sahjhan records a `set_member_complete` event with `set=suites` and `member=unit-tests`. The `set_covered` gate just asks: has every member in this set had one of those events recorded? If not, you're not moving.
+A set is that list. You declare the members up front, and the agent has to check them off one by one. Sahjhan tracks which ones are done in the ledger — when the agent runs `sahjhan set complete test-suites unit-tests`, Sahjhan records a `set_member_complete` event with `set=test-suites` and `member=unit-tests`. The `set_covered` gate just asks: has every member in this set had one of those events recorded? If not, you're not moving.
 
 That's all a set is. A checklist the agent can't skip items on.
 
@@ -337,7 +337,7 @@ managed = ["src", "tests"]
 data_dir = ".sahjhan"
 render_dir = "."
 
-[sets.suites]
+[sets.test-suites]
 description = "Test suites that must be written"
 values = ["unit-tests", "integration-tests"]
 
@@ -348,7 +348,7 @@ values = ["unit-tests", "integration-tests"]
 
 Two members: `unit-tests` and `integration-tests`. The agent has to complete both before the `set_covered` gate will pass. No shortcuts, no "I'll do integration tests later." Both. Then you move on.
 
-Now that `set_covered` gate in transitions.toml makes more sense: `set = "suites"` says which set to check. `event = "set_member_complete"` and `field = "member"` tell Sahjhan which ledger events count as check-offs — it looks for events of that type where the named field matches a set member. You'll almost always use these exact values; they're the convention for how `sahjhan set complete` records its work.
+Now that `set_covered` gate in transitions.toml makes more sense: `set = "test-suites"` says which set to check. `event = "set_member_complete"` and `field = "member"` tell Sahjhan which ledger events count as check-offs — it looks for events of that type where the named field matches a set member. You'll almost always use these exact values; they're the convention for how `sahjhan set complete` records its work.
 
 Aliases are just shortcuts. `sahjhan start` expands to `sahjhan transition start`. Small convenience, saves typing.
 
@@ -437,14 +437,14 @@ sahjhan --config-dir tdd-protocol transition tests-done
 # BLOCKED any_of: no child gate passed
 #   intent: tests must run or be explicitly overridden
 
-# Agent fixes tests so they parse. Still blocked — suites aren't done.
+# Agent fixes tests so they parse. Still blocked — test-suites aren't done.
 sahjhan --config-dir tdd-protocol transition tests-done
-# BLOCKED set_covered: suites not fully covered (1/2)
+# BLOCKED set_covered: test-suites not fully covered (1/2)
 #   intent: every test suite must be written before implementing
 
-# Agent marks both suites complete
-sahjhan --config-dir tdd-protocol set complete suites unit-tests
-sahjhan --config-dir tdd-protocol set complete suites integration-tests
+# Agent marks both test suites complete
+sahjhan --config-dir tdd-protocol set complete test-suites unit-tests
+sahjhan --config-dir tdd-protocol set complete test-suites integration-tests
 
 sahjhan --config-dir tdd-protocol transition tests-done
 # writing-tests → implementing

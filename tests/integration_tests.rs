@@ -2178,3 +2178,74 @@ fn test_cli_mermaid_rendered() {
         .stdout(predicate::str::contains("[idle]"))
         .stdout(predicate::str::contains("(initial)"));
 }
+
+#[test]
+fn test_gate_check_shows_unevaluable_for_missing_args() {
+    let dir = tempdir().unwrap();
+    let config_dir = dir.path().join("config");
+    std::fs::create_dir_all(&config_dir).unwrap();
+
+    std::fs::write(
+        config_dir.join("protocol.toml"),
+        r#"
+[protocol]
+name = "test"
+version = "1.0.0"
+description = "Test protocol"
+
+[paths]
+managed = ["data"]
+data_dir = "data"
+render_dir = "rendered"
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        config_dir.join("states.toml"),
+        r#"
+[states.idle]
+label = "Idle"
+initial = true
+
+[states.done]
+label = "Done"
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        config_dir.join("transitions.toml"),
+        r#"
+[[transitions]]
+command = "advance"
+from = "idle"
+to = "done"
+args = ["my_arg"]
+gates = [
+    { type = "command_succeeds", cmd = "test '{{my_arg}}' = 'yes'" },
+]
+"#,
+    )
+    .unwrap();
+
+    let data_dir = dir.path().join("data");
+    std::fs::create_dir_all(&data_dir).unwrap();
+    let ledger_path = data_dir.join("ledger.jsonl");
+    let _ledger = sahjhan::ledger::chain::Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            config_dir.to_str().unwrap(),
+            "gate",
+            "check",
+            "advance",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .stdout(predicate::str::contains("?"))
+        .stdout(predicate::str::contains("unevaluable"))
+        .stdout(predicate::str::contains("my_arg"));
+}

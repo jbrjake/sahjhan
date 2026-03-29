@@ -274,6 +274,12 @@ pub fn cmd_gate_check(
         for result in &results {
             if result.passed {
                 println!("  \u{2713} {}", result.description);
+            } else if !result.evaluable {
+                println!(
+                    "  ? {}: {}",
+                    result.gate_type,
+                    result.reason.as_deref().unwrap_or("unevaluable"),
+                );
             } else {
                 println!(
                     "  \u{2717} {}: {} \u{2014} {}",

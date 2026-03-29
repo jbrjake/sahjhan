@@ -55,6 +55,7 @@ pub(super) fn eval_ledger_has_event(gate: &GateConfig, ctx: &GateContext) -> Gat
 
     GateResult {
         passed,
+        evaluable: true,
         gate_type: "ledger_has_event".to_string(),
         description: format!("ledger has >= {} '{}' event(s)", min_count, event),
         reason: if passed {
@@ -103,6 +104,7 @@ pub(super) fn eval_ledger_has_event_since(gate: &GateConfig, ctx: &GateContext) 
 
     GateResult {
         passed: found,
+        evaluable: true,
         gate_type: "ledger_has_event_since".to_string(),
         description: format!("'{}' event exists since last transition", event),
         reason: if found {
@@ -147,6 +149,7 @@ pub(super) fn eval_ledger_lacks_event(gate: &GateConfig, ctx: &GateContext) -> G
 
     GateResult {
         passed,
+        evaluable: true,
         gate_type: "ledger_lacks_event".to_string(),
         description: format!("ledger has no '{}' events", event),
         reason: if passed {
@@ -168,6 +171,7 @@ pub(super) fn eval_set_covered(gate: &GateConfig, ctx: &GateContext) -> GateResu
         None => {
             return GateResult {
                 passed: false,
+                evaluable: true,
                 gate_type: "set_covered".to_string(),
                 description: "set is fully covered".to_string(),
                 reason: Some("gate missing 'set' param".to_string()),
@@ -193,6 +197,7 @@ pub(super) fn eval_set_covered(gate: &GateConfig, ctx: &GateContext) -> GateResu
         None => {
             return GateResult {
                 passed: false,
+                evaluable: true,
                 gate_type: "set_covered".to_string(),
                 description: format!("set '{}' is fully covered", set_name),
                 reason: Some(format!("unknown set '{}'", set_name)),
@@ -228,6 +233,7 @@ pub(super) fn eval_set_covered(gate: &GateConfig, ctx: &GateContext) -> GateResu
 
     GateResult {
         passed,
+        evaluable: true,
         gate_type: "set_covered".to_string(),
         description: format!("set '{}' is fully covered", set_name),
         reason: if passed {
@@ -275,6 +281,7 @@ pub(super) fn eval_min_elapsed(gate: &GateConfig, ctx: &GateContext) -> GateResu
             // No event found — consider the elapsed time infinite.
             GateResult {
                 passed: true,
+                evaluable: true,
                 gate_type: "min_elapsed".to_string(),
                 description,
                 reason: None,
@@ -293,6 +300,7 @@ pub(super) fn eval_min_elapsed(gate: &GateConfig, ctx: &GateContext) -> GateResu
 
             GateResult {
                 passed,
+                evaluable: true,
                 gate_type: "min_elapsed".to_string(),
                 description,
                 reason: if passed {
@@ -318,6 +326,7 @@ pub(super) fn eval_no_violations(_gate: &GateConfig, ctx: &GateContext) -> GateR
 
     GateResult {
         passed,
+        evaluable: true,
         gate_type: "no_violations".to_string(),
         description: "no unresolved protocol_violation events".to_string(),
         reason: if passed {
@@ -350,6 +359,7 @@ pub(super) fn eval_field_not_empty(gate: &GateConfig, ctx: &GateContext) -> Gate
     match value {
         None => GateResult {
             passed: false,
+            evaluable: true,
             gate_type: "field_not_empty".to_string(),
             description,
             reason: Some(format!("field '{}' not present in event payload", field)),
@@ -357,6 +367,7 @@ pub(super) fn eval_field_not_empty(gate: &GateConfig, ctx: &GateContext) -> Gate
         },
         Some("") => GateResult {
             passed: false,
+            evaluable: true,
             gate_type: "field_not_empty".to_string(),
             description,
             reason: Some(format!("field '{}' is empty", field)),
@@ -364,6 +375,7 @@ pub(super) fn eval_field_not_empty(gate: &GateConfig, ctx: &GateContext) -> Gate
         },
         Some(_) => GateResult {
             passed: true,
+            evaluable: true,
             gate_type: "field_not_empty".to_string(),
             description,
             reason: None,

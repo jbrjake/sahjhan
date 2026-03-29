@@ -2453,3 +2453,36 @@ fn test_k_of_n_fails_below_threshold() {
     let result = evaluate_gate(&gate, &ctx);
     assert!(!result.passed, "k_of_n should fail when passed_count < k");
 }
+
+// ---------------------------------------------------------------------------
+// evaluable field
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_gate_result_evaluable_default_true() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let test_file = dir.path().join("existing.txt");
+    std::fs::write(&test_file, "content").unwrap();
+
+    let gate = make_gate(
+        "file_exists",
+        vec![(
+            "path",
+            toml::Value::String(test_file.to_str().unwrap().to_string()),
+        )],
+    );
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(result.evaluable, "normal gates should be evaluable");
+}

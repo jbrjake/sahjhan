@@ -26,6 +26,7 @@ pub(super) fn eval_file_exists(gate: &GateConfig, ctx: &GateContext) -> GateResu
 
     GateResult {
         passed: exists,
+        evaluable: true,
         gate_type: "file_exists".to_string(),
         description: format!("file '{}' exists", resolved),
         reason: if exists {
@@ -62,6 +63,7 @@ pub(super) fn eval_files_exist(gate: &GateConfig, ctx: &GateContext) -> GateResu
 
     GateResult {
         passed,
+        evaluable: true,
         gate_type: "files_exist".to_string(),
         description: format!("{} file(s) must exist", paths.len()),
         reason: if passed {

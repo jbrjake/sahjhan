@@ -59,6 +59,7 @@ pub fn eval(gate: &GateConfig, ctx: &GateContext) -> GateResult {
             };
             GateResult {
                 passed,
+                evaluable: true,
                 gate_type: "any_of".to_string(),
                 description: format!("{} of {} alternatives passed", passed_count, total),
                 reason,
@@ -83,6 +84,7 @@ pub fn eval(gate: &GateConfig, ctx: &GateContext) -> GateResult {
             };
             GateResult {
                 passed,
+                evaluable: true,
                 gate_type: "all_of".to_string(),
                 description: format!("{} of {} conditions passed", passed_count, total),
                 reason,
@@ -94,6 +96,7 @@ pub fn eval(gate: &GateConfig, ctx: &GateContext) -> GateResult {
             if gate.gates.len() != 1 {
                 return GateResult {
                     passed: false,
+                    evaluable: true,
                     gate_type: "not".to_string(),
                     description: "not gate requires exactly one child gate".to_string(),
                     reason: Some(format!("expected 1 child gate, found {}", gate.gates.len())),
@@ -103,6 +106,7 @@ pub fn eval(gate: &GateConfig, ctx: &GateContext) -> GateResult {
             let child = eval(&gate.gates[0], ctx);
             GateResult {
                 passed: !child.passed,
+                evaluable: true,
                 gate_type: "not".to_string(),
                 description: format!("not({})", child.gate_type),
                 reason: if child.passed {
@@ -144,6 +148,7 @@ pub fn eval(gate: &GateConfig, ctx: &GateContext) -> GateResult {
             };
             GateResult {
                 passed,
+                evaluable: true,
                 gate_type: "k_of_n".to_string(),
                 description: format!("{} of {} passed ({} required)", passed_count, total, k),
                 reason,
@@ -153,6 +158,7 @@ pub fn eval(gate: &GateConfig, ctx: &GateContext) -> GateResult {
 
         other => GateResult {
             passed: false,
+            evaluable: true,
             gate_type: other.to_string(),
             description: format!("unknown gate type '{}'", other),
             reason: Some(format!("gate type '{}' is not implemented", other)),

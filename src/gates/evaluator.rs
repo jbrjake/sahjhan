@@ -43,6 +43,9 @@ pub struct GateContext<'a> {
 pub struct GateResult {
     /// Whether the gate condition was satisfied.
     pub passed: bool,
+    /// Whether the gate could be evaluated. `false` when required template
+    /// variables are missing — distinct from a gate that was evaluated and failed.
+    pub evaluable: bool,
     /// The gate type string (e.g. `"file_exists"`).
     pub gate_type: String,
     /// Human-readable description of what the gate checks.

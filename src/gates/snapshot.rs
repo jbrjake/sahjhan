@@ -58,6 +58,7 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
             Err(reason) => {
                 return GateResult {
                     passed: false,
+                    evaluable: true,
                     gate_type: "snapshot_compare".to_string(),
                     description,
                     reason: Some(reason),
@@ -75,6 +76,7 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
         Ok(CommandOutputOutcome::TimedOut) => {
             return GateResult {
                 passed: false,
+                evaluable: true,
                 gate_type: "snapshot_compare".to_string(),
                 description,
                 reason: Some(format!(
@@ -87,6 +89,7 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
         Err(e) => {
             return GateResult {
                 passed: false,
+                evaluable: true,
                 gate_type: "snapshot_compare".to_string(),
                 description,
                 reason: Some(format!("command failed: {}", e)),
@@ -101,6 +104,7 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
         Err(e) => {
             return GateResult {
                 passed: false,
+                evaluable: true,
                 gate_type: "snapshot_compare".to_string(),
                 description,
                 reason: Some(format!("stdout is not valid JSON: {}", e)),
@@ -114,6 +118,7 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
         None => {
             return GateResult {
                 passed: false,
+                evaluable: true,
                 gate_type: "snapshot_compare".to_string(),
                 description,
                 reason: Some(format!("JSON field '{}' not found in output", extract)),
@@ -135,6 +140,7 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
             };
             return GateResult {
                 passed,
+                evaluable: true,
                 gate_type: "snapshot_compare".to_string(),
                 description,
                 reason: if passed {
@@ -155,6 +161,7 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
         Err(e) => {
             return GateResult {
                 passed: false,
+                evaluable: true,
                 gate_type: "snapshot_compare".to_string(),
                 description,
                 reason: Some(format!("reference '{}' is not a number: {}", reference, e)),
@@ -170,6 +177,7 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
         other => {
             return GateResult {
                 passed: false,
+                evaluable: true,
                 gate_type: "snapshot_compare".to_string(),
                 description,
                 reason: Some(format!("unknown compare operator '{}'", other)),
@@ -180,6 +188,7 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
 
     GateResult {
         passed,
+        evaluable: true,
         gate_type: "snapshot_compare".to_string(),
         description,
         reason: if passed {

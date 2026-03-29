@@ -55,6 +55,7 @@ pub(super) fn eval_command_succeeds(gate: &GateConfig, ctx: &GateContext) -> Gat
     if let Err(reason) = validate_template_fields(raw_cmd, ctx) {
         return GateResult {
             passed: false,
+            evaluable: true,
             gate_type: "command_succeeds".to_string(),
             description: format!("command succeeds: {}", raw_cmd),
             reason: Some(reason),
@@ -70,6 +71,7 @@ pub(super) fn eval_command_succeeds(gate: &GateConfig, ctx: &GateContext) -> Gat
             let passed = status.success();
             GateResult {
                 passed,
+                evaluable: true,
                 gate_type: "command_succeeds".to_string(),
                 description: format!("command succeeds: {}", cmd),
                 reason: if passed {
@@ -86,6 +88,7 @@ pub(super) fn eval_command_succeeds(gate: &GateConfig, ctx: &GateContext) -> Gat
         }
         Ok(CommandOutcome::TimedOut) => GateResult {
             passed: false,
+            evaluable: true,
             gate_type: "command_succeeds".to_string(),
             description: format!("command succeeds: {}", cmd),
             reason: Some(format!(
@@ -96,6 +99,7 @@ pub(super) fn eval_command_succeeds(gate: &GateConfig, ctx: &GateContext) -> Gat
         },
         Err(e) => GateResult {
             passed: false,
+            evaluable: true,
             gate_type: "command_succeeds".to_string(),
             description: format!("command succeeds: {}", cmd),
             reason: Some(format!("failed to run command '{}': {}", cmd, e)),
@@ -130,6 +134,7 @@ pub(super) fn eval_command_output(gate: &GateConfig, ctx: &GateContext) -> GateR
     if let Err(reason) = validate_template_fields(raw_cmd, ctx) {
         return GateResult {
             passed: false,
+            evaluable: true,
             gate_type: "command_output".to_string(),
             description: format!("command output matches '{}'", expect),
             reason: Some(reason),
@@ -146,6 +151,7 @@ pub(super) fn eval_command_output(gate: &GateConfig, ctx: &GateContext) -> GateR
             let passed = trimmed == expect;
             GateResult {
                 passed,
+                evaluable: true,
                 gate_type: "command_output".to_string(),
                 description: format!("command output matches '{}'", expect),
                 reason: if passed {
@@ -158,6 +164,7 @@ pub(super) fn eval_command_output(gate: &GateConfig, ctx: &GateContext) -> GateR
         }
         Ok(CommandOutputOutcome::TimedOut) => GateResult {
             passed: false,
+            evaluable: true,
             gate_type: "command_output".to_string(),
             description: format!("command output matches '{}'", expect),
             reason: Some(format!(
@@ -168,6 +175,7 @@ pub(super) fn eval_command_output(gate: &GateConfig, ctx: &GateContext) -> GateR
         },
         Err(e) => GateResult {
             passed: false,
+            evaluable: true,
             gate_type: "command_output".to_string(),
             description: format!("command output matches '{}'", expect),
             reason: Some(format!("failed to run command '{}': {}", cmd, e)),

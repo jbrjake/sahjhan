@@ -16,6 +16,7 @@ pub(super) fn eval_query_gate(gate: &GateConfig, ctx: &GateContext) -> GateResul
         None => {
             return GateResult {
                 passed: false,
+                evaluable: true,
                 gate_type: "query".to_string(),
                 description: "SQL query against ledger".to_string(),
                 reason: Some("gate missing required 'sql' param".to_string()),
@@ -28,6 +29,7 @@ pub(super) fn eval_query_gate(gate: &GateConfig, ctx: &GateContext) -> GateResul
     if let Err(reason) = validate_template_fields(&raw_sql, ctx) {
         return GateResult {
             passed: false,
+            evaluable: true,
             gate_type: "query".to_string(),
             description: format!("SQL: {}", raw_sql),
             reason: Some(reason),
@@ -58,6 +60,7 @@ pub(super) fn eval_query_gate(gate: &GateConfig, ctx: &GateContext) -> GateResul
         Err(e) => {
             return GateResult {
                 passed: false,
+                evaluable: true,
                 gate_type: "query".to_string(),
                 description,
                 reason: Some(format!("failed to build tokio runtime: {}", e)),
@@ -79,6 +82,7 @@ pub(super) fn eval_query_gate(gate: &GateConfig, ctx: &GateContext) -> GateResul
         Err(e) => {
             return GateResult {
                 passed: false,
+                evaluable: true,
                 gate_type: "query".to_string(),
                 description,
                 reason: Some(format!("query execution failed: {}", e)),
@@ -98,6 +102,7 @@ pub(super) fn eval_query_gate(gate: &GateConfig, ctx: &GateContext) -> GateResul
 
     GateResult {
         passed,
+        evaluable: true,
         gate_type: "query".to_string(),
         description,
         reason: Some(if passed {

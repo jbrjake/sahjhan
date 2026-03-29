@@ -2096,3 +2096,27 @@ fn test_cli_branching_takes_first_when_gates_pass() {
         .success()
         .stdout(predicate::str::contains("happy"));
 }
+
+#[test]
+fn test_cli_mermaid_raw() {
+    let dir = setup_initialized_dir();
+    Command::cargo_bin("sahjhan").unwrap()
+        .args(["--config-dir", "enforcement", "mermaid"])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("stateDiagram-v2"))
+        .stdout(predicate::str::contains("[*] --> idle"));
+}
+
+#[test]
+fn test_cli_mermaid_rendered() {
+    let dir = setup_initialized_dir();
+    Command::cargo_bin("sahjhan").unwrap()
+        .args(["--config-dir", "enforcement", "mermaid", "--rendered"])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[idle]"))
+        .stdout(predicate::str::contains("(initial)"));
+}

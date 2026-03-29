@@ -6,6 +6,7 @@ pub mod commands;
 pub mod config_cmd;
 pub mod guards;
 pub mod hooks_cmd;
+pub mod mermaid;
 pub mod init;
 pub mod ledger;
 pub mod log;

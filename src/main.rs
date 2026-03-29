@@ -21,6 +21,7 @@ use sahjhan::cli::commands;
 use sahjhan::cli::config_cmd;
 use sahjhan::cli::guards;
 use sahjhan::cli::hooks_cmd;
+use sahjhan::cli::mermaid as mermaid_cmd;
 use sahjhan::cli::init;
 use sahjhan::cli::ledger;
 use sahjhan::cli::log;
@@ -162,6 +163,13 @@ enum Commands {
 
     /// Show read-guard manifest for enforcement hooks
     Guards,
+
+    /// Generate protocol diagram (Mermaid or ASCII)
+    Mermaid {
+        /// Output ASCII art instead of raw Mermaid text
+        #[arg(long)]
+        rendered: bool,
+    },
 
     /// SQL queries over ledger events
     Query {
@@ -458,6 +466,7 @@ fn main() {
             }
         },
         Commands::Guards => guards::cmd_guards(&cli.config_dir),
+        Commands::Mermaid { rendered } => mermaid_cmd::cmd_mermaid(&cli.config_dir, rendered),
         Commands::Query {
             sql,
             query_path,

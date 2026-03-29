@@ -43,7 +43,6 @@ pub fn eval(gate: &GateConfig, ctx: &GateContext) -> GateResult {
         "query" => super::query::eval_query_gate(gate, ctx),
 
         // -- Composite gates --------------------------------------------------
-
         "any_of" => {
             let results: Vec<GateResult> = gate.gates.iter().map(|g| eval(g, ctx)).collect();
             let total = results.len();
@@ -97,10 +96,7 @@ pub fn eval(gate: &GateConfig, ctx: &GateContext) -> GateResult {
                     passed: false,
                     gate_type: "not".to_string(),
                     description: "not gate requires exactly one child gate".to_string(),
-                    reason: Some(format!(
-                        "expected 1 child gate, found {}",
-                        gate.gates.len()
-                    )),
+                    reason: Some(format!("expected 1 child gate, found {}", gate.gates.len())),
                     intent: None,
                 };
             }
@@ -110,7 +106,10 @@ pub fn eval(gate: &GateConfig, ctx: &GateContext) -> GateResult {
                 gate_type: "not".to_string(),
                 description: format!("not({})", child.gate_type),
                 reason: if child.passed {
-                    Some(format!("child gate '{}' passed (not inverts to fail)", child.gate_type))
+                    Some(format!(
+                        "child gate '{}' passed (not inverts to fail)",
+                        child.gate_type
+                    ))
                 } else {
                     None
                 },
@@ -136,7 +135,9 @@ pub fn eval(gate: &GateConfig, ctx: &GateContext) -> GateResult {
                     .collect();
                 Some(format!(
                     "only {} of {} required passed; failed: [{}]",
-                    passed_count, k, failed.join("; ")
+                    passed_count,
+                    k,
+                    failed.join("; ")
                 ))
             } else {
                 None

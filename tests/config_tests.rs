@@ -509,7 +509,9 @@ fn test_validate_any_of_empty_gates_is_error() {
     });
     let (errors, _) = config.validate_deep(Path::new("examples/minimal"));
     assert!(
-        errors.iter().any(|e| e.contains("any_of") && e.contains("empty")),
+        errors
+            .iter()
+            .any(|e| e.contains("any_of") && e.contains("empty")),
         "Expected error about any_of with empty gates list: {:?}",
         errors
     );
@@ -546,7 +548,9 @@ fn test_validate_not_wrong_child_count_is_error() {
     });
     let (errors, _) = config.validate_deep(Path::new("examples/minimal"));
     assert!(
-        errors.iter().any(|e| e.contains("not") && e.contains("exactly 1")),
+        errors
+            .iter()
+            .any(|e| e.contains("not") && e.contains("exactly 1")),
         "Expected error about not gate requiring exactly 1 child: {:?}",
         errors
     );
@@ -575,7 +579,9 @@ fn test_validate_k_of_n_missing_k_is_error() {
     });
     let (errors, _) = config.validate_deep(Path::new("examples/minimal"));
     assert!(
-        errors.iter().any(|e| e.contains("k_of_n") && e.contains("'k'")),
+        errors
+            .iter()
+            .any(|e| e.contains("k_of_n") && e.contains("'k'")),
         "Expected error about k_of_n missing 'k' parameter: {:?}",
         errors
     );
@@ -624,7 +630,8 @@ fn test_validate_branching_no_fallback_warning() {
             intent: None,
             gates: vec![],
             params: vec![("path".to_string(), toml::Value::String("a.txt".to_string()))]
-                .into_iter().collect(),
+                .into_iter()
+                .collect(),
         }],
     });
     config.transitions.push(TransitionConfig {
@@ -637,12 +644,15 @@ fn test_validate_branching_no_fallback_warning() {
             intent: None,
             gates: vec![],
             params: vec![("path".to_string(), toml::Value::String("b.txt".to_string()))]
-                .into_iter().collect(),
+                .into_iter()
+                .collect(),
         }],
     });
     let (_, warnings) = config.validate_deep(Path::new("examples/minimal"));
     assert!(
-        warnings.iter().any(|w| w.contains("go") && w.contains("no fallback")),
+        warnings
+            .iter()
+            .any(|w| w.contains("go") && w.contains("no fallback")),
         "Expected warning about no fallback: {:?}",
         warnings
     );

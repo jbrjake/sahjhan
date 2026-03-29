@@ -113,47 +113,45 @@ struct WalkCall<'a> {
     state_name: &'a str,
     /// Visual indent prefix for this level.
     prefix: &'a str,
-    /// Whether this is the last child of its parent (controls ├─ vs └─).
-    is_last: bool,
-    /// True for the root call (prints without a leading connector).
+    /// True for the root call (prints the state header).
     is_root: bool,
 }
 
 /// Walk from `state_name` depth-first, appending lines to `out`.
 ///
 /// `visited` tracks states already expanded to detect cycles.
-fn walk(ctx: &WalkCtx<'_>, call: WalkCall<'_>, visited: &mut HashSet<String>, out: &mut String) {
-    let state = match ctx.config.states.get(call.state_name) {
+/// Build annotation string for a state (e.g., " (initial, terminal)").
+fn state_annotation(config: &ProtocolConfig, name: &str) -> String {
+    let state = match config.states.get(name) {
         Some(s) => s,
-        None => return,
+        None => return String::new(),
     };
-
-    // Build state annotation.
-    let mut annotations = Vec::new();
+    let mut parts = Vec::new();
     if state.initial.unwrap_or(false) {
-        annotations.push("initial");
+        parts.push("initial");
     }
     if state.terminal.unwrap_or(false) {
-        annotations.push("terminal");
+        parts.push("terminal");
     }
-    let annotation = if annotations.is_empty() {
+    if parts.is_empty() {
         String::new()
     } else {
-        format!(" ({})", annotations.join(", "))
-    };
+        format!(" ({})", parts.join(", "))
+    }
+}
 
-    // Emit this node.
-    if call.is_root {
-        out.push_str(&format!("[{}]{}\n", call.state_name, annotation));
-    } else {
-        let connector = if call.is_last { "└─" } else { "├─" };
-        out.push_str(&format!(
-            "{}{} [{}]{}\n",
-            call.prefix, connector, call.state_name, annotation
-        ));
+fn walk(ctx: &WalkCtx<'_>, call: WalkCall<'_>, visited: &mut HashSet<String>, out: &mut String) {
+    if !ctx.config.states.contains_key(call.state_name) {
+        return;
     }
 
-    // If already visited, it's a back-edge — caller already printed `(↑ cycle)` inline.
+    // Only the root call prints the state header. Non-root calls have their
+    // state name already printed inline by the caller's "──▶ [target]" line.
+    if call.is_root {
+        let annotation = state_annotation(ctx.config, call.state_name);
+        out.push_str(&format!("[{}]{}\n", call.state_name, annotation));
+    }
+
     if visited.contains(call.state_name) {
         return;
     }
@@ -164,73 +162,58 @@ fn walk(ctx: &WalkCtx<'_>, call: WalkCall<'_>, visited: &mut HashSet<String>, ou
         None => return,
     };
 
-    // Determine the child prefix for sub-items.
-    let child_prefix = if call.is_root {
-        " ".to_string()
-    } else if call.is_last {
-        format!("{}  ", call.prefix)
-    } else {
-        format!("{}│ ", call.prefix)
-    };
-
     // Track (from, command) pairs to detect fallback candidates.
     let mut seen_from_command: HashSet<String> = HashSet::new();
 
     for (i, &tidx) in outgoing.iter().enumerate() {
         let t = &ctx.config.transitions[tidx];
         let is_last_child = i == outgoing.len() - 1;
-        let child_connector = if is_last_child { "└─" } else { "├─" };
+        let connector = if is_last_child { "└─" } else { "├─" };
 
         // Determine if this is a fallback candidate.
         let fc_key = format!("{}:{}", t.from, t.command);
-        let is_fallback_candidate = seen_from_command.contains(&fc_key);
+        let is_fallback = seen_from_command.contains(&fc_key);
         seen_from_command.insert(fc_key);
 
-        let fallback_note = if is_fallback_candidate {
-            " (fallback)"
-        } else {
-            ""
-        };
+        let fallback_note = if is_fallback { " (fallback)" } else { "" };
 
-        // Transition label line.
-        out.push_str(&format!(
-            "{}{} {} ──▶",
-            child_prefix, child_connector, t.command
-        ));
+        // Target state annotation (initial/terminal).
+        let target_ann = state_annotation(ctx.config, &t.to);
 
-        // Target state — check cycle.
+        // Check for cycle before printing.
         let is_cycle = visited.contains(t.to.as_str());
+
         if is_cycle {
-            out.push_str(&format!(" [{}] (↑ cycle){}\n", t.to, fallback_note));
+            out.push_str(&format!(
+                "{}{} {} ──▶ [{}] (↑ cycle){}\n",
+                call.prefix, connector, t.command, t.to, fallback_note
+            ));
         } else {
-            out.push_str(&format!(" [{}]{}\n", t.to, fallback_note));
+            out.push_str(&format!(
+                "{}{} {} ──▶ [{}]{}{}\n",
+                call.prefix, connector, t.command, t.to, target_ann, fallback_note
+            ));
         }
 
-        // Gate summary sub-line (under the target, indented with │).
+        // Gate summary sub-line.
+        let child_prefix = if is_last_child {
+            format!("{}   ", call.prefix)
+        } else {
+            format!("{}│  ", call.prefix)
+        };
+
         if !t.gates.is_empty() {
             let gate_labels: Vec<String> = t.gates.iter().map(gate_ascii_label).collect();
-            let gate_summary = gate_labels.join(", ");
-            let gate_prefix = if is_last_child {
-                format!("{}   ", child_prefix)
-            } else {
-                format!("{}│  ", child_prefix)
-            };
-            out.push_str(&format!("{}│ {}\n", gate_prefix, gate_summary));
+            out.push_str(&format!("{}│ {}\n", child_prefix, gate_labels.join(", ")));
         }
 
         // Recurse into target unless it's a cycle.
         if !is_cycle {
-            let target_prefix = if is_last_child {
-                format!("{}   ", child_prefix)
-            } else {
-                format!("{}│  ", child_prefix)
-            };
             walk(
                 ctx,
                 WalkCall {
                     state_name: &t.to,
-                    prefix: &target_prefix,
-                    is_last: false,
+                    prefix: &child_prefix,
                     is_root: false,
                 },
                 visited,
@@ -272,8 +255,7 @@ pub fn generate_ascii(config: &ProtocolConfig) -> String {
         &ctx,
         WalkCall {
             state_name: initial,
-            prefix: "",
-            is_last: true,
+            prefix: " ",
             is_root: true,
         },
         &mut visited,

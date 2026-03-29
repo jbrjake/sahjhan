@@ -144,7 +144,10 @@ pub fn cmd_transition(
             candidates,
         }) => {
             for (target, gate_type, reason) in &candidates {
-                eprintln!("\u{2717} \u{2192} {} blocked by {}: {}", target, gate_type, reason);
+                eprintln!(
+                    "\u{2717} \u{2192} {} blocked by {}: {}",
+                    target, gate_type, reason
+                );
             }
             EXIT_GATE_FAILED
         }
@@ -220,7 +223,12 @@ pub fn cmd_gate_check(
 
     for (idx, transition) in candidates.iter().enumerate() {
         if multi {
-            println!("candidate {}: {} \u{2192} {}", idx + 1, transition.from, transition.to);
+            println!(
+                "candidate {}: {} \u{2192} {}",
+                idx + 1,
+                transition.from,
+                transition.to
+            );
         }
 
         if transition.gates.is_empty() {

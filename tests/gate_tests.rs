@@ -2128,7 +2128,10 @@ fn test_any_of_passes_when_one_child_passes() {
             ),
             make_gate(
                 "file_exists",
-                vec![("path", toml::Value::String(existing.to_str().unwrap().to_string()))],
+                vec![(
+                    "path",
+                    toml::Value::String(existing.to_str().unwrap().to_string()),
+                )],
             ),
         ],
         params: HashMap::new(),
@@ -2180,10 +2183,7 @@ fn test_any_of_fails_when_no_child_passes() {
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
-    assert!(
-        !result.passed,
-        "any_of should fail when no child passes"
-    );
+    assert!(!result.passed, "any_of should fail when no child passes");
 }
 
 // ---------------------------------------------------------------------------
@@ -2208,11 +2208,17 @@ fn test_all_of_passes_when_all_children_pass() {
         gates: vec![
             make_gate(
                 "file_exists",
-                vec![("path", toml::Value::String(file_a.to_str().unwrap().to_string()))],
+                vec![(
+                    "path",
+                    toml::Value::String(file_a.to_str().unwrap().to_string()),
+                )],
             ),
             make_gate(
                 "file_exists",
-                vec![("path", toml::Value::String(file_b.to_str().unwrap().to_string()))],
+                vec![(
+                    "path",
+                    toml::Value::String(file_b.to_str().unwrap().to_string()),
+                )],
             ),
         ],
         params: HashMap::new(),
@@ -2249,7 +2255,10 @@ fn test_all_of_fails_when_one_child_fails() {
         gates: vec![
             make_gate(
                 "file_exists",
-                vec![("path", toml::Value::String(file_a.to_str().unwrap().to_string()))],
+                vec![(
+                    "path",
+                    toml::Value::String(file_a.to_str().unwrap().to_string()),
+                )],
             ),
             make_gate(
                 "file_exists",
@@ -2267,10 +2276,7 @@ fn test_all_of_fails_when_one_child_fails() {
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
-    assert!(
-        !result.passed,
-        "all_of should fail when one child fails"
-    );
+    assert!(!result.passed, "all_of should fail when one child fails");
 }
 
 // ---------------------------------------------------------------------------
@@ -2292,7 +2298,10 @@ fn test_not_inverts_passing_child() {
         intent: None,
         gates: vec![make_gate(
             "file_exists",
-            vec![("path", toml::Value::String(existing.to_str().unwrap().to_string()))],
+            vec![(
+                "path",
+                toml::Value::String(existing.to_str().unwrap().to_string()),
+            )],
         )],
         params: HashMap::new(),
     };
@@ -2305,10 +2314,7 @@ fn test_not_inverts_passing_child() {
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
-    assert!(
-        !result.passed,
-        "not should invert a passing child to fail"
-    );
+    assert!(!result.passed, "not should invert a passing child to fail");
 }
 
 #[test]
@@ -2365,11 +2371,17 @@ fn test_k_of_n_passes_at_threshold() {
         gates: vec![
             make_gate(
                 "file_exists",
-                vec![("path", toml::Value::String(file_a.to_str().unwrap().to_string()))],
+                vec![(
+                    "path",
+                    toml::Value::String(file_a.to_str().unwrap().to_string()),
+                )],
             ),
             make_gate(
                 "file_exists",
-                vec![("path", toml::Value::String(file_b.to_str().unwrap().to_string()))],
+                vec![(
+                    "path",
+                    toml::Value::String(file_b.to_str().unwrap().to_string()),
+                )],
             ),
             make_gate(
                 "file_exists",
@@ -2412,7 +2424,10 @@ fn test_k_of_n_fails_below_threshold() {
         gates: vec![
             make_gate(
                 "file_exists",
-                vec![("path", toml::Value::String(file_a.to_str().unwrap().to_string()))],
+                vec![(
+                    "path",
+                    toml::Value::String(file_a.to_str().unwrap().to_string()),
+                )],
             ),
             make_gate(
                 "file_exists",
@@ -2436,8 +2451,5 @@ fn test_k_of_n_fails_below_threshold() {
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
-    assert!(
-        !result.passed,
-        "k_of_n should fail when passed_count < k"
-    );
+    assert!(!result.passed, "k_of_n should fail when passed_count < k");
 }

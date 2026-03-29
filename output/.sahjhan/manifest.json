@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "managed_paths": [
+    "output"
+  ],
+  "entries": {
+    "output/STATUS.md": {
+      "sha256": "770e825a4e130c98d1647fe8e5f9c1792edac1e4d6082386c8bbf9a6892d296a",
+      "last_operation": "render",
+      "last_updated": "2026-03-29T04:34:54Z",
+      "ledger_seq": 1
+    },
+    "output/.sahjhan/ledger.jsonl": {
+      "sha256": "e4d620f0069081762ca6d07d476596fdf251b4df150427600352fcb749a48611",
+      "last_operation": "ledger_append",
+      "last_updated": "2026-03-29T04:35:18Z",
+      "ledger_seq": 2
+    },
+    "output/HISTORY.md": {
+      "sha256": "b653da5aebff329956951a63f86dbd0a5b78ac583b9ca44a1100d96f9348a1b2",
+      "last_operation": "render",
+      "last_updated": "2026-03-29T04:35:18Z",
+      "ledger_seq": 2
+    }
+  },
+  "manifest_hash": "70d850e8133a5a968afaf4bd7ef703399c56ead4429cab89e443ba6047a93d18"
+}

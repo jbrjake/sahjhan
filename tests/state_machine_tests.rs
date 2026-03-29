@@ -109,10 +109,7 @@ fn test_set_status() {
 /// Helper: build a file_exists GateConfig pointing at the given path.
 fn file_exists_gate(path: &str) -> GateConfig {
     let mut params = HashMap::new();
-    params.insert(
-        "path".to_string(),
-        toml::Value::String(path.to_string()),
-    );
+    params.insert("path".to_string(), toml::Value::String(path.to_string()));
     GateConfig {
         gate_type: "file_exists".to_string(),
         intent: None,
@@ -151,7 +148,11 @@ fn test_branching_fallback_transition() {
     let mut sm = StateMachine::new(&config, ledger);
 
     let result = sm.transition("go", &[]);
-    assert!(result.is_ok(), "fallback candidate should succeed: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "fallback candidate should succeed: {:?}",
+        result
+    );
     assert_eq!(sm.current_state(), "done");
 }
 

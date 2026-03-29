@@ -1,0 +1,5 @@
+[[ledgers]]
+name = "default"
+path = "ledger.jsonl"
+mode = "stateful"
+created = "2026-03-29T04:34:13Z"

@@ -287,6 +287,7 @@ mod tests {
             renders: vec![],
             checkpoints: Default::default(),
             ledgers: HashMap::new(),
+            guards: None,
         }
     }
 

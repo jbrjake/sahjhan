@@ -2,6 +2,118 @@ use sahjhan::config::ProtocolConfig;
 use std::path::Path;
 
 #[test]
+fn test_guards_config_parsed() {
+    use tempfile::tempdir;
+
+    let dir = tempdir().unwrap();
+    let p = dir.path();
+
+    std::fs::write(
+        p.join("protocol.toml"),
+        r#"
+[protocol]
+name = "test"
+version = "1.0.0"
+description = "test"
+
+[paths]
+managed = []
+data_dir = ".data"
+render_dir = "."
+
+[guards]
+read_blocked = [".sahjhan/session.key", "enforcement/quiz-bank.json"]
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        p.join("states.toml"),
+        r#"
+[states.idle]
+label = "Idle"
+initial = true
+
+[states.done]
+label = "Done"
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        p.join("transitions.toml"),
+        r#"
+[[transitions]]
+from = "idle"
+to = "done"
+command = "finish"
+"#,
+    )
+    .unwrap();
+
+    let config = ProtocolConfig::load(p).unwrap();
+
+    let guards = config.guards.expect("guards should be Some when [guards] section is present");
+    assert_eq!(guards.read_blocked.len(), 2, "read_blocked should have 2 entries");
+    assert_eq!(
+        guards.read_blocked[0],
+        ".sahjhan/session.key",
+        "first entry should be .sahjhan/session.key"
+    );
+}
+
+#[test]
+fn test_guards_config_absent_is_none() {
+    use tempfile::tempdir;
+
+    let dir = tempdir().unwrap();
+    let p = dir.path();
+
+    std::fs::write(
+        p.join("protocol.toml"),
+        r#"
+[protocol]
+name = "test"
+version = "1.0.0"
+description = "test"
+
+[paths]
+managed = []
+data_dir = ".data"
+render_dir = "."
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        p.join("states.toml"),
+        r#"
+[states.idle]
+label = "Idle"
+initial = true
+
+[states.done]
+label = "Done"
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        p.join("transitions.toml"),
+        r#"
+[[transitions]]
+from = "idle"
+to = "done"
+command = "finish"
+"#,
+    )
+    .unwrap();
+
+    let config = ProtocolConfig::load(p).unwrap();
+    assert!(config.guards.is_none(), "guards should be None when [guards] section is absent");
+}
+
+#[test]
 fn test_event_config_restricted_field() {
     use tempfile::tempdir;
 

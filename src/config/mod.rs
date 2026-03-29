@@ -3,7 +3,7 @@
 // Unified protocol configuration and validation.
 //
 // ## Index
-// - ProtocolConfig          — unified config loaded from protocol directory
+// - ProtocolConfig          — unified config loaded from protocol directory (includes guards: Option<GuardsConfig>)
 // - [validate]              ProtocolConfig::validate()       — basic structural validation
 // - [validate-deep]         ProtocolConfig::validate_deep()  — file/alias/gate/render/ledger checks
 // - initial_state()         — find the state with initial = true
@@ -15,7 +15,9 @@ pub mod states;
 pub mod transitions;
 
 pub use events::{EventConfig, EventFieldConfig};
-pub use protocol::{CheckpointConfig, LedgerTemplateConfig, PathsConfig, ProtocolMeta, SetConfig};
+pub use protocol::{
+    CheckpointConfig, GuardsConfig, LedgerTemplateConfig, PathsConfig, ProtocolMeta, SetConfig,
+};
 pub use renders::RenderConfig;
 pub use states::{StateConfig, StateParam};
 pub use transitions::{GateConfig, TransitionConfig};
@@ -36,6 +38,7 @@ pub struct ProtocolConfig {
     pub renders: Vec<RenderConfig>,
     pub checkpoints: CheckpointConfig,
     pub ledgers: HashMap<String, LedgerTemplateConfig>,
+    pub guards: Option<GuardsConfig>,
 }
 
 impl ProtocolConfig {
@@ -102,6 +105,7 @@ impl ProtocolConfig {
             renders: renders_vec,
             checkpoints: proto_file.checkpoints,
             ledgers: proto_file.ledgers,
+            guards: proto_file.guards,
         })
     }
 

@@ -3,12 +3,13 @@
 // Deserialization structs for protocol.toml.
 //
 // ## Index
-// - ProtocolFile            — top-level wrapper (protocol, paths, sets, aliases, checkpoints, ledgers)
+// - ProtocolFile            — top-level wrapper (protocol, paths, sets, aliases, checkpoints, ledgers, guards)
 // - ProtocolMeta            — name, version, description
 // - PathsConfig             — managed, data_dir, render_dir
 // - SetConfig               — description + ordered values
 // - CheckpointConfig        — checkpoint interval
 // - LedgerTemplateConfig     — ledger declaration (path or path_template)
+// - GuardsConfig            — paths agents should be blocked from reading
 
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -26,6 +27,21 @@ pub struct ProtocolFile {
     pub checkpoints: CheckpointConfig,
     #[serde(default)]
     pub ledgers: HashMap<String, LedgerTemplateConfig>,
+    pub guards: Option<GuardsConfig>,
+}
+
+/// Configuration for the `[guards]` section of protocol.toml.
+///
+/// Lists paths that enforcement hooks should block agents from reading.
+///
+/// ```toml
+/// [guards]
+/// read_blocked = [".sahjhan/session.key", "enforcement/quiz-bank.json"]
+/// ```
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct GuardsConfig {
+    #[serde(default)]
+    pub read_blocked: Vec<String>,
 }
 
 /// Configuration for the `[checkpoints]` section of protocol.toml.

@@ -60,6 +60,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | Deep validation | `config/mod.rs` | `[validate-deep]` | File existence, gate types, aliases, ledger template checks |
 | Protocol metadata | `config/protocol.rs` | `ProtocolMeta`, `PathsConfig`, `SetConfig` | protocol.toml structures |
 | Ledger template | `config/protocol.rs` | `LedgerTemplateConfig` | `[ledgers]` section; path or path_template for template-based ledger creation |
+| Guards config | `config/protocol.rs` | `GuardsConfig` | `[guards]` section; `read_blocked` lists paths enforcement hooks should block agents from reading |
 | State definitions | `config/states.rs` | `StateConfig`, `StateParam` | states.toml; `StateParam.source` controls set derivation |
 | Transition defs | `config/transitions.rs` | `TransitionConfig`, `GateConfig` | transitions.toml; `args` declares positional params; `intent` is optional per-gate "why"; gates are `#[serde(flatten)]` |
 | Event definitions | `config/events.rs` | `EventConfig`, `EventFieldConfig` | events.toml; field patterns for validation; `restricted` marks HMAC-only events |

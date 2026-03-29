@@ -6,6 +6,7 @@
 // - ProtocolConfig          — unified config loaded from protocol directory (includes guards: Option<GuardsConfig>)
 // - [validate]              ProtocolConfig::validate()       — basic structural validation
 // - [validate-deep]         ProtocolConfig::validate_deep()  — file/alias/gate/render/ledger checks
+// - [validate-gate]         ProtocolConfig::validate_gate()  — recursive gate validator (composite + leaf)
 // - initial_state()         — find the state with initial = true
 
 pub mod events;
@@ -259,27 +260,10 @@ impl ProtocolConfig {
             ("query", vec!["sql"]),
         ]);
 
-        // 6. Gate type validation.
+        // 6. Gate type validation (recursive for composite gates).
         for t in &self.transitions {
             for gate in &t.gates {
-                match known_gates.get(gate.gate_type.as_str()) {
-                    None => {
-                        errors.push(format!(
-                            "transitions.toml: transition '{}' has unknown gate type '{}'",
-                            t.command, gate.gate_type
-                        ));
-                    }
-                    Some(required_params) => {
-                        for &param in required_params {
-                            if !gate.params.contains_key(param) {
-                                errors.push(format!(
-                                    "transitions.toml: gate '{}' in transition '{}' missing required parameter '{}'",
-                                    gate.gate_type, t.command, param
-                                ));
-                            }
-                        }
-                    }
-                }
+                Self::validate_gate(gate, &t.command, &known_gates, &mut errors);
             }
         }
 
@@ -436,5 +420,94 @@ impl ProtocolConfig {
         }
 
         (errors, warnings)
+    }
+
+    /// Recursively validate a single gate and its children.
+    ///
+    /// Composite gates (any_of, all_of, not, k_of_n) have structural
+    /// requirements checked here; leaf gates are validated against the
+    /// `known_gates` map for type and required params.
+    fn validate_gate(
+        gate: &GateConfig,
+        transition_command: &str,
+        known_gates: &HashMap<&str, Vec<&str>>,
+        errors: &mut Vec<String>,
+    ) {
+        match gate.gate_type.as_str() {
+            "any_of" | "all_of" => {
+                if gate.gates.is_empty() {
+                    errors.push(format!(
+                        "transitions.toml: gate '{}' in transition '{}' has empty gates list",
+                        gate.gate_type, transition_command
+                    ));
+                }
+                for child in &gate.gates {
+                    Self::validate_gate(child, transition_command, known_gates, errors);
+                }
+            }
+            "not" => {
+                if gate.gates.len() != 1 {
+                    errors.push(format!(
+                        "transitions.toml: gate 'not' in transition '{}' requires exactly 1 child gate, has {}",
+                        transition_command,
+                        gate.gates.len()
+                    ));
+                }
+                for child in &gate.gates {
+                    Self::validate_gate(child, transition_command, known_gates, errors);
+                }
+            }
+            "k_of_n" => {
+                if gate.gates.is_empty() {
+                    errors.push(format!(
+                        "transitions.toml: gate 'k_of_n' in transition '{}' has empty gates list",
+                        transition_command
+                    ));
+                }
+                let k = gate.params.get("k").and_then(|v| v.as_integer());
+                match k {
+                    None => {
+                        errors.push(format!(
+                            "transitions.toml: gate 'k_of_n' in transition '{}' missing required parameter 'k'",
+                            transition_command
+                        ));
+                    }
+                    Some(k_val) => {
+                        if k_val < 1 || k_val as usize > gate.gates.len() {
+                            errors.push(format!(
+                                "transitions.toml: gate 'k_of_n' in transition '{}' has k={} but {} child gates (k must be 1..=n)",
+                                transition_command,
+                                k_val,
+                                gate.gates.len()
+                            ));
+                        }
+                    }
+                }
+                for child in &gate.gates {
+                    Self::validate_gate(child, transition_command, known_gates, errors);
+                }
+            }
+            _ => {
+                // Leaf gate — validate type and required params.
+                match known_gates.get(gate.gate_type.as_str()) {
+                    None => {
+                        errors.push(format!(
+                            "transitions.toml: transition '{}' has unknown gate type '{}'",
+                            transition_command, gate.gate_type
+                        ));
+                    }
+                    Some(required_params) => {
+                        for &param in required_params {
+                            if !gate.params.contains_key(param) {
+                                errors.push(format!(
+                                    "transitions.toml: gate '{}' in transition '{}' missing required parameter '{}'",
+                                    gate.gate_type, transition_command, param
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }

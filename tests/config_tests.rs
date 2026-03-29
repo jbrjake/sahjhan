@@ -490,3 +490,122 @@ fn test_validate_render_ledger_template_references_valid_template() {
         errors
     );
 }
+
+#[test]
+fn test_validate_any_of_empty_gates_is_error() {
+    use sahjhan::config::*;
+    let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    config.transitions.push(TransitionConfig {
+        from: "idle".to_string(),
+        to: "working".to_string(),
+        command: "start_empty_any_of".to_string(),
+        args: vec![],
+        gates: vec![GateConfig {
+            gate_type: "any_of".to_string(),
+            intent: None,
+            gates: vec![],
+            params: std::collections::HashMap::new(),
+        }],
+    });
+    let (errors, _) = config.validate_deep(Path::new("examples/minimal"));
+    assert!(
+        errors.iter().any(|e| e.contains("any_of") && e.contains("empty")),
+        "Expected error about any_of with empty gates list: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_validate_not_wrong_child_count_is_error() {
+    use sahjhan::config::*;
+    let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    config.transitions.push(TransitionConfig {
+        from: "idle".to_string(),
+        to: "working".to_string(),
+        command: "start_bad_not".to_string(),
+        args: vec![],
+        gates: vec![GateConfig {
+            gate_type: "not".to_string(),
+            intent: None,
+            gates: vec![
+                GateConfig {
+                    gate_type: "no_violations".to_string(),
+                    intent: None,
+                    gates: vec![],
+                    params: std::collections::HashMap::new(),
+                },
+                GateConfig {
+                    gate_type: "no_violations".to_string(),
+                    intent: None,
+                    gates: vec![],
+                    params: std::collections::HashMap::new(),
+                },
+            ],
+            params: std::collections::HashMap::new(),
+        }],
+    });
+    let (errors, _) = config.validate_deep(Path::new("examples/minimal"));
+    assert!(
+        errors.iter().any(|e| e.contains("not") && e.contains("exactly 1")),
+        "Expected error about not gate requiring exactly 1 child: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_validate_k_of_n_missing_k_is_error() {
+    use sahjhan::config::*;
+    let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    config.transitions.push(TransitionConfig {
+        from: "idle".to_string(),
+        to: "working".to_string(),
+        command: "start_bad_k_of_n".to_string(),
+        args: vec![],
+        gates: vec![GateConfig {
+            gate_type: "k_of_n".to_string(),
+            intent: None,
+            gates: vec![GateConfig {
+                gate_type: "no_violations".to_string(),
+                intent: None,
+                gates: vec![],
+                params: std::collections::HashMap::new(),
+            }],
+            params: std::collections::HashMap::new(),
+        }],
+    });
+    let (errors, _) = config.validate_deep(Path::new("examples/minimal"));
+    assert!(
+        errors.iter().any(|e| e.contains("k_of_n") && e.contains("'k'")),
+        "Expected error about k_of_n missing 'k' parameter: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_validate_composite_validates_children_recursively() {
+    use sahjhan::config::*;
+    let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    config.transitions.push(TransitionConfig {
+        from: "idle".to_string(),
+        to: "working".to_string(),
+        command: "start_bad_child".to_string(),
+        args: vec![],
+        gates: vec![GateConfig {
+            gate_type: "any_of".to_string(),
+            intent: None,
+            gates: vec![GateConfig {
+                gate_type: "bogus_type".to_string(),
+                intent: None,
+                gates: vec![],
+                params: std::collections::HashMap::new(),
+            }],
+            params: std::collections::HashMap::new(),
+        }],
+    });
+    let (errors, _) = config.validate_deep(Path::new("examples/minimal"));
+    assert!(
+        errors.iter().any(|e| e.contains("bogus_type")),
+        "Expected error about unknown gate type 'bogus_type' in child: {:?}",
+        errors
+    );
+}

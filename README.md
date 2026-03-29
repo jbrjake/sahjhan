@@ -81,7 +81,41 @@ And because protocols are just TOML, I'm not writing a new bespoke enforcement s
 
 ## What a protocol looks like
 
-A protocol is a directory of TOML files. Here's one for TDD enforcement:
+A protocol is a directory of TOML files. Here's one that enforces TDD, because apparently that's something we need to enforce now.
+
+Five files, all wired together:
+
+```
+states.toml            transitions.toml              events.toml
+┌──────────────┐       ┌────────────────────┐        ┌──────────────────┐
+│ idle         │◀─from─┤ start              │        │ finding          │
+│ writing-tests│◀─to───┤                    │        │   severity       │
+│ implementing │       │ tests-done         │        │   file           │
+│ verifying    │       │   file_exists      │        │                  │
+└──────────────┘       │   command_succeeds │        │ set_member_      │
+                       │   set_covered──┐   │        │   complete       │
+protocol.toml          │                │   │        │   set, member    │
+┌──────────────┐       │ implement-done │   │        └──────────────────┘
+│ sets:        │◀──────┼────────────────┘   │               ▲
+│   suites:    │       │   command_succeeds │               │
+│   - unit     │       │   query────────────┼───────────────┘
+│   - integr.  │       │   no_violations    │  WHERE type='finding'
+└──────────────┘       └─────────┬──────────┘
+                                 │trigger
+                       ┌─────────┴──────────┐
+                       │ STATUS.md          │
+                       │   on_transition    │
+                       │ FINDINGS.md        │
+                       │   on_event [finding]│
+                       └────────────────────┘
+                       renders.toml
+```
+
+Transitions sit in the middle. They reference state names for where the agent is and where it's going, sets from `protocol.toml` for tracking work, event types from `events.toml` for gate conditions, and `renders.toml` fires automatically when transitions happen. You don't need to understand the whole picture up front — each file earns its existence as you go.
+
+### States: where the agent is
+
+Start with the steps. Four of them.
 
 ```toml
 # tdd-protocol/states.toml
@@ -100,6 +134,12 @@ label = "Verifying"
 terminal = true
 ```
 
+One state is `initial`, one is `terminal`, and the agent moves between them. It can't skip ahead, it can't go backwards, and it can't decide "actually I'm done" without Sahjhan agreeing.
+
+### Transitions: how the agent moves
+
+This is where the enforcement lives. Each transition has a command name, a `from` state, a `to` state, and gates — conditions Sahjhan checks independently before it'll let the agent through.
+
 ```toml
 # tdd-protocol/transitions.toml
 [[transitions]]
@@ -117,6 +157,9 @@ gates = [
       intent = "test file must exist on disk before implementation begins" },
     { type = "command_succeeds", cmd = "python -m pytest tests/", timeout = 60,
       intent = "tests must parse and execute (they can fail — this is TDD)" },
+    { type = "set_covered", set = "suites",
+      event = "set_member_complete", field = "member",
+      intent = "every test suite must be written before implementing" },
 ]
 
 [[transitions]]
@@ -126,20 +169,99 @@ command = "implement-done"
 gates = [
     { type = "command_succeeds", cmd = "python -m pytest tests/", timeout = 120,
       intent = "all tests must pass before verification" },
-    { type = "query", sql = "SELECT count(*) < 20 as result FROM events WHERE type='finding'", expect = "true",
+    { type = "query",
+      sql = "SELECT count(*) < 20 as result FROM events WHERE type='finding'",
+      expect = "true",
       intent = "finding count must stay under threshold" },
     { type = "no_violations",
-      intent = "clean record required — no evidence tampering" },
+      intent = "clean record — no tampering" },
 ]
 ```
 
-Every gate is something Sahjhan checks itself. `file_exists` looks at the disk. `command_succeeds` runs the test suite. `query` runs SQL against the ledger. `no_violations` checks the agent's permanent record. The agent doesn't self-report anything.
+Every gate is something Sahjhan checks itself. `file_exists` looks at the disk. `command_succeeds` runs the test suite — Sahjhan runs it, not the agent. `query` runs SQL against the ledger. `no_violations` checks the agent's permanent record. The agent doesn't self-report anything.
 
-The `intent` field is optional but recommended. When a gate blocks, Sahjhan prints the intent alongside the failure reason — so instead of just "gate failed," the agent sees *why* the gate exists and what it needs to do about it. If you omit `intent`, Sahjhan generates a default from the gate type.
+The `intent` field is optional but worth writing. When a gate blocks, Sahjhan prints the intent alongside the failure — so instead of a bare "gate failed," the agent sees *why* the gate exists. If you omit it, Sahjhan generates a default from the gate type.
+
+### Protocol: sets and project config
+
+That `set_covered` gate references something called `suites`. Where does that come from? `protocol.toml`. This is where you declare the project-level stuff — what directories Sahjhan protects, what sets of work need completing, and any command shortcuts.
+
+```toml
+# tdd-protocol/protocol.toml
+[protocol]
+name = "tdd"
+version = "1.0.0"
+description = "Test-driven development enforcement"
+
+[paths]
+managed = ["src", "tests"]
+data_dir = ".sahjhan"
+render_dir = "."
+
+[sets.suites]
+description = "Test suites that must be written"
+values = ["unit", "integration"]
+
+[aliases]
+"start" = "transition start"
+"done" = "transition implement-done"
+```
+
+The set `suites` has two members: `unit` and `integration`. The agent has to mark each one complete before the `set_covered` gate will pass. No shortcuts, no "I'll do integration tests later." Both. Then you move on.
+
+Aliases are just shortcuts. `sahjhan start` expands to `sahjhan transition start`. Small convenience, saves typing.
+
+### Events: what goes in the ledger
+
+The `query` gate runs SQL like `WHERE type='finding'`. But what is a finding? What fields does it have? Can the agent put "looks fine to me" in the severity field?
+
+No. `events.toml` defines the schema. Validated at recording time.
+
+```toml
+# tdd-protocol/events.toml
+[events.finding]
+description = "Code quality issue found during review"
+fields = [
+    { name = "id", type = "string" },
+    { name = "severity", type = "string", pattern = "^(LOW|MEDIUM|HIGH|CRITICAL)$" },
+    { name = "file", type = "string" },
+]
+
+[events.set_member_complete]
+description = "A test suite has been written"
+fields = [
+    { name = "set", type = "string" },
+    { name = "member", type = "string" },
+]
+```
+
+The `pattern` regex on `severity` means the agent picks from four values or gets rejected. Fields declared here become SQL columns — you define the schema once, then query it forever. No JSON parsing at query time.
+
+### Renders: status files the agent can't touch
+
+You probably want a STATUS.md that shows where things stand. Normally the agent would write it, which means the agent controls what it says. Instead, Sahjhan renders it from the ledger. The agent never touches these files directly.
+
+```toml
+# tdd-protocol/renders.toml
+[[renders]]
+target = "STATUS.md"
+template = "templates/status.md.tera"
+trigger = "on_transition"
+
+[[renders]]
+target = "FINDINGS.md"
+template = "templates/findings.md.tera"
+trigger = "on_event"
+event_types = ["finding"]
+```
+
+`on_transition` renders fire every time the state changes. `on_event` renders fire when specific events are recorded — here, every time a finding gets logged, the findings report updates. Templates use [Tera](https://keats.github.io/tera/) (Jinja2 syntax). If you're using multiple ledgers, renders can target a specific one by name or by template — more on that in the ledger templates section below.
+
+That's the whole protocol. Five files, no code.
 
 ## What enforcement actually looks like
 
-`--config-dir` points at that directory. Sahjhan reads the TOML, enforces the gates.
+`--config-dir` points at that protocol directory. Sahjhan reads the TOML, enforces the gates.
 
 ```bash
 sahjhan --config-dir tdd-protocol init
@@ -158,7 +280,15 @@ sahjhan --config-dir tdd-protocol transition tests-done
 # BLOCKED command_succeeds: 'python -m pytest tests/' exit 1
 #   intent: tests must parse and execute (they can fail — this is TDD)
 
-# Agent fixes tests so they execute (and fail, because nothing's implemented)
+# Agent fixes tests so they parse. Still blocked — suites aren't done.
+sahjhan --config-dir tdd-protocol transition tests-done
+# BLOCKED set_covered: suites not fully covered (1/2)
+#   intent: every test suite must be written before implementing
+
+# Agent marks both suites complete
+sahjhan --config-dir tdd-protocol set complete suites unit
+sahjhan --config-dir tdd-protocol set complete suites integration
+
 sahjhan --config-dir tdd-protocol transition tests-done
 # writing-tests → implementing
 
@@ -259,158 +389,6 @@ The manifest tracks SHA-256 hashes of every managed file. Touch one through Bash
 
 Hooks handle the perimeter. PreToolUse blocks writes to managed files. PostToolUse checks integrity after every Bash command.
 
-## Building a protocol
-
-Five TOML files, no code. Here's a deployment checklist.
-
-### `protocol.toml`
-
-What directories does Sahjhan own? What needs completing? Any command shortcuts?
-
-```toml
-[protocol]
-name = "deploy-checklist"
-version = "1.0.0"
-description = "Pre-deployment verification"
-
-[paths]
-managed = ["deploy"]
-data_dir = "deploy/.sahjhan"
-render_dir = "deploy"
-
-[sets.checks]
-description = "Pre-deploy verifications"
-values = ["tests", "security-scan"]
-
-[aliases]
-"begin" = "transition start-review"
-"deploy" = "transition approve-deploy"
-
-[checkpoints]
-interval = 100
-
-# Optional: declare ledger templates for repeatable runs
-[ledgers.run]
-description = "Per-deployment audit trail"
-path_template = "runs/{template.instance_id}/ledger.jsonl"
-```
-
-### `states.toml`
-
-States your protocol moves through. One is `initial`. Terminal states are the end.
-
-```toml
-[states.waiting]
-label = "Waiting"
-initial = true
-
-[states.reviewing]
-label = "Under Review"
-
-[states.deployed]
-label = "Deployed"
-terminal = true
-```
-
-### `transitions.toml`
-
-Where enforcement lives. Gates are conditions Sahjhan verifies independently.
-
-```toml
-[[transitions]]
-from = "waiting"
-to = "reviewing"
-command = "start-review"
-gates = []
-
-[[transitions]]
-from = "reviewing"
-to = "deployed"
-command = "approve-deploy"
-gates = [
-    # Sahjhan runs this itself. Exit 0 or you don't deploy.
-    { type = "command_succeeds", cmd = "cargo test --quiet", timeout = 120 },
-
-    # Both checks must have completion events
-    { type = "set_covered", set = "checks",
-      event = "set_member_complete", field = "member" },
-
-    # SQL gate: no more than 5 unresolved findings
-    { type = "query",
-      sql = "SELECT count(*) < 6 as result FROM events WHERE type='finding'",
-      expect = "true" },
-
-    # Clean record. No tampering.
-    { type = "no_violations" },
-]
-```
-
-`command_succeeds` is Sahjhan running `cargo test` and checking the exit code. Not the agent reporting its own test results. `query` runs SQL against the live ledger. The agent can't argue with arithmetic.
-
-### `events.toml`
-
-Event types and field schemas. Validated at recording time. The `pattern` regex means the agent can't put "yeah probably fine" in a boolean field.
-
-Fields declared here become SQL columns. You write the schema once; queries use it from then on.
-
-```toml
-[events.set_member_complete]
-description = "A verification check completed"
-fields = [
-    { name = "set", type = "string" },
-    { name = "member", type = "string" },
-]
-
-[events.scan_result]
-description = "Security scan output"
-fields = [
-    { name = "tool", type = "string" },
-    { name = "findings", type = "string" },
-    { name = "passed", type = "string", pattern = "^(true|false)$" },
-]
-```
-
-### `renders.toml`
-
-Optional. Sahjhan renders status files from the ledger. The agent never writes them directly. Each render can target a specific ledger if you have more than one.
-
-```toml
-[[renders]]
-target = "STATUS.md"
-template = "templates/status.md.tera"
-trigger = "on_transition"
-
-[[renders]]
-target = "HISTORY.md"
-template = "templates/history.md.tera"
-trigger = "on_event"
-event_types = ["set_member_complete", "scan_result"]
-```
-
-If you're using ledger templates, renders can resolve ledgers by template name instead of literal name. This way a single render definition works across all instances of a template:
-
-```toml
-[[renders]]
-target = "STATUS.md"
-template = "templates/run-status.md.tera"
-trigger = "on_transition"
-ledger_template = "run"
-```
-
-When `ledger_template` is set, Sahjhan resolves it to whichever ledger instance is currently active (the one targeted by `--ledger`). The render context also gets `template_instance_id` and `template_name` variables, so your Tera templates can reference the run number or template name directly.
-
-Templates use [Tera](https://keats.github.io/tera/) (Jinja2 syntax).
-
-That's the whole protocol. Five files.
-
-```bash
-sahjhan --config-dir deploy-checklist init
-sahjhan --config-dir deploy-checklist begin
-sahjhan --config-dir deploy-checklist set complete checks tests
-sahjhan --config-dir deploy-checklist set complete checks security-scan
-sahjhan --config-dir deploy-checklist deploy
-```
-
 ## Gate types
 
 | Gate type | Parameters | What it checks |
@@ -456,6 +434,7 @@ All commands accept `--config-dir <path>` (default: `enforcement`), `--ledger <n
 
 ```
 sahjhan init                              Initialize ledger, registry, manifest, genesis
+sahjhan validate                          Check protocol config (gates, sets, templates)
 sahjhan status                            Current state, set progress, gate status
 sahjhan transition <command> [args...]     Execute a named transition (runs gates)
 sahjhan event <type> [--field KEY=VALUE]   Record a protocol event
@@ -486,7 +465,7 @@ sahjhan ledger checkpoint --name <n>      Write checkpoint event
 sahjhan ledger import --name <n> --path <p>   Import bare JSONL from stdin
 ```
 
-Aliases in `protocol.toml` create shortcuts (`"start" = "transition begin"`). Exit codes: 0 success, 1 gate blocked, 2 integrity error, 3 config error.
+Aliases in `protocol.toml` create shortcuts (`"start" = "transition start"`). Exit codes: 0 success, 1 gate blocked, 2 integrity error, 3 config error.
 
 ## Security details
 

@@ -99,6 +99,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | Template resolution | `gates/template.rs` | `[resolve-template]` | `{{var}}` → shell-escaped value |
 | Plain resolution | `gates/template.rs` | `[resolve-template-plain]` | `{{var}}` → raw value (for SQL) |
 | Shell escaping | `gates/template.rs` | `[shell-escape]` | POSIX single-quote escaping |
+| Unresolved var scan | `gates/template.rs` | `[find-unresolved-vars]` | Detect leftover `{{key}}` placeholders after resolution |
 | any_of gate | `gates/types.rs` | `[eval]` (inline) | Composite: pass if any child gate passes |
 | all_of gate | `gates/types.rs` | `[eval]` (inline) | Composite: pass if all child gates pass |
 | not gate | `gates/types.rs` | `[eval]` (inline) | Composite: invert result of single child gate |

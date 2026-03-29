@@ -8,6 +8,7 @@
 // - [resolve-template-with]           resolve_template_with()   — replace {{key}} with strategy
 // - [resolve-template]                resolve_template()        — shell-escaped substitution
 // - [resolve-template-plain]          resolve_template_plain()  — raw substitution (for SQL)
+// - [find-unresolved-vars]            find_unresolved_vars()    — detect leftover {{key}} after resolution
 
 use std::collections::HashMap;
 
@@ -72,6 +73,26 @@ pub fn resolve_template_plain(template: &str, vars: &HashMap<String, String>) ->
     resolve_template_with(template, vars, EscapeStrategy::None)
 }
 
+// [find-unresolved-vars]
+/// Scan a resolved template string for any remaining `{{key}}` placeholders.
+///
+/// Returns the list of placeholder names that were not substituted.
+/// An empty vec means all placeholders were resolved.
+pub fn find_unresolved_vars(resolved: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut rest = resolved;
+    while let Some(start) = rest.find("{{") {
+        let after_start = &rest[start + 2..];
+        if let Some(end) = after_start.find("}}") {
+            names.push(after_start[..end].to_string());
+            rest = &after_start[end + 2..];
+        } else {
+            break;
+        }
+    }
+    names
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,5 +133,30 @@ mod tests {
         let vars = HashMap::new();
         let result = resolve_template("echo {{missing}}", &vars);
         assert_eq!(result, "echo {{missing}}");
+    }
+
+    #[test]
+    fn find_unresolved_none_when_all_resolved() {
+        let mut vars = HashMap::new();
+        vars.insert("name".to_string(), "world".to_string());
+        let resolved = resolve_template("hello {{name}}", &vars);
+        assert_eq!(find_unresolved_vars(&resolved), Vec::<String>::new());
+    }
+
+    #[test]
+    fn find_unresolved_detects_remaining_placeholders() {
+        let mut vars = HashMap::new();
+        vars.insert("name".to_string(), "world".to_string());
+        let resolved = resolve_template("hello {{name}} in {{place}}", &vars);
+        assert_eq!(find_unresolved_vars(&resolved), vec!["place".to_string()]);
+    }
+
+    #[test]
+    fn find_unresolved_multiple() {
+        let resolved = "{{a}} and {{b}}";
+        assert_eq!(
+            find_unresolved_vars(resolved),
+            vec!["a".to_string(), "b".to_string()]
+        );
     }
 }

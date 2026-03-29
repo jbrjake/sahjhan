@@ -5,6 +5,7 @@
 // ## Index
 // - [cmd-transition] cmd_transition() — execute a named transition (runs gates)
 // - [cmd-gate-check] cmd_gate_check() — dry-run gate evaluation
+// - [record-and-render] record_and_render() — shared event recording + render triggering logic
 // - [cmd-event] cmd_event() — record a protocol event
 
 use std::collections::HashMap;
@@ -260,6 +261,88 @@ pub fn cmd_gate_check(
 }
 
 // ---------------------------------------------------------------------------
+// shared event recording + render triggering
+// ---------------------------------------------------------------------------
+
+// [record-and-render]
+/// Shared event recording + render triggering logic.
+/// Used by both cmd_event and cmd_authed_event after their respective validations.
+pub fn record_and_render(
+    config: &crate::config::ProtocolConfig,
+    config_path: &std::path::Path,
+    machine: &mut StateMachine,
+    manifest: &mut crate::manifest::tracker::Manifest,
+    data_dir: &std::path::Path,
+    event_type: &str,
+    fields: HashMap<String, String>,
+    targeting: &LedgerTargeting,
+) -> i32 {
+    match machine.record_event(event_type, fields) {
+        Ok(()) => {
+            if let Err((code, msg)) =
+                track_ledger_in_manifest(manifest, data_dir, machine.ledger())
+            {
+                eprintln!("{}", msg);
+                return code;
+            }
+            if let Err((code, msg)) = save_manifest(manifest, data_dir) {
+                eprintln!("{}", msg);
+                return code;
+            }
+
+            let mut render_count = 0usize;
+
+            if !config.renders.is_empty() {
+                let registry_path = super::commands::registry_path_from_config(config);
+                if let Ok(engine) = RenderEngine::new(config, config_path) {
+                    let mut engine = engine.with_registry(registry_path);
+                    if let Some(ref name) = targeting.ledger_name {
+                        engine = engine.with_active_ledger_name(name.clone());
+                    }
+                    let render_dir = resolve_data_dir(&config.paths.render_dir);
+                    let ledger_seq = machine
+                        .ledger()
+                        .entries()
+                        .last()
+                        .map(|e| e.seq)
+                        .unwrap_or(0);
+                    match engine.render_triggered(
+                        "on_event",
+                        Some(event_type),
+                        machine.ledger(),
+                        &render_dir,
+                        manifest,
+                        ledger_seq,
+                    ) {
+                        Ok(rendered) => {
+                            render_count = rendered.len();
+                            if !rendered.is_empty() {
+                                let _ = save_manifest(manifest, data_dir);
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("error: render: {}", e);
+                        }
+                    }
+                }
+            }
+
+            if render_count > 0 {
+                println!("recorded: {} ({} rendered)", event_type, render_count);
+            } else {
+                println!("recorded: {}", event_type);
+            }
+
+            EXIT_SUCCESS
+        }
+        Err(e) => {
+            eprintln!("error: cannot record event: {}", e);
+            EXIT_INTEGRITY_ERROR
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // event
 // ---------------------------------------------------------------------------
 
@@ -363,68 +446,14 @@ pub fn cmd_event(
 
     let mut machine = StateMachine::new(&config, ledger);
 
-    match machine.record_event(event_type, fields) {
-        Ok(()) => {
-            if let Err((code, msg)) =
-                track_ledger_in_manifest(&mut manifest, &data_dir, machine.ledger())
-            {
-                eprintln!("{}", msg);
-                return code;
-            }
-            if let Err((code, msg)) = save_manifest(&mut manifest, &data_dir) {
-                eprintln!("{}", msg);
-                return code;
-            }
-
-            let mut render_count = 0usize;
-
-            // Trigger on_event renders
-            if !config.renders.is_empty() {
-                let registry_path = super::commands::registry_path_from_config(&config);
-                if let Ok(engine) = RenderEngine::new(&config, &config_path) {
-                    let mut engine = engine.with_registry(registry_path);
-                    if let Some(ref name) = targeting.ledger_name {
-                        engine = engine.with_active_ledger_name(name.clone());
-                    }
-                    let render_dir = resolve_data_dir(&config.paths.render_dir);
-                    let ledger_seq = machine
-                        .ledger()
-                        .entries()
-                        .last()
-                        .map(|e| e.seq)
-                        .unwrap_or(0);
-                    match engine.render_triggered(
-                        "on_event",
-                        Some(event_type),
-                        machine.ledger(),
-                        &render_dir,
-                        &mut manifest,
-                        ledger_seq,
-                    ) {
-                        Ok(rendered) => {
-                            render_count = rendered.len();
-                            if !rendered.is_empty() {
-                                let _ = save_manifest(&mut manifest, &data_dir);
-                            }
-                        }
-                        Err(e) => {
-                            eprintln!("error: render: {}", e);
-                        }
-                    }
-                }
-            }
-
-            if render_count > 0 {
-                println!("recorded: {} ({} rendered)", event_type, render_count);
-            } else {
-                println!("recorded: {}", event_type);
-            }
-
-            EXIT_SUCCESS
-        }
-        Err(e) => {
-            eprintln!("error: cannot record event: {}", e);
-            EXIT_INTEGRITY_ERROR
-        }
-    }
+    record_and_render(
+        &config,
+        &config_path,
+        &mut machine,
+        &mut manifest,
+        &data_dir,
+        event_type,
+        fields,
+        targeting,
+    )
 }

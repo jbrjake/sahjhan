@@ -178,7 +178,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | Alias resolution | `cli/aliases.rs` | `[resolve-alias]` | Rewrite CLI args via protocol aliases |
 | Shared helpers | `cli/commands.rs` | (see file index) | Exit codes, ledger targeting, config loading, `[compute-registry-path]` |
 | Init/validate/reset | `cli/init.rs` | `[cmd-init]`, `[cmd-validate]`, `[cmd-reset]` | Lifecycle commands |
-| Transition/gate/event | `cli/transition.rs` | `[cmd-transition]`, `[cmd-gate-check]`, `[cmd-event]` | State machine commands |
+| Transition/gate/event | `cli/transition.rs` | `[cmd-transition]`, `[cmd-gate-check]`, `[record-and-render]`, `[cmd-event]` | State machine commands |
 | Status/sets | `cli/status.rs` | `[cmd-status]`, `[cmd-set-status]`, `[cmd-set-complete]` | Status display + set management |
 | Log inspection | `cli/log.rs` | `[cmd-log-dump]`, `[cmd-log-verify]`, `[cmd-log-tail]` | Ledger viewing |
 | Ledger management | `cli/ledger.rs` | `[cmd-ledger-create]`, `[cmd-ledger-list]`, etc. | Multi-ledger CRUD; create supports `--from` template mode |

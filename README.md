@@ -191,23 +191,32 @@ states.toml            transitions.toml              events.toml
 │ idle         │◀─from─┤ start              │        │ finding          │
 │ writing-tests│◀─to───┤                    │        │   severity       │
 │ implementing │       │ tests-done         │        │   file           │
-│ verifying    │       │   file_exists      │        │                  │
-└──────────────┘       │   command_succeeds │        │ set_member_      │
-                       │   set_covered──┐   │        │   complete       │
-protocol.toml          │                │   │        │   set, member    │
-┌──────────────┐       │ implement-done │   │        └──────────────────┘
-│ sets:        │◀──────┼────────────────┘   │               ▲
-│   suites:    │       │   command_succeeds │               │
-│   - unit     │       │   query────────────┼───────────────┘
-│   - integr.  │       │   no_violations    │  WHERE type='finding'
-└──────────────┘       └─────────┬──────────┘
-                                 │trigger
-                       ┌─────────┴──────────┐
-                       │ STATUS.md          │
-                       │   on_transition    │
-                       │ FINDINGS.md        │
-                       │   on_event [finding]│
-                       └────────────────────┘
+│ fix-and-retry│       │   file_exists      │        │                  │
+│ verifying    │       │   any_of           │        │ set_member_      │
+└──────────────┘       │     ├ cmd_succeeds │        │   complete       │
+                       │     └ ledger_has   │        │   set, member    │
+protocol.toml          │   set_covered──┐   │        └──────────────────┘
+┌──────────────┐       │                │   │               ▲
+│ sets:        │◀──────┼────────────────┘   │               │
+│   suites:    │       │ submit (2 routes)  │               │
+│   - unit     │       │   → verifying      │               │
+│   - integr.  │       │     cmd_succeeds   │               │
+└──────────────┘       │     k_of_n (2/3)   │               │
+                       │     no_violations  │               │
+                       │   → fix-and-retry  │               │
+                       │     (fallback)     │               │
+                       │                    │               │
+                       │ retry              │               │
+                       │   fix-and-retry    │               │
+                       │     → implementing │               │
+                       └─────────┬──────────┘               │
+                                 │trigger                    │
+                       ┌─────────┴──────────┐               │
+                       │ STATUS.md          │               │
+                       │   on_transition    │               │
+                       │ FINDINGS.md        │               │
+                       │   on_event [finding]┼───────────────┘
+                       └────────────────────┘  query: WHERE type='finding'
                        renders.toml
 ```
 
@@ -215,7 +224,7 @@ Transitions sit in the middle. They reference state names for where the agent is
 
 ### States: where the agent is
 
-Start with the steps. Four of them.
+Start with the steps. Five of them.
 
 ```toml
 # tdd-protocol/states.toml
@@ -229,12 +238,15 @@ label = "Writing tests"
 [states.implementing]
 label = "Implementing"
 
+[states.fix-and-retry]
+label = "Fix and retry"
+
 [states.verifying]
 label = "Verifying"
 terminal = true
 ```
 
-One state is `initial`, one is `terminal`, and the agent moves between them. It can't skip ahead, it can't go backwards, and it can't decide "actually I'm done" without Sahjhan agreeing.
+One state is `initial`, one is `terminal`, and the agent moves between them. It can't skip ahead, it can't go backwards, and it can't decide "actually I'm done" without Sahjhan agreeing. The `fix-and-retry` state exists because sometimes tests fail, and the honest thing is to admit that and loop back. More on that shortly.
 
 ### Transitions: how the agent moves
 
@@ -255,30 +267,51 @@ command = "tests-done"
 gates = [
     { type = "file_exists", path = "tests/test_feature.py",
       intent = "test file must exist on disk before implementation begins" },
-    { type = "command_succeeds", cmd = "python -m pytest tests/", timeout = 60,
-      intent = "tests must parse and execute (they can fail — this is TDD)" },
+    { type = "any_of", intent = "tests must run or be explicitly overridden", gates = [
+        { type = "command_succeeds", cmd = "python -m pytest tests/", timeout = 60 },
+        { type = "ledger_has_event", event = "manual_test_override" },
+    ]},
     { type = "set_covered", set = "suites",
       event = "set_member_complete", field = "member",
       intent = "every test suite must be written before implementing" },
 ]
 
+# Happy path: tests pass + quality checks → advance
 [[transitions]]
 from = "implementing"
 to = "verifying"
-command = "implement-done"
+command = "submit"
 gates = [
     { type = "command_succeeds", cmd = "python -m pytest tests/", timeout = 120,
       intent = "all tests must pass before verification" },
-    { type = "query",
-      sql = "SELECT count(*) < 20 as result FROM events WHERE type='finding'",
-      expect = "true",
-      intent = "finding count must stay under threshold" },
-    { type = "no_violations",
-      intent = "clean record — no tampering" },
+    { type = "k_of_n", k = 2, intent = "at least 2 of 3 code quality checks must pass", gates = [
+        { type = "command_succeeds", cmd = "python -m mypy src/" },
+        { type = "command_succeeds", cmd = "python -m pylint src/" },
+        { type = "command_succeeds", cmd = "python -m bandit -r src/" },
+    ]},
+    { type = "no_violations", intent = "clean record — no tampering" },
 ]
+
+# Fallback: tests fail → go fix them
+[[transitions]]
+from = "implementing"
+to = "fix-and-retry"
+command = "submit"
+gates = []
+
+# Recovery loop
+[[transitions]]
+from = "fix-and-retry"
+to = "implementing"
+command = "retry"
+gates = []
 ```
 
-Every gate is something Sahjhan checks itself. `file_exists` looks at the disk. `command_succeeds` runs the test suite — Sahjhan runs it, not the agent. `query` runs SQL against the ledger. `no_violations` checks the agent's permanent record. The agent doesn't self-report anything.
+A few things to notice. The `any_of` gate on `tests-done` means either the test suite runs successfully *or* someone recorded a `manual_test_override` event — because sometimes the CI is down and you need an escape hatch, and that escape hatch is auditable. The `k_of_n` gate on `submit` requires 2 of 3 code quality checks to pass, because demanding perfection from mypy, pylint, *and* bandit simultaneously is a recipe for nobody ever shipping anything.
+
+Two transitions share the command `submit` from `implementing`. The first one (to `verifying`) has strict gates. The second one (to `fix-and-retry`) has none. If the tests pass and the quality checks clear, the agent advances. If not, it gets routed to the fix loop instead. Sahjhan tries them in order. First match wins. More on this in the conditional transitions section below.
+
+Every gate is something Sahjhan checks itself. `file_exists` looks at the disk. `command_succeeds` runs the test suite — Sahjhan runs it, not the agent. `no_violations` checks the agent's permanent record. The agent doesn't self-report anything.
 
 The `intent` field is optional but worth writing. When a gate blocks, Sahjhan prints the intent alongside the failure — so instead of a bare "gate failed," the agent sees *why* the gate exists. If you omit it, Sahjhan generates a default from the gate type.
 
@@ -304,7 +337,7 @@ values = ["unit", "integration"]
 
 [aliases]
 "start" = "transition start"
-"done" = "transition implement-done"
+"done" = "transition submit"
 ```
 
 The set `suites` has two members: `unit` and `integration`. The agent has to mark each one complete before the `set_covered` gate will pass. No shortcuts, no "I'll do integration tests later." Both. Then you move on.
@@ -391,8 +424,8 @@ sahjhan --config-dir tdd-protocol transition tests-done
 
 # Agent writes the test file, tries again
 sahjhan --config-dir tdd-protocol transition tests-done
-# BLOCKED command_succeeds: 'python -m pytest tests/' exit 1
-#   intent: tests must parse and execute (they can fail — this is TDD)
+# BLOCKED any_of: no child gate passed
+#   intent: tests must run or be explicitly overridden
 
 # Agent fixes tests so they parse. Still blocked — suites aren't done.
 sahjhan --config-dir tdd-protocol transition tests-done
@@ -407,14 +440,21 @@ sahjhan --config-dir tdd-protocol transition tests-done
 # writing-tests → implementing
 
 # Agent implements, tries to advance
-sahjhan --config-dir tdd-protocol transition implement-done
-# BLOCKED command_succeeds: 'python -m pytest tests/' exit 1
-#   intent: all tests must pass before verification
+sahjhan --config-dir tdd-protocol transition submit
+# implementing → verifying
 
-# Agent fixes until tests pass
-sahjhan --config-dir tdd-protocol transition implement-done
+# Or, if tests fail:
+sahjhan --config-dir tdd-protocol transition submit
+# implementing → fix-and-retry (fallback — tests didn't pass)
+
+sahjhan --config-dir tdd-protocol transition retry
+# fix-and-retry → implementing
+
+sahjhan --config-dir tdd-protocol transition submit
 # implementing → verifying
 ```
+
+Notice `submit` doesn't fail — it routes. If the gates for `implementing → verifying` don't pass, Sahjhan doesn't just reject the agent. It checks the next candidate with the same command and finds `implementing → fix-and-retry`, which has no gates, so it always matches. The agent lands in the fix loop instead of getting a brick wall. The ledger records exactly which path was taken, so you can see after the fact how many times the agent needed to loop.
 
 And unlike a JSON history file, the ledger can't be deleted, reset, or rewritten with fabricated entries.
 
@@ -525,6 +565,86 @@ All gate types accept an optional `intent` parameter — a human-readable string
 
 Template variables (`{{current}}`, `{{paths.render_dir}}`) get resolved from state params and config, then shell-escaped before interpolation. Because yes, they will try injection.
 
+## Gate composition
+
+Gate lists on a transition are implicitly AND — every gate must pass. That covers the common case, but sometimes you need more nuance. "Either the tests pass or someone signed off manually." "At least 2 of 3 security scans." "No regressions recorded." For those, wrap gates in composites:
+
+| Composite | What it does | Example |
+|-----------|-------------|---------|
+| `any_of` | Pass if any child passes (OR) | Either tests pass or manual approval recorded |
+| `all_of` | Pass if all children pass (explicit AND) | Useful nested inside `any_of` for grouped conditions |
+| `not` | Pass if child fails (NOT) | No regressions recorded in ledger |
+| `k_of_n` | Pass if k+ children pass | 2 of 3 code quality tools must clear |
+
+Composites nest. An `any_of` can contain an `all_of` which contains leaf gates. The depth limit is "whatever you can still read six months from now," which in practice is about two levels. Sahjhan won't stop you from going deeper. You'll stop yourself.
+
+From the TDD protocol above:
+
+```toml
+# OR: either automated tests or a recorded manual override
+{ type = "any_of", intent = "tests must run or be explicitly overridden", gates = [
+    { type = "command_succeeds", cmd = "python -m pytest tests/", timeout = 60 },
+    { type = "ledger_has_event", event = "manual_test_override" },
+]}
+
+# K-of-N: 2 of 3 quality checks must pass
+{ type = "k_of_n", k = 2, intent = "at least 2 of 3 code quality checks must pass", gates = [
+    { type = "command_succeeds", cmd = "python -m mypy src/" },
+    { type = "command_succeeds", cmd = "python -m pylint src/" },
+    { type = "command_succeeds", cmd = "python -m bandit -r src/" },
+]}
+```
+
+The `not` gate takes a single child:
+
+```toml
+{ type = "not", intent = "no regressions before release", gate = {
+    type = "ledger_has_event", event = "regression"
+}}
+```
+
+`sahjhan validate` checks that composite gates are well-formed — `any_of` and `all_of` need a `gates` array, `not` needs a single `gate`, and `k_of_n` needs `k` to be a positive integer less than or equal to the number of children. It won't catch your bad logic, but it will catch your bad syntax.
+
+## Conditional transitions
+
+Multiple transitions can share the same `from` state and `command`. When the agent runs the command, Sahjhan evaluates each candidate in order and takes the first one whose gates pass. Think of it as pattern matching: the specific case goes first, the fallback goes last.
+
+```toml
+# First candidate: strict gates
+[[transitions]]
+from = "implementing"
+to = "verifying"
+command = "submit"
+gates = [
+    { type = "command_succeeds", cmd = "python -m pytest tests/", timeout = 120 },
+    { type = "k_of_n", k = 2, gates = [ ... ] },
+    { type = "no_violations" },
+]
+
+# Second candidate: no gates (always matches)
+[[transitions]]
+from = "implementing"
+to = "fix-and-retry"
+command = "submit"
+gates = []
+```
+
+If the tests pass and the quality checks clear, the agent advances to `verifying`. If not, it lands in `fix-and-retry`. The command doesn't fail — it routes. The ledger records which transition was taken, so you can see after the fact whether the agent got through clean or had to loop.
+
+`sahjhan validate` warns when a branching command has no fallback (i.e., every candidate has gates, so it's possible for all of them to fail and the command to be a dead end). Sometimes that's intentional. Often it isn't.
+
+`sahjhan gate check submit` shows all candidates and which would match:
+
+```bash
+sahjhan --config-dir tdd-protocol gate check submit
+# candidate 1: implementing → verifying
+#   BLOCKED command_succeeds: 'python -m pytest tests/' exit 1
+#     intent: all tests must pass before verification
+# candidate 2: implementing → fix-and-retry
+#   all gates passed
+# result: implementing → fix-and-retry
+```
+
 ## Integrating with Claude Code
 
 ```bash
@@ -584,6 +704,9 @@ sahjhan ledger remove --name <n>          Unregister (keeps file)
 sahjhan ledger verify [--name <n>]        Validate chain integrity
 sahjhan ledger checkpoint --name <n>      Write checkpoint event
 sahjhan ledger import --name <n> --path <p>   Import bare JSONL from stdin
+
+sahjhan mermaid                           Generate Mermaid stateDiagram-v2
+sahjhan mermaid --rendered                ASCII art protocol diagram
 ```
 
 Aliases in `protocol.toml` create shortcuts (`"start" = "transition start"`). Exit codes: 0 success, 1 gate blocked, 2 integrity error, 3 config error, 4 usage error.

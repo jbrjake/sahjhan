@@ -12,6 +12,7 @@ fn test_events() -> HashMap<String, EventConfig> {
         "finding".to_string(),
         EventConfig {
             description: "A finding".to_string(),
+            restricted: None,
             fields: vec![
                 EventFieldConfig {
                     name: "id".to_string(),

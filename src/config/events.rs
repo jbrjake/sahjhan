@@ -4,7 +4,7 @@
 //
 // ## Index
 // - EventsFile              — top-level wrapper
-// - EventConfig             — single event type definition
+// - EventConfig             — single event type definition; `restricted` marks HMAC-only events
 // - EventFieldConfig        — field name, type, pattern, allowed values
 
 use serde::Deserialize;
@@ -20,6 +20,8 @@ pub struct EventsFile {
 #[derive(Debug, Deserialize, Clone)]
 pub struct EventConfig {
     pub description: String,
+    #[serde(default)]
+    pub restricted: Option<bool>,
     pub fields: Vec<EventFieldConfig>,
 }
 

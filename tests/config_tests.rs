@@ -2,6 +2,85 @@ use sahjhan::config::ProtocolConfig;
 use std::path::Path;
 
 #[test]
+fn test_event_config_restricted_field() {
+    use tempfile::tempdir;
+
+    let dir = tempdir().unwrap();
+    let p = dir.path();
+
+    std::fs::write(
+        p.join("protocol.toml"),
+        r#"
+[protocol]
+name = "test"
+version = "1.0.0"
+description = "test"
+
+[paths]
+managed = []
+data_dir = ".data"
+render_dir = "."
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        p.join("states.toml"),
+        r#"
+[states.idle]
+label = "Idle"
+initial = true
+
+[states.done]
+label = "Done"
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        p.join("transitions.toml"),
+        r#"
+[[transitions]]
+from = "idle"
+to = "done"
+command = "finish"
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        p.join("events.toml"),
+        r#"
+[events.audit_logged]
+description = "An auditable event requiring HMAC proof"
+restricted = true
+fields = []
+
+[events.normal_note]
+description = "An ordinary unrestricted event"
+fields = []
+"#,
+    )
+    .unwrap();
+
+    let config = ProtocolConfig::load(p).unwrap();
+
+    let audit = config.events.get("audit_logged").expect("audit_logged event should exist");
+    assert_eq!(
+        audit.restricted,
+        Some(true),
+        "audit_logged should have restricted = Some(true)"
+    );
+
+    let note = config.events.get("normal_note").expect("normal_note event should exist");
+    assert_eq!(
+        note.restricted,
+        None,
+        "normal_note should have restricted = None when field is absent"
+    );
+}
+
+#[test]
 fn test_validate_ledger_template_both_path_and_template() {
     use sahjhan::config::*;
     let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();

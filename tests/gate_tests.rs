@@ -1109,6 +1109,7 @@ fn test_field_validation_rejects_invalid_pattern() {
         "test_event".to_string(),
         EventConfig {
             description: "test".to_string(),
+            restricted: None,
             fields: vec![EventFieldConfig {
                 name: "member".to_string(),
                 field_type: "string".to_string(),
@@ -1161,6 +1162,7 @@ fn test_field_validation_accepts_valid_pattern() {
         "test_event".to_string(),
         EventConfig {
             description: "test".to_string(),
+            restricted: None,
             fields: vec![EventFieldConfig {
                 name: "member".to_string(),
                 field_type: "string".to_string(),

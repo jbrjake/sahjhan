@@ -434,16 +434,13 @@ event_types = ["finding"]
 
 Templates get the full event history as `events` — an array of objects with `seq`, `event_type`, `timestamp`, and `fields`. You also get `state`, `protocol`, `sets`, `ledger_len`, and `violations`. `sahjhan render dump-context` exports the complete context as JSON if you want to see what's available without guessing.
 
-Sahjhan registers two filters that Tera doesn't ship with. `where_eq` filters an array by field value. `unique_by` deduplicates by a field, keeping the last occurrence. Both support dot-notation for nested fields.
+Two custom filters: `where_eq` filters an array by field value, `unique_by` deduplicates by a field (keeps last occurrence). Both support dot-notation for nested fields like `fields.id`.
 
 ```tera
-{# Count distinct resolved findings (not total resolution events) #}
 {% set resolved = events | where_eq(attribute="event_type", value="finding_resolved")
                         | unique_by(attribute="fields.id") %}
 Resolved: {{ resolved | length }}
 ```
-
-Without `unique_by`, counting resolved findings means counting `finding_resolved` events — which double-counts if a finding gets re-resolved after a regression. With it, you count distinct IDs. The correct version is shorter than the broken one, which is about the only reliable way to keep templates honest.
 
 That's the whole protocol. Five files, no code.
 
@@ -604,7 +601,7 @@ Hooks handle the perimeter. PreToolUse blocks writes to managed files. PostToolU
 
 All gate types accept an optional `intent` parameter — a human-readable string explaining why the gate exists. When a gate blocks, Sahjhan prints the intent alongside the failure so the agent knows what to fix, not just that something failed.
 
-Template variables (`{{current}}`, `{{paths.render_dir}}`) get resolved from state params and config, then shell-escaped before interpolation. Because yes, they will try injection. If a variable can't be resolved — no matching state param, no CLI arg — the gate reports itself as unevaluable rather than executing with the literal `{{var}}` string and producing a misleading failure.
+Template variables (`{{current}}`, `{{paths.render_dir}}`) get resolved from state params and config, then shell-escaped before interpolation. Because yes, they will try injection. Unresolvable variables make the gate unevaluable (`?`) rather than silently failing.
 
 ## Gate composition
 

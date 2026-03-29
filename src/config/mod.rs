@@ -8,6 +8,7 @@
 // - [validate-deep]         ProtocolConfig::validate_deep()  — file/alias/gate/render/ledger/branching checks
 // - [validate-gate]         ProtocolConfig::validate_gate()  — recursive gate validator (composite + leaf)
 // - initial_state()         — find the state with initial = true
+// - [compute-config-seals]  compute_config_seals()           — SHA-256 hashes of all five TOML config files
 
 pub mod events;
 pub mod protocol;
@@ -23,7 +24,7 @@ pub use renders::RenderConfig;
 pub use states::{StateConfig, StateParam};
 pub use transitions::{GateConfig, TransitionConfig};
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 /// The unified configuration loaded from a protocol directory.
@@ -447,6 +448,7 @@ impl ProtocolConfig {
     /// Composite gates (any_of, all_of, not, k_of_n) have structural
     /// requirements checked here; leaf gates are validated against the
     /// `known_gates` map for type and required params.
+    // [validate-gate]
     fn validate_gate(
         gate: &GateConfig,
         transition_command: &str,
@@ -530,4 +532,31 @@ impl ProtocolConfig {
             }
         }
     }
+}
+
+/// Compute SHA-256 hashes of all five TOML config files.
+///
+/// Missing optional files (events.toml, renders.toml) hash as empty bytes.
+/// Returns a BTreeMap with keys: config_seal_protocol, config_seal_states,
+/// config_seal_transitions, config_seal_events, config_seal_renders.
+// [compute-config-seals]
+pub fn compute_config_seals(dir: &Path) -> BTreeMap<String, String> {
+    use sha2::{Digest, Sha256};
+
+    let files = [
+        ("config_seal_protocol", "protocol.toml"),
+        ("config_seal_states", "states.toml"),
+        ("config_seal_transitions", "transitions.toml"),
+        ("config_seal_events", "events.toml"),
+        ("config_seal_renders", "renders.toml"),
+    ];
+
+    let mut seals = BTreeMap::new();
+    for (key, filename) in &files {
+        let path = dir.join(filename);
+        let bytes = std::fs::read(&path).unwrap_or_default();
+        let hash = hex::encode(Sha256::digest(&bytes));
+        seals.insert(key.to_string(), hash);
+    }
+    seals
 }

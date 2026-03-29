@@ -3,7 +3,7 @@
 // Ledger entry type and error definitions.
 //
 // ## Index
-// - LedgerError              — Io, Parse, Integrity, SchemaVersion, etc.
+// - LedgerError              — Io, Parse, Integrity, SchemaVersion, ConfigIntegrityViolation, etc.
 // - LedgerEntry              — seq, ts, event_type, fields, hash, prev_hash
 
 use chrono::Utc;
@@ -46,6 +46,9 @@ pub enum LedgerError {
 
     #[error("lock timeout on {path}")]
     LockTimeout { path: String },
+
+    #[error("config integrity violation:\n{}", details.join("\n"))]
+    ConfigIntegrityViolation { details: Vec<String> },
 
     // Legacy variants kept temporarily so chain.rs/cli compiles.
     // Tasks 3-6 will remove these.

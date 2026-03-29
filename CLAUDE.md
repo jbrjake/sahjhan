@@ -21,7 +21,7 @@ When you modify any source file in this repository, you MUST update documentatio
 
 ```
 cargo build                    # Build
-cargo test                     # Run all tests (277 tests)
+cargo test                     # Run all tests (282 tests)
 cargo test <test_name>         # Run one test
 cargo clippy -- -D warnings    # Lint
 cargo fmt                      # Format
@@ -163,6 +163,13 @@ Sahjhan is a protocol enforcement engine. It has:
 | Query engine | `query/mod.rs` | `QueryEngine` | DataFusion over JSONL ledger files |
 | Query file | `query/mod.rs` | `[query-file]` | Run SQL against single ledger |
 | Query glob | `query/mod.rs` | `[query-glob]` | Run SQL against multiple ledgers |
+
+### mermaid/ — Protocol Visualization
+
+| Concept | File | Anchor/Item | Purpose |
+|---------|------|-------------|---------|
+| Mermaid diagram | `mermaid.rs` | `[generate-mermaid]` | Emit `stateDiagram-v2` text from protocol config |
+| ASCII tree | `mermaid.rs` | `[generate-ascii]` | DFS tree-walk diagram; detects cycles and fallback candidates |
 
 ### hooks/ — Claude Code Integration
 
@@ -315,3 +322,4 @@ cli/commands.rs [load-config]
 | `tests/template_security_tests.rs` | Shell escaping, injection prevention |
 | `tests/template_tests.rs` | Template-based ledger creation via cmd_ledger_create |
 | `tests/auth_tests.rs` | Session key generation, restricted events, HMAC auth |
+| `tests/mermaid_tests.rs` | Mermaid stateDiagram-v2 output, hyphen sanitization, gate labels, ASCII tree, cycle detection |

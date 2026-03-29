@@ -5,6 +5,7 @@ pub mod gates;
 pub mod hooks;
 pub mod ledger;
 pub mod manifest;
+pub mod mermaid;
 pub mod query;
 pub mod render;
 pub mod state;

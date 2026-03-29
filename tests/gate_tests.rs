@@ -2102,3 +2102,342 @@ fn test_ledger_lacks_event_with_filter() {
     let result2 = evaluate_gate(&gate2, &ctx2);
     assert!(!result2.passed, "audit finding should cause gate to fail");
 }
+
+// ---------------------------------------------------------------------------
+// any_of (composite)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_any_of_passes_when_one_child_passes() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    // Create one file that exists
+    let existing = dir.path().join("exists.txt");
+    std::fs::write(&existing, "content").unwrap();
+
+    let gate = GateConfig {
+        gate_type: "any_of".to_string(),
+        intent: None,
+        gates: vec![
+            make_gate(
+                "file_exists",
+                vec![("path", toml::Value::String("/nonexistent/xyz".to_string()))],
+            ),
+            make_gate(
+                "file_exists",
+                vec![("path", toml::Value::String(existing.to_str().unwrap().to_string()))],
+            ),
+        ],
+        params: HashMap::new(),
+    };
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(
+        result.passed,
+        "any_of should pass when one child passes, reason: {:?}",
+        result.reason
+    );
+}
+
+#[test]
+fn test_any_of_fails_when_no_child_passes() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let gate = GateConfig {
+        gate_type: "any_of".to_string(),
+        intent: None,
+        gates: vec![
+            make_gate(
+                "file_exists",
+                vec![("path", toml::Value::String("/nonexistent/abc".to_string()))],
+            ),
+            make_gate(
+                "file_exists",
+                vec![("path", toml::Value::String("/nonexistent/def".to_string()))],
+            ),
+        ],
+        params: HashMap::new(),
+    };
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(
+        !result.passed,
+        "any_of should fail when no child passes"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// all_of (composite)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_all_of_passes_when_all_children_pass() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let file_a = dir.path().join("a.txt");
+    let file_b = dir.path().join("b.txt");
+    std::fs::write(&file_a, "a").unwrap();
+    std::fs::write(&file_b, "b").unwrap();
+
+    let gate = GateConfig {
+        gate_type: "all_of".to_string(),
+        intent: None,
+        gates: vec![
+            make_gate(
+                "file_exists",
+                vec![("path", toml::Value::String(file_a.to_str().unwrap().to_string()))],
+            ),
+            make_gate(
+                "file_exists",
+                vec![("path", toml::Value::String(file_b.to_str().unwrap().to_string()))],
+            ),
+        ],
+        params: HashMap::new(),
+    };
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(
+        result.passed,
+        "all_of should pass when all children pass, reason: {:?}",
+        result.reason
+    );
+}
+
+#[test]
+fn test_all_of_fails_when_one_child_fails() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let file_a = dir.path().join("a.txt");
+    std::fs::write(&file_a, "a").unwrap();
+
+    let gate = GateConfig {
+        gate_type: "all_of".to_string(),
+        intent: None,
+        gates: vec![
+            make_gate(
+                "file_exists",
+                vec![("path", toml::Value::String(file_a.to_str().unwrap().to_string()))],
+            ),
+            make_gate(
+                "file_exists",
+                vec![("path", toml::Value::String("/nonexistent/xyz".to_string()))],
+            ),
+        ],
+        params: HashMap::new(),
+    };
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(
+        !result.passed,
+        "all_of should fail when one child fails"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// not (composite)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_not_inverts_passing_child() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let existing = dir.path().join("exists.txt");
+    std::fs::write(&existing, "content").unwrap();
+
+    let gate = GateConfig {
+        gate_type: "not".to_string(),
+        intent: None,
+        gates: vec![make_gate(
+            "file_exists",
+            vec![("path", toml::Value::String(existing.to_str().unwrap().to_string()))],
+        )],
+        params: HashMap::new(),
+    };
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(
+        !result.passed,
+        "not should invert a passing child to fail"
+    );
+}
+
+#[test]
+fn test_not_inverts_failing_child() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let gate = GateConfig {
+        gate_type: "not".to_string(),
+        intent: None,
+        gates: vec![make_gate(
+            "file_exists",
+            vec![("path", toml::Value::String("/nonexistent/xyz".to_string()))],
+        )],
+        params: HashMap::new(),
+    };
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(
+        result.passed,
+        "not should invert a failing child to pass, reason: {:?}",
+        result.reason
+    );
+}
+
+// ---------------------------------------------------------------------------
+// k_of_n (composite)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_k_of_n_passes_at_threshold() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let file_a = dir.path().join("a.txt");
+    let file_b = dir.path().join("b.txt");
+    std::fs::write(&file_a, "a").unwrap();
+    std::fs::write(&file_b, "b").unwrap();
+
+    let gate = GateConfig {
+        gate_type: "k_of_n".to_string(),
+        intent: None,
+        gates: vec![
+            make_gate(
+                "file_exists",
+                vec![("path", toml::Value::String(file_a.to_str().unwrap().to_string()))],
+            ),
+            make_gate(
+                "file_exists",
+                vec![("path", toml::Value::String(file_b.to_str().unwrap().to_string()))],
+            ),
+            make_gate(
+                "file_exists",
+                vec![("path", toml::Value::String("/nonexistent/xyz".to_string()))],
+            ),
+        ],
+        params: vec![("k".to_string(), toml::Value::Integer(2))]
+            .into_iter()
+            .collect(),
+    };
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(
+        result.passed,
+        "k_of_n should pass when passed_count >= k, reason: {:?}",
+        result.reason
+    );
+}
+
+#[test]
+fn test_k_of_n_fails_below_threshold() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let file_a = dir.path().join("a.txt");
+    std::fs::write(&file_a, "a").unwrap();
+
+    let gate = GateConfig {
+        gate_type: "k_of_n".to_string(),
+        intent: None,
+        gates: vec![
+            make_gate(
+                "file_exists",
+                vec![("path", toml::Value::String(file_a.to_str().unwrap().to_string()))],
+            ),
+            make_gate(
+                "file_exists",
+                vec![("path", toml::Value::String("/nonexistent/abc".to_string()))],
+            ),
+            make_gate(
+                "file_exists",
+                vec![("path", toml::Value::String("/nonexistent/def".to_string()))],
+            ),
+        ],
+        params: vec![("k".to_string(), toml::Value::Integer(2))]
+            .into_iter()
+            .collect(),
+    };
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(
+        !result.passed,
+        "k_of_n should fail when passed_count < k"
+    );
+}

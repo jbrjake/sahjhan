@@ -41,6 +41,115 @@ pub fn eval(gate: &GateConfig, ctx: &GateContext) -> GateResult {
         "field_not_empty" => super::ledger::eval_field_not_empty(gate, ctx),
         "snapshot_compare" => super::snapshot::eval_snapshot_compare(gate, ctx),
         "query" => super::query::eval_query_gate(gate, ctx),
+
+        // -- Composite gates --------------------------------------------------
+
+        "any_of" => {
+            let results: Vec<GateResult> = gate.gates.iter().map(|g| eval(g, ctx)).collect();
+            let total = results.len();
+            let passed_count = results.iter().filter(|r| r.passed).count();
+            let passed = passed_count > 0;
+            let reason = if !passed {
+                let failed: Vec<String> = results
+                    .iter()
+                    .map(|r| format!("{}: {}", r.gate_type, r.description))
+                    .collect();
+                Some(format!("no alternatives passed: [{}]", failed.join("; ")))
+            } else {
+                None
+            };
+            GateResult {
+                passed,
+                gate_type: "any_of".to_string(),
+                description: format!("{} of {} alternatives passed", passed_count, total),
+                reason,
+                intent: None,
+            }
+        }
+
+        "all_of" => {
+            let results: Vec<GateResult> = gate.gates.iter().map(|g| eval(g, ctx)).collect();
+            let total = results.len();
+            let passed_count = results.iter().filter(|r| r.passed).count();
+            let passed = passed_count == total;
+            let reason = if !passed {
+                let failed: Vec<String> = results
+                    .iter()
+                    .filter(|r| !r.passed)
+                    .map(|r| format!("{}: {}", r.gate_type, r.description))
+                    .collect();
+                Some(format!("failed conditions: [{}]", failed.join("; ")))
+            } else {
+                None
+            };
+            GateResult {
+                passed,
+                gate_type: "all_of".to_string(),
+                description: format!("{} of {} conditions passed", passed_count, total),
+                reason,
+                intent: None,
+            }
+        }
+
+        "not" => {
+            if gate.gates.len() != 1 {
+                return GateResult {
+                    passed: false,
+                    gate_type: "not".to_string(),
+                    description: "not gate requires exactly one child gate".to_string(),
+                    reason: Some(format!(
+                        "expected 1 child gate, found {}",
+                        gate.gates.len()
+                    )),
+                    intent: None,
+                };
+            }
+            let child = eval(&gate.gates[0], ctx);
+            GateResult {
+                passed: !child.passed,
+                gate_type: "not".to_string(),
+                description: format!("not({})", child.gate_type),
+                reason: if child.passed {
+                    Some(format!("child gate '{}' passed (not inverts to fail)", child.gate_type))
+                } else {
+                    None
+                },
+                intent: None,
+            }
+        }
+
+        "k_of_n" => {
+            let k = gate
+                .params
+                .get("k")
+                .and_then(|v| v.as_integer())
+                .unwrap_or(0) as usize;
+            let results: Vec<GateResult> = gate.gates.iter().map(|g| eval(g, ctx)).collect();
+            let total = results.len();
+            let passed_count = results.iter().filter(|r| r.passed).count();
+            let passed = passed_count >= k;
+            let reason = if !passed {
+                let failed: Vec<String> = results
+                    .iter()
+                    .filter(|r| !r.passed)
+                    .map(|r| format!("{}: {}", r.gate_type, r.description))
+                    .collect();
+                Some(format!(
+                    "only {} of {} required passed; failed: [{}]",
+                    passed_count, k, failed.join("; ")
+                ))
+            } else {
+                None
+            };
+            GateResult {
+                passed,
+                gate_type: "k_of_n".to_string(),
+                description: format!("{} of {} passed ({} required)", passed_count, total, k),
+                reason,
+                intent: None,
+            }
+        }
+
         other => GateResult {
             passed: false,
             gate_type: other.to_string(),

@@ -71,6 +71,10 @@ pub fn default_intent(gate_type: &str) -> &str {
         "field_not_empty" => "required field must have a value",
         "snapshot_compare" => "snapshot must match expected state",
         "query" => "query condition must be satisfied",
+        "any_of" => "at least one alternative must pass",
+        "all_of" => "all conditions must pass",
+        "not" => "condition must not be met",
+        "k_of_n" => "minimum number of conditions must pass",
         _ => "gate condition must be met",
     }
 }

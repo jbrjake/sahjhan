@@ -263,6 +263,10 @@ gates/types.rs [eval] matches gate_type:
   "field_not_empty"     → gates/ledger.rs   [eval-field-not-empty]
   "snapshot_compare"    → gates/snapshot.rs  [eval-snapshot-compare]
   "query"               → gates/query.rs    [eval-query-gate]
+  "any_of"              → gates/types.rs    [eval] (inline) — pass if any child passes
+  "all_of"              → gates/types.rs    [eval] (inline) — pass if all children pass
+  "not"                 → gates/types.rs    [eval] (inline) — invert single child result
+  "k_of_n"              → gates/types.rs    [eval] (inline) — pass if >= k children pass
 ```
 
 ### Flow: Set Completion

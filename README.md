@@ -443,7 +443,7 @@ Sahjhan registers two filters that Tera doesn't ship with. `where_eq` filters an
 Resolved: {{ resolved | length }}
 ```
 
-I added these because I watched a summary template count `finding_resolved` events instead of distinct finding IDs. Three findings, four resolutions (one re-resolved after a regression), rendered count: 4. Open at convergence: -1. Negative findings. The per-severity table in the same template got it right — the author knew about deduplication for that section and just missed it in the summary. These filters make the correct version shorter than the broken one, which is about the only reliable way to keep templates honest.
+Without `unique_by`, counting resolved findings means counting `finding_resolved` events — which double-counts if a finding gets re-resolved after a regression. With it, you count distinct IDs. The correct version is shorter than the broken one, which is about the only reliable way to keep templates honest.
 
 That's the whole protocol. Five files, no code.
 
@@ -686,9 +686,7 @@ sahjhan --config-dir tdd-protocol gate check submit
 # result: implementing → fix-and-retry
 ```
 
-Gates that use template variables (`{{current_perspective}}`, say) have a third status. If you run `gate check` without providing the required args, the template variable passes through literally — and a SQL query with `perspective='{{current_perspective}}'` doesn't fail because the data is wrong, it fails because SQLite is comparing against the string `{{current_perspective}}`. For about fifteen minutes during one run I was debugging gates that were "failing" when the actual data satisfied every one of them. The gate check output said `✗ query: returned 'false'` and I believed it.
-
-Now Sahjhan detects unresolved template variables after substitution and marks those gates as unevaluable instead of lying:
+Gates that use template variables have a third status. If you run `gate check` without providing the required args, Sahjhan marks those gates as unevaluable instead of executing them with the literal `{{var}}` string and reporting a misleading failure:
 
 ```bash
 sahjhan gate check "set complete perspective"
@@ -698,7 +696,7 @@ sahjhan gate check "set complete perspective"
 #   ✗ ledger_has_event_since: no 'lens_sweep_started' event — sweep must begin
 ```
 
-The `?` means "I can't evaluate this without the arg, and I'm not going to pretend." Gates that don't use template variables still evaluate normally. Partial results are more useful than misleading ones.
+`?` means the gate can't be evaluated without the missing arg. `✓` and `✗` still mean pass and fail. Gates without template variables evaluate normally regardless.
 
 ## Integrating with Claude Code
 

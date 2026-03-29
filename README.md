@@ -432,6 +432,19 @@ event_types = ["finding"]
 
 `on_transition` renders fire every time the state changes. `on_event` renders fire when specific events are recorded — here, every time a finding gets logged, the findings report updates. Templates use [Tera](https://keats.github.io/tera/) (Jinja2 syntax). If you're using multiple ledgers, renders can target a specific one by name or by template — more on that in the ledger templates section below.
 
+Templates get the full event history as `events` — an array of objects with `seq`, `event_type`, `timestamp`, and `fields`. You also get `state`, `protocol`, `sets`, `ledger_len`, and `violations`. `sahjhan render dump-context` exports the complete context as JSON if you want to see what's available without guessing.
+
+Sahjhan registers two filters that Tera doesn't ship with. `where_eq` filters an array by field value. `unique_by` deduplicates by a field, keeping the last occurrence. Both support dot-notation for nested fields.
+
+```tera
+{# Count distinct resolved findings (not total resolution events) #}
+{% set resolved = events | where_eq(attribute="event_type", value="finding_resolved")
+                        | unique_by(attribute="fields.id") %}
+Resolved: {{ resolved | length }}
+```
+
+I added these because I watched a summary template count `finding_resolved` events instead of distinct finding IDs. Three findings, four resolutions (one re-resolved after a regression), rendered count: 4. Open at convergence: -1. Negative findings. The per-severity table in the same template got it right — the author knew about deduplication for that section and just missed it in the summary. These filters make the correct version shorter than the broken one, which is about the only reliable way to keep templates honest.
+
 That's the whole protocol. Five files, no code.
 
 ## What enforcement actually looks like
@@ -591,7 +604,7 @@ Hooks handle the perimeter. PreToolUse blocks writes to managed files. PostToolU
 
 All gate types accept an optional `intent` parameter — a human-readable string explaining why the gate exists. When a gate blocks, Sahjhan prints the intent alongside the failure so the agent knows what to fix, not just that something failed.
 
-Template variables (`{{current}}`, `{{paths.render_dir}}`) get resolved from state params and config, then shell-escaped before interpolation. Because yes, they will try injection.
+Template variables (`{{current}}`, `{{paths.render_dir}}`) get resolved from state params and config, then shell-escaped before interpolation. Because yes, they will try injection. If a variable can't be resolved — no matching state param, no CLI arg — the gate reports itself as unevaluable rather than executing with the literal `{{var}}` string and producing a misleading failure.
 
 ## Gate composition
 
@@ -673,6 +686,20 @@ sahjhan --config-dir tdd-protocol gate check submit
 # result: implementing → fix-and-retry
 ```
 
+Gates that use template variables (`{{current_perspective}}`, say) have a third status. If you run `gate check` without providing the required args, the template variable passes through literally — and a SQL query with `perspective='{{current_perspective}}'` doesn't fail because the data is wrong, it fails because SQLite is comparing against the string `{{current_perspective}}`. For about fifteen minutes during one run I was debugging gates that were "failing" when the actual data satisfied every one of them. The gate check output said `✗ query: returned 'false'` and I believed it.
+
+Now Sahjhan detects unresolved template variables after substitution and marks those gates as unevaluable instead of lying:
+
+```bash
+sahjhan gate check "set complete perspective"
+#   ✓ SQL: SELECT count(*) >= 2 FROM events WHERE type='iteration_complete'
+#   ? query: unevaluable (requires arg: current_perspective)
+#   ? query: unevaluable (requires arg: current_perspective)
+#   ✗ ledger_has_event_since: no 'lens_sweep_started' event — sweep must begin
+```
+
+The `?` means "I can't evaluate this without the arg, and I'm not going to pretend." Gates that don't use template variables still evaluate normally. Partial results are more useful than misleading ones.
+
 ## Integrating with Claude Code
 
 ```bash
@@ -718,7 +745,7 @@ sahjhan manifest verify                   Check file integrity against manifest
 sahjhan manifest list                     Show tracked files and hashes
 sahjhan manifest restore <path>           Restore file from known-good state
 sahjhan render                            Regenerate markdown views from ledger
-sahjhan gate check <transition>           Dry-run gate evaluation (pass/fail)
+sahjhan gate check <transition> [args...]  Dry-run gate evaluation (✓/✗/?)
 sahjhan reset --confirm --token <TOKEN>   Archive current run and restart
 sahjhan hook generate [--harness cc]      Generate integration hooks
 
@@ -793,7 +820,7 @@ src/
   query/               DataFusion query engine, Arrow table builder
   manifest/            File hash tracking, integrity verification
   config/              TOML parsing (protocol, states, transitions, events, renders)
-  render/              Tera template rendering
+  render/              Tera template rendering (where_eq, unique_by filters)
   hooks/               Hook script generation
 ```
 

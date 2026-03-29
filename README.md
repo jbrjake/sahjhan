@@ -317,7 +317,13 @@ The `intent` field is optional but worth writing. When a gate blocks, Sahjhan pr
 
 ### Protocol: sets and project config
 
-That `set_covered` gate references something called `suites`. Where does that come from? `protocol.toml`. This is where you declare the project-level stuff — what directories Sahjhan protects, what sets of work need completing, and any command shortcuts.
+That `set_covered` gate references something called `suites`. Here's the idea: sometimes you need the agent to do something for every item in a list. Write unit tests *and* integration tests. Review file A *and* file B *and* file C. Not just one. All of them.
+
+A set is that list. You declare the members up front, and the agent has to check them off one by one. Sahjhan tracks which ones are done in the ledger — when the agent runs `sahjhan set complete suites unit`, Sahjhan records a `set_member_complete` event with `set=suites` and `member=unit`. The `set_covered` gate just asks: has every member in this set had one of those events recorded? If not, you're not moving.
+
+That's all a set is. A checklist the agent can't skip items on.
+
+The set itself is declared in `protocol.toml`, alongside the rest of the project-level config — what directories Sahjhan protects, and any command shortcuts.
 
 ```toml
 # tdd-protocol/protocol.toml
@@ -340,7 +346,9 @@ values = ["unit", "integration"]
 "done" = "transition submit"
 ```
 
-The set `suites` has two members: `unit` and `integration`. The agent has to mark each one complete before the `set_covered` gate will pass. No shortcuts, no "I'll do integration tests later." Both. Then you move on.
+Two members: `unit` and `integration`. The agent has to complete both before the `set_covered` gate will pass. No shortcuts, no "I'll do integration tests later." Both. Then you move on.
+
+Now that `set_covered` gate in transitions.toml makes more sense: `set = "suites"` says which set to check. `event = "set_member_complete"` and `field = "member"` tell Sahjhan which ledger events count as check-offs — it looks for events of that type where the named field matches a set member. You'll almost always use these exact values; they're the convention for how `sahjhan set complete` records its work.
 
 Aliases are just shortcuts. `sahjhan start` expands to `sahjhan transition start`. Small convenience, saves typing.
 
@@ -361,12 +369,14 @@ fields = [
 ]
 
 [events.set_member_complete]
-description = "A test suite has been written"
+description = "A set member was checked off"
 fields = [
     { name = "set", type = "string" },
     { name = "member", type = "string" },
 ]
 ```
+
+You already saw `set_member_complete` — it's the event that `sahjhan set complete` records when the agent checks off a set member. Declaring it here means the fields are validated: `set` and `member` are required, and you could add `pattern` constraints on them if you wanted to lock down the values.
 
 The `pattern` regex on `severity` means the agent picks from four values or gets rejected. Fields declared here become SQL columns — you define the schema once, then query it forever. No JSON parsing at query time.
 

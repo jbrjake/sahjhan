@@ -64,6 +64,7 @@ pub fn default_intent(gate_type: &str) -> &str {
         "command_output" => "command output must match expected value",
         "ledger_has_event" => "required events must be recorded first",
         "ledger_has_event_since" => "required events must occur since last transition",
+        "ledger_lacks_event" => "prohibited events must not exist",
         "set_covered" => "all set members must be completed",
         "min_elapsed" => "minimum time must elapse before proceeding",
         "no_violations" => "all protocol violations must be resolved",

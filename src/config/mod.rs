@@ -250,6 +250,7 @@ impl ProtocolConfig {
             ("command_output", vec!["cmd", "expect"]),
             ("ledger_has_event", vec!["event"]),
             ("ledger_has_event_since", vec!["event"]),
+            ("ledger_lacks_event", vec!["event"]),
             ("set_covered", vec!["set"]),
             ("min_elapsed", vec!["event", "seconds"]),
             ("no_violations", vec![]),

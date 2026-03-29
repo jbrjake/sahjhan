@@ -1967,3 +1967,130 @@ fn test_validate_accepts_valid_sources() {
         source_errors
     );
 }
+
+// ---------------------------------------------------------------------------
+// ledger_lacks_event
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_ledger_lacks_event_pass_when_no_events() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let gate = make_gate(
+        "ledger_lacks_event",
+        vec![("event", toml::Value::String("finding".to_string()))],
+    );
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(
+        result.passed,
+        "expected pass (no findings) but reason: {:?}",
+        result.reason
+    );
+}
+
+#[test]
+fn test_ledger_lacks_event_fail_when_event_exists() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let mut payload = BTreeMap::new();
+    payload.insert("detail".to_string(), "something bad".to_string());
+    ledger.append("finding", payload).unwrap();
+
+    let gate = make_gate(
+        "ledger_lacks_event",
+        vec![("event", toml::Value::String("finding".to_string()))],
+    );
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(!result.passed, "expected gate to fail");
+    let reason = result.reason.expect("expected a reason string");
+    assert!(
+        reason.contains('1'),
+        "expected reason to contain '1', got: {}",
+        reason
+    );
+}
+
+#[test]
+fn test_ledger_lacks_event_with_filter() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    // Append a recon finding — should NOT match the audit filter.
+    let mut recon_payload = BTreeMap::new();
+    recon_payload.insert("detail".to_string(), "recon finding".to_string());
+    recon_payload.insert("phase".to_string(), "recon".to_string());
+    ledger.append("finding", recon_payload).unwrap();
+
+    let mut filter = toml::value::Table::new();
+    filter.insert("phase".to_string(), toml::Value::String("audit".to_string()));
+
+    let gate = make_gate(
+        "ledger_lacks_event",
+        vec![
+            ("event", toml::Value::String("finding".to_string())),
+            ("filter", toml::Value::Table(filter.clone())),
+        ],
+    );
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(
+        result.passed,
+        "recon finding should not match audit filter; reason: {:?}",
+        result.reason
+    );
+
+    // Now append an audit finding — gate should fail.
+    let mut audit_payload = BTreeMap::new();
+    audit_payload.insert("detail".to_string(), "audit finding".to_string());
+    audit_payload.insert("phase".to_string(), "audit".to_string());
+    ledger.append("finding", audit_payload).unwrap();
+
+    let gate2 = make_gate(
+        "ledger_lacks_event",
+        vec![
+            ("event", toml::Value::String("finding".to_string())),
+            ("filter", toml::Value::Table(filter)),
+        ],
+    );
+    let ctx2 = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result2 = evaluate_gate(&gate2, &ctx2);
+    assert!(!result2.passed, "audit finding should cause gate to fail");
+}

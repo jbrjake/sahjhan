@@ -21,7 +21,7 @@ When you modify any source file in this repository, you MUST update documentatio
 
 ```
 cargo build                    # Build
-cargo test                     # Run all tests (253 tests)
+cargo test                     # Run all tests (256 tests)
 cargo test <test_name>         # Run one test
 cargo clippy -- -D warnings    # Lint
 cargo fmt                      # Format
@@ -86,6 +86,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | Files exist gate | `gates/file.rs` | `[eval-files-exist]` | Multiple files check |
 | Ledger event gate | `gates/ledger.rs` | `[eval-ledger-has-event]` | N+ events of type |
 | Event since gate | `gates/ledger.rs` | `[eval-ledger-has-event-since]` | Event since last transition |
+| Ledger lacks event gate | `gates/ledger.rs` | `[eval-ledger-lacks-event]` | Pass if NO matching events exist (negation gate) |
 | Set covered gate | `gates/ledger.rs` | `[eval-set-covered]` | All set members in ledger |
 | Min elapsed gate | `gates/ledger.rs` | `[eval-min-elapsed]` | Time since last event |
 | No violations gate | `gates/ledger.rs` | `[eval-no-violations]` | No unresolved violations |
@@ -252,6 +253,7 @@ gates/types.rs [eval] matches gate_type:
   "command_output"      → gates/command.rs  [eval-command-output]
   "ledger_has_event"    → gates/ledger.rs   [eval-ledger-has-event]
   "ledger_has_event_since" → gates/ledger.rs [eval-ledger-has-event-since]
+  "ledger_lacks_event"  → gates/ledger.rs   [eval-ledger-lacks-event]
   "set_covered"         → gates/ledger.rs   [eval-set-covered]
   "min_elapsed"         → gates/ledger.rs   [eval-min-elapsed]
   "no_violations"       → gates/ledger.rs   [eval-no-violations]

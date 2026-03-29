@@ -34,6 +34,7 @@ pub fn eval(gate: &GateConfig, ctx: &GateContext) -> GateResult {
         "command_output" => super::command::eval_command_output(gate, ctx),
         "ledger_has_event" => super::ledger::eval_ledger_has_event(gate, ctx),
         "ledger_has_event_since" => super::ledger::eval_ledger_has_event_since(gate, ctx),
+        "ledger_lacks_event" => super::ledger::eval_ledger_lacks_event(gate, ctx),
         "set_covered" => super::ledger::eval_set_covered(gate, ctx),
         "min_elapsed" => super::ledger::eval_min_elapsed(gate, ctx),
         "no_violations" => super::ledger::eval_no_violations(gate, ctx),

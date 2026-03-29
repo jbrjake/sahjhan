@@ -3,6 +3,7 @@
 // ## Index
 // - [eval-ledger-has-event]        eval_ledger_has_event()        — pass if ledger contains N+ events of a type
 // - [eval-ledger-has-event-since]  eval_ledger_has_event_since()  — pass if event exists since last state_transition
+// - [eval-ledger-lacks-event]      eval_ledger_lacks_event()      — pass if ledger contains NO matching events (negation of ledger_has_event)
 // - [eval-set-covered]             eval_set_covered()             — pass if all set members appear in ledger
 // - [eval-min-elapsed]             eval_min_elapsed()             — pass if enough time has elapsed since last event
 // - [eval-no-violations]           eval_no_violations()           — pass if no unresolved protocol_violation events
@@ -110,6 +111,50 @@ pub(super) fn eval_ledger_has_event_since(gate: &GateConfig, ctx: &GateContext) 
             Some(format!(
                 "no '{}' event found after the last state_transition",
                 event
+            ))
+        },
+        intent: None,
+    }
+}
+
+// [eval-ledger-lacks-event]
+pub(super) fn eval_ledger_lacks_event(gate: &GateConfig, ctx: &GateContext) -> GateResult {
+    let event = gate
+        .params
+        .get("event")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    let filter: HashMap<String, String> = gate
+        .params
+        .get("filter")
+        .and_then(|v| v.as_table())
+        .map(|tbl| {
+            tbl.iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let matching = ctx
+        .ledger
+        .events_of_type(event)
+        .into_iter()
+        .filter(|e| entry_matches_filter(e, &filter))
+        .count();
+
+    let passed = matching == 0;
+
+    GateResult {
+        passed,
+        gate_type: "ledger_lacks_event".to_string(),
+        description: format!("ledger has no '{}' events", event),
+        reason: if passed {
+            None
+        } else {
+            Some(format!(
+                "found {} '{}' event(s), expected none",
+                matching, event
             ))
         },
         intent: None,

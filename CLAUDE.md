@@ -66,6 +66,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | Transition defs | `config/transitions.rs` | `TransitionConfig`, `GateConfig` | transitions.toml; `args` declares positional params; `intent` is optional per-gate "why"; `gates` holds nested child gates for composite types (any_of, all_of, not, k_of_n); remaining fields are `#[serde(flatten)]` into params |
 | Event definitions | `config/events.rs` | `EventConfig`, `EventFieldConfig` | events.toml; field patterns for validation; `restricted` marks HMAC-only events; `optional` marks non-required fields |
 | Render definitions | `config/renders.rs` | `RenderConfig` | renders.toml; trigger/template/target/ledger/ledger_template |
+| Config seal hashing | `config/mod.rs` | `compute_config_seals()` | SHA-256 hash all 5 TOML config files |
 
 ### gates/ — Gate Evaluation
 
@@ -136,6 +137,10 @@ Sahjhan is a protocol enforcement engine. It has:
 | Ledger mode | `ledger/registry.rs` | `LedgerMode` | Full vs EventOnly |
 | Register with template | `ledger/registry.rs` | `create_with_template` | Register ledger with template + instance_id metadata |
 | Template query | `ledger/registry.rs` | `resolve_by_template` | Find all entries for a given template name |
+| Config seal init | `ledger/chain.rs` | `init_with_seals` | Create genesis with config integrity seals |
+| Find effective seal | `ledger/chain.rs` | `[find-effective-seal]` | Most recent config_reseal or genesis seals |
+| Verify config seal | `ledger/chain.rs` | `[verify-config-seal]` | Verify config files match sealed hashes |
+| Config integrity error | `ledger/entry.rs` | `ConfigIntegrityViolation` | Error when config files don't match seal |
 
 ### manifest/ — File Integrity Tracking
 
@@ -203,6 +208,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | Hooks | `cli/hooks_cmd.rs` | `[cmd-hook-generate]` | Hook script generation |
 | Config queries | `cli/config_cmd.rs` | `[cmd-session-key-path]` | Print resolved session key path |
 | Mermaid | `cli/mermaid.rs` | `[cmd-mermaid]` | Diagram generation command (stateDiagram-v2 or ASCII) |
+| Reseal | `cli/authed_event.rs` | `[cmd-reseal]` | HMAC-authenticated config reseal |
 
 ---
 
@@ -311,6 +317,28 @@ cli/commands.rs [load-config]
   → config/mod.rs [validate-deep] (via cmd_validate) — file/alias/gate/ledger checks
 ```
 
+### Flow: Config Integrity Verification
+
+How config seals are created and verified:
+
+```
+cli/init.rs [cmd-init]
+  → config/mod.rs compute_config_seals()      ← SHA-256 of all 5 TOML files
+  → ledger/chain.rs init_with_seals()          ← seals stored in genesis entry fields
+
+cli/commands.rs [open-ledger] or [open-targeted]
+  → ledger/chain.rs Ledger::open()             ← parse and verify hash chain
+  → ledger/chain.rs [verify-config-seal]
+    → ledger/chain.rs [find-effective-seal]     ← scan for config_reseal, fall back to genesis
+    → config/mod.rs compute_config_seals()      ← re-hash current files
+    → compare: mismatch → ConfigIntegrityViolation
+
+cli/authed_event.rs [cmd-reseal]
+  → HMAC proof verification (session key)
+  → config/mod.rs compute_config_seals()        ← new hashes
+  → ledger/chain.rs [ledger-append]             ← config_reseal event
+```
+
 ---
 
 ## Test Files
@@ -333,3 +361,4 @@ cli/commands.rs [load-config]
 | `tests/template_tests.rs` | Template-based ledger creation via cmd_ledger_create |
 | `tests/auth_tests.rs` | Session key generation, restricted events, HMAC auth |
 | `tests/mermaid_tests.rs` | Mermaid stateDiagram-v2 output, hyphen sanitization, gate labels, ASCII tree, cycle detection |
+| `tests/config_integrity_tests.rs` | Config sealing, tamper detection, reseal, backward compat |

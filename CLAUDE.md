@@ -159,6 +159,7 @@ Sahjhan is a protocol enforcement engine. It has:
 |---------|------|-------------|---------|
 | Render engine | `render/engine.rs` | `RenderEngine` | Tera-based markdown generation |
 | where_eq filter | `render/engine.rs` | `filter_where_eq` | Tera filter: keep array items where attribute == value (dot-notation supported) |
+| unique_by filter | `render/engine.rs` | `filter_unique_by` | Tera filter: deduplicate array by field, keeping last occurrence (dot-notation supported) |
 | Active ledger name | `render/engine.rs` | `with_active_ledger_name` | Set active ledger for template resolution |
 | Resolve render ledger | `render/engine.rs` | `resolve_render_ledger` | Dispatch to by-name or by-template resolution |
 | Resolve by name | `render/engine.rs` | `resolve_ledger_by_name` | Literal registry lookup |

@@ -7,6 +7,7 @@
 // - MemberSummary            — set member status for templates
 // - SetSummary               — set completion status for templates
 // - filter_where_eq          — Tera filter: keep array items where attribute == value (dot-notation supported)
+// - filter_unique_by         — Tera filter: deduplicate array by field, keeping last occurrence (dot-notation supported)
 // - RenderEngine             — Tera-based renderer with config + templates + active_ledger_name
 // - with_active_ledger_name  — set active ledger name for template resolution
 // - resolve_render_ledger    — dispatch to by-name or by-template resolution
@@ -94,6 +95,44 @@ fn filter_where_eq(value: &Value, args: &HashMap<String, Value>) -> tera::Result
     Ok(Value::Array(filtered))
 }
 
+/// Deduplicate an array of objects by a field, keeping the last occurrence.
+///
+/// Usage: `{{ events | unique_by(attribute="fields.id") }}`
+fn filter_unique_by(value: &Value, args: &HashMap<String, Value>) -> tera::Result<Value> {
+    let arr = value
+        .as_array()
+        .ok_or_else(|| tera::Error::msg("unique_by: input must be an array"))?;
+
+    let attribute = args
+        .get("attribute")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| tera::Error::msg("unique_by: missing 'attribute' argument"))?;
+
+    // Walk forward, tracking last-seen index per key. Last occurrence wins.
+    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for (i, item) in arr.iter().enumerate() {
+        let key = attribute
+            .split('.')
+            .fold(Some(item.clone()), |acc, k| {
+                acc.and_then(|v| v.get(k).cloned())
+            })
+            .and_then(|v| match v {
+                Value::String(s) => Some(s),
+                other => Some(other.to_string()),
+            })
+            .unwrap_or_default();
+        seen.insert(key, i);
+    }
+
+    // Collect in original order, keeping only last-seen entries.
+    let mut keep: Vec<usize> = seen.values().copied().collect();
+    keep.sort_unstable();
+
+    let result: Vec<Value> = keep.iter().map(|&i| arr[i].clone()).collect();
+
+    Ok(Value::Array(result))
+}
+
 /// Template rendering engine powered by Tera.
 pub struct RenderEngine {
     tera: Tera,
@@ -122,6 +161,7 @@ impl RenderEngine {
         }
 
         tera.register_filter("where_eq", filter_where_eq);
+        tera.register_filter("unique_by", filter_unique_by);
 
         Ok(RenderEngine {
             tera,

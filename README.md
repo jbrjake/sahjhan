@@ -113,8 +113,10 @@ from = "writing-tests"
 to = "implementing"
 command = "tests-done"
 gates = [
-    { type = "file_exists", path = "tests/test_feature.py" },
-    { type = "command_succeeds", cmd = "python -m pytest tests/", timeout = 60 },
+    { type = "file_exists", path = "tests/test_feature.py",
+      intent = "test file must exist on disk before implementation begins" },
+    { type = "command_succeeds", cmd = "python -m pytest tests/", timeout = 60,
+      intent = "tests must parse and execute (they can fail — this is TDD)" },
 ]
 
 [[transitions]]
@@ -122,13 +124,18 @@ from = "implementing"
 to = "verifying"
 command = "implement-done"
 gates = [
-    { type = "command_succeeds", cmd = "python -m pytest tests/", timeout = 120 },
-    { type = "query", sql = "SELECT count(*) < 20 as result FROM events WHERE type='finding'", expect = "true" },
-    { type = "no_violations" },
+    { type = "command_succeeds", cmd = "python -m pytest tests/", timeout = 120,
+      intent = "all tests must pass before verification" },
+    { type = "query", sql = "SELECT count(*) < 20 as result FROM events WHERE type='finding'", expect = "true",
+      intent = "finding count must stay under threshold" },
+    { type = "no_violations",
+      intent = "clean record required — no evidence tampering" },
 ]
 ```
 
 Every gate is something Sahjhan checks itself. `file_exists` looks at the disk. `command_succeeds` runs the test suite. `query` runs SQL against the ledger. `no_violations` checks the agent's permanent record. The agent doesn't self-report anything.
+
+The `intent` field is optional but recommended. When a gate blocks, Sahjhan prints the intent alongside the failure reason — so instead of just "gate failed," the agent sees *why* the gate exists and what it needs to do about it. If you omit `intent`, Sahjhan generates a default from the gate type.
 
 ## What enforcement actually looks like
 
@@ -136,33 +143,33 @@ Every gate is something Sahjhan checks itself. `file_exists` looks at the disk. 
 
 ```bash
 sahjhan --config-dir tdd-protocol init
+# initialized. good luck.
 
 sahjhan --config-dir tdd-protocol transition start
-# OK. Moved to 'writing-tests'.
+# idle → writing-tests
 
 # Agent tries to skip straight to implementation
 sahjhan --config-dir tdd-protocol transition tests-done
-# BLOCKED: gate 'file_exists' failed: tests/test_feature.py does not exist
-# The file has to be on disk. Not "I wrote it." On disk.
+# BLOCKED file_exists: tests/test_feature.py not found
+#   intent: test file must exist on disk before implementation begins
 
 # Agent writes the test file, tries again
 sahjhan --config-dir tdd-protocol transition tests-done
-# BLOCKED: gate 'command_succeeds' failed: 'python -m pytest tests/' returned exit 1
-# Tests have to run. They can fail (this is TDD), but they can't be
-# syntax errors. Sahjhan runs them itself.
+# BLOCKED command_succeeds: 'python -m pytest tests/' exit 1
+#   intent: tests must parse and execute (they can fail — this is TDD)
 
 # Agent fixes tests so they execute (and fail, because nothing's implemented)
 sahjhan --config-dir tdd-protocol transition tests-done
-# OK. Moved to 'implementing'.
+# writing-tests → implementing
 
 # Agent implements, tries to advance
 sahjhan --config-dir tdd-protocol transition implement-done
-# BLOCKED: gate 'command_succeeds' failed: 'python -m pytest tests/' returned exit 1
-# Tests have to pass now. Sahjhan runs them. Not the agent. Sahjhan.
+# BLOCKED command_succeeds: 'python -m pytest tests/' exit 1
+#   intent: all tests must pass before verification
 
 # Agent fixes until tests pass
 sahjhan --config-dir tdd-protocol transition implement-done
-# OK. Moved to 'verifying'.
+# implementing → verifying
 ```
 
 And unlike a JSON history file, the ledger can't be deleted, reset, or rewritten with fabricated entries.
@@ -210,6 +217,38 @@ sahjhan query --glob "*.jsonl" "SELECT type, count(*) FROM events GROUP BY 1"
 
 Stateful ledgers are bound to the state machine. Event-only ledgers just accumulate. Both are hash-chained. `--ledger` and `--ledger-path` work on every command.
 
+### Ledger templates
+
+If your protocol creates many ledgers with the same shape — runs, sprints, iterations — you can declare a template in `protocol.toml` instead of hand-crafting each one:
+
+```toml
+[ledgers.run]
+description = "Per-run audit ledger"
+path_template = "runs/{template.instance_id}/ledger.jsonl"
+```
+
+Then create instances from it:
+
+```bash
+sahjhan ledger create --from run 25
+# run-25 created at runs/25/ledger.jsonl
+
+sahjhan ledger create --from run 26
+# run-26 created at runs/26/ledger.jsonl
+```
+
+The name is derived automatically (`run-25`), the path is expanded from the template, and the registry tracks which template each ledger came from. You can also use `{template.name}` in the path pattern.
+
+For singleton ledgers that don't need instantiation, use `path` instead of `path_template`:
+
+```toml
+[ledgers.project]
+description = "Project-wide findings"
+path = "project.jsonl"
+```
+
+Templates are validated at `sahjhan validate` time — Sahjhan checks that path patterns use valid placeholders and that singleton paths don't collide.
+
 ## How it works
 
 TOML defines the states, transitions, and gates. The compiled binary enforces them. My agents used to read my Python guard scripts and find the gaps in minutes. There's nothing to read here.
@@ -249,6 +288,11 @@ values = ["tests", "security-scan"]
 
 [checkpoints]
 interval = 100
+
+# Optional: declare ledger templates for repeatable runs
+[ledgers.run]
+description = "Per-deployment audit trail"
+path_template = "runs/{template.instance_id}/ledger.jsonl"
 ```
 
 ### `states.toml`
@@ -343,6 +387,18 @@ trigger = "on_event"
 event_types = ["set_member_complete", "scan_result"]
 ```
 
+If you're using ledger templates, renders can resolve ledgers by template name instead of literal name. This way a single render definition works across all instances of a template:
+
+```toml
+[[renders]]
+target = "STATUS.md"
+template = "templates/run-status.md.tera"
+trigger = "on_transition"
+ledger_template = "run"
+```
+
+When `ledger_template` is set, Sahjhan resolves it to whichever ledger instance is currently active (the one targeted by `--ledger`). The render context also gets `template_instance_id` and `template_name` variables, so your Tera templates can reference the run number or template name directly.
+
 Templates use [Tera](https://keats.github.io/tera/) (Jinja2 syntax).
 
 That's the whole protocol. Five files.
@@ -371,6 +427,8 @@ sahjhan --config-dir deploy-checklist deploy
 | `field_not_empty` | `field` | Named field not blank. No empty check-ins. |
 | `snapshot_compare` | `cmd`, `extract`, `compare`, `reference` | Compare a live value against a recorded baseline. |
 | `query` | `sql`, `expect` | SQL against the ledger. DataFusion evaluates it. The agent can't argue with a COUNT(*). |
+
+All gate types accept an optional `intent` parameter — a human-readable string explaining why the gate exists. When a gate blocks, Sahjhan prints the intent alongside the failure so the agent knows what to fix, not just that something failed.
 
 Template variables (`{{current}}`, `{{paths.render_dir}}`) get resolved from state params and config, then shell-escaped before interpolation. Because yes, they will try injection.
 
@@ -420,6 +478,7 @@ sahjhan query --glob <pattern> "<SQL>"    Query across multiple ledger files
 sahjhan query --format table|json|csv|jsonl
 
 sahjhan ledger create --name <n> --path <p> [--mode stateful|event-only]
+sahjhan ledger create --from <template> <instance_id>  Create from template
 sahjhan ledger list                       Show registered ledgers
 sahjhan ledger remove --name <n>          Unregister (keeps file)
 sahjhan ledger verify [--name <n>]        Validate chain integrity
@@ -447,7 +506,8 @@ Exclusive file locks for writes, shared for reads. 5 second lock timeout.
 +--------------------------------------------------+
 |             Protocol Definition                   |
 |          (TOML config files, per-project)         |
-|   states, transitions, gates, events, sets        |
+|   states, transitions, gates, events, sets,       |
+|   ledger templates                                |
 +--------------------------------------------------+
 |              Sahjhan Engine                        |
 |           (Rust binary, reusable core)             |

@@ -2486,3 +2486,135 @@ fn test_gate_result_evaluable_default_true() {
     let result = evaluate_gate(&gate, &ctx);
     assert!(result.evaluable, "normal gates should be evaluable");
 }
+
+// ---------------------------------------------------------------------------
+// Unevaluable gate tests — missing template vars
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_query_gate_unevaluable_on_missing_template_var() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let gate = make_gate(
+        "query",
+        vec![(
+            "sql",
+            toml::Value::String(
+                "SELECT count(*) >= 1 FROM events WHERE perspective='{{current_perspective}}'"
+                    .to_string(),
+            ),
+        )],
+    );
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(!result.evaluable, "gate should be unevaluable");
+    assert!(!result.passed, "unevaluable gate should not pass");
+    assert!(
+        result
+            .reason
+            .as_ref()
+            .unwrap()
+            .contains("current_perspective"),
+        "reason should mention the missing variable: {:?}",
+        result.reason
+    );
+}
+
+#[test]
+fn test_command_gate_unevaluable_on_missing_template_var() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let gate = make_gate(
+        "command_succeeds",
+        vec![("cmd", toml::Value::String("echo {{some_arg}}".to_string()))],
+    );
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(!result.evaluable, "gate should be unevaluable");
+    assert!(!result.passed);
+    assert!(result.reason.as_ref().unwrap().contains("some_arg"));
+}
+
+#[test]
+fn test_file_exists_unevaluable_on_missing_template_var() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let gate = make_gate(
+        "file_exists",
+        vec![(
+            "path",
+            toml::Value::String("{{data_root}}/file.txt".to_string()),
+        )],
+    );
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(!result.evaluable, "gate should be unevaluable");
+    assert!(!result.passed);
+    assert!(result.reason.as_ref().unwrap().contains("data_root"));
+}
+
+#[test]
+fn test_query_gate_evaluable_when_var_provided() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let gate = make_gate(
+        "query",
+        vec![
+            (
+                "sql",
+                toml::Value::String(
+                    "SELECT count(*) >= 1 FROM events WHERE type='{{my_type}}'".to_string(),
+                ),
+            ),
+            ("expect", toml::Value::String("false".to_string())),
+        ],
+    );
+    let mut state_params = HashMap::new();
+    state_params.insert("my_type".to_string(), "nonexistent".to_string());
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params,
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(
+        result.evaluable,
+        "gate should be evaluable when var provided"
+    );
+}

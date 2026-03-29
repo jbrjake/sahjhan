@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use crate::config::GateConfig;
 
 use super::evaluator::{GateContext, GateResult};
-use super::template::resolve_template;
+use super::template::{find_unresolved_vars, resolve_template};
 use super::types::{build_template_vars, validate_template_fields};
 
 // ---------------------------------------------------------------------------
@@ -65,6 +65,21 @@ pub(super) fn eval_command_succeeds(gate: &GateConfig, ctx: &GateContext) -> Gat
 
     let vars = build_template_vars(ctx);
     let cmd = resolve_template(raw_cmd, &vars);
+
+    let unresolved = find_unresolved_vars(&cmd);
+    if !unresolved.is_empty() {
+        return GateResult {
+            passed: false,
+            evaluable: false,
+            gate_type: "command_succeeds".to_string(),
+            description: format!("command succeeds: {}", raw_cmd),
+            reason: Some(format!(
+                "unevaluable (requires arg: {})",
+                unresolved.join(", ")
+            )),
+            intent: None,
+        };
+    }
 
     match run_shell_with_timeout(&cmd, &ctx.working_dir, timeout_secs) {
         Ok(CommandOutcome::Completed(status)) => {
@@ -144,6 +159,21 @@ pub(super) fn eval_command_output(gate: &GateConfig, ctx: &GateContext) -> GateR
 
     let vars = build_template_vars(ctx);
     let cmd = resolve_template(raw_cmd, &vars);
+
+    let unresolved = find_unresolved_vars(&cmd);
+    if !unresolved.is_empty() {
+        return GateResult {
+            passed: false,
+            evaluable: false,
+            gate_type: "command_output".to_string(),
+            description: format!("command output matches '{}'", expect),
+            reason: Some(format!(
+                "unevaluable (requires arg: {})",
+                unresolved.join(", ")
+            )),
+            intent: None,
+        };
+    }
 
     match run_shell_output_with_timeout(&cmd, &ctx.working_dir, timeout_secs) {
         Ok(CommandOutputOutcome::Completed(stdout)) => {

@@ -8,7 +8,7 @@ use crate::config::GateConfig;
 
 use super::command::{run_shell_output_with_timeout, CommandOutputOutcome};
 use super::evaluator::{GateContext, GateResult};
-use super::template::resolve_template;
+use super::template::{find_unresolved_vars, resolve_template};
 use super::types::build_template_vars;
 
 // [eval-snapshot-compare]
@@ -50,6 +50,21 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
         "snapshot_compare: {} {} {}",
         extract, compare, reference_raw
     );
+
+    let unresolved = find_unresolved_vars(&cmd);
+    if !unresolved.is_empty() {
+        return GateResult {
+            passed: false,
+            evaluable: false,
+            gate_type: "snapshot_compare".to_string(),
+            description,
+            reason: Some(format!(
+                "unevaluable (requires arg: {})",
+                unresolved.join(", ")
+            )),
+            intent: None,
+        };
+    }
 
     // Resolve reference — if it starts with "snapshot:", look up in ledger.
     let reference = if let Some(snapshot_key) = reference_raw.strip_prefix("snapshot:") {

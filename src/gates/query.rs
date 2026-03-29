@@ -6,7 +6,7 @@
 use crate::config::GateConfig;
 
 use super::evaluator::{GateContext, GateResult};
-use super::template::resolve_template_plain;
+use super::template::{find_unresolved_vars, resolve_template_plain};
 use super::types::{build_template_vars, validate_template_fields};
 
 // [eval-query-gate]
@@ -40,6 +40,21 @@ pub(super) fn eval_query_gate(gate: &GateConfig, ctx: &GateContext) -> GateResul
     // Interpolate template variables (plain — no shell escaping for SQL).
     let vars = build_template_vars(ctx);
     let sql = resolve_template_plain(&raw_sql, &vars);
+
+    let unresolved = find_unresolved_vars(&sql);
+    if !unresolved.is_empty() {
+        return GateResult {
+            passed: false,
+            evaluable: false,
+            gate_type: "query".to_string(),
+            description: format!("SQL: {}", raw_sql),
+            reason: Some(format!(
+                "unevaluable (requires arg: {})",
+                unresolved.join(", ")
+            )),
+            intent: None,
+        };
+    }
 
     let expect = gate
         .params

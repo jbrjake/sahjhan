@@ -2,6 +2,7 @@
 //
 // Tests for config integrity sealing, verification, and reseal.
 
+use std::collections::BTreeMap;
 use tempfile::tempdir;
 
 #[test]
@@ -58,4 +59,43 @@ fn test_compute_config_seals_deterministic() {
     let seals1 = sahjhan::config::compute_config_seals(dir.path());
     let seals2 = sahjhan::config::compute_config_seals(dir.path());
     assert_eq!(seals1, seals2);
+}
+
+use sahjhan::ledger::chain::Ledger;
+
+#[test]
+fn test_init_with_seals_stores_hashes_in_genesis() {
+    let dir = tempdir().unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+
+    let mut seals = BTreeMap::new();
+    seals.insert("config_seal_protocol".to_string(), "aaa111".to_string());
+    seals.insert("config_seal_states".to_string(), "bbb222".to_string());
+    seals.insert("config_seal_transitions".to_string(), "ccc333".to_string());
+    seals.insert("config_seal_events".to_string(), "ddd444".to_string());
+    seals.insert("config_seal_renders".to_string(), "eee555".to_string());
+
+    let ledger = Ledger::init_with_seals(&ledger_path, "test", "1.0.0", seals).unwrap();
+
+    let genesis = &ledger.entries()[0];
+    assert_eq!(genesis.fields.get("config_seal_protocol").unwrap(), "aaa111");
+    assert_eq!(genesis.fields.get("config_seal_states").unwrap(), "bbb222");
+    assert_eq!(genesis.fields.get("config_seal_transitions").unwrap(), "ccc333");
+    assert_eq!(genesis.fields.get("config_seal_events").unwrap(), "ddd444");
+    assert_eq!(genesis.fields.get("config_seal_renders").unwrap(), "eee555");
+    // Original fields still present
+    assert_eq!(genesis.fields.get("protocol_name").unwrap(), "test");
+    assert_eq!(genesis.fields.get("protocol_version").unwrap(), "1.0.0");
+}
+
+#[test]
+fn test_init_without_seals_unchanged() {
+    let dir = tempdir().unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let genesis = &ledger.entries()[0];
+    assert_eq!(genesis.fields.len(), 2); // Only protocol_name and protocol_version
+    assert!(!genesis.fields.contains_key("config_seal_protocol"));
 }

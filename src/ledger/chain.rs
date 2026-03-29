@@ -4,12 +4,13 @@
 //
 // ## Index
 // - Ledger                   — core ledger struct (open, append, reload, verify, tail)
-// - [ledger-init]            Ledger::init()       — create new ledger with genesis entry
-// - [ledger-open]            Ledger::open()       — open existing ledger file
-// - [ledger-append]          Ledger::append()     — append hash-chained entry
-// - [ledger-reload]          Ledger::reload()     — re-read from disk
-// - [ledger-verify]          Ledger::verify()     — verify hash chain integrity
-// - [parse-file-entries]     parse_file_entries()  — parse JSONL file into entries
+// - [ledger-init]            Ledger::init()            — create new ledger with genesis entry
+// - [ledger-init-with-seals] Ledger::init_with_seals() — create new ledger with config integrity seals in genesis
+// - [ledger-open]            Ledger::open()            — open existing ledger file
+// - [ledger-append]          Ledger::append()          — append hash-chained entry
+// - [ledger-reload]          Ledger::reload()          — re-read from disk
+// - [ledger-verify]          Ledger::verify()          — verify hash chain integrity
+// - [parse-file-entries]     parse_file_entries()      — parse JSONL file into entries
 
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
@@ -53,11 +54,39 @@ impl Ledger {
         protocol_name: &str,
         protocol_version: &str,
     ) -> Result<Self, LedgerError> {
-        let genesis = create_genesis(protocol_name, protocol_version);
+        let genesis = create_genesis(protocol_name, protocol_version, BTreeMap::new());
 
         // Create (exclusive) — fail if the file already exists.
         let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
 
+        lock_exclusive_with_timeout(&file, path)?;
+        writeln!(file, "{}", genesis.to_jsonl())?;
+        file.unlock()?;
+
+        let engine = genesis.engine.clone();
+        let protocol = genesis.protocol.clone();
+
+        Ok(Ledger {
+            path: path.to_path_buf(),
+            entries: vec![genesis],
+            engine,
+            protocol,
+        })
+    }
+
+    // [ledger-init-with-seals]
+    /// Create a new ledger at `path` with a genesis entry that includes
+    /// config integrity seals. The `config_seals` map is merged into the
+    /// genesis entry's fields alongside protocol_name and protocol_version.
+    pub fn init_with_seals(
+        path: &Path,
+        protocol_name: &str,
+        protocol_version: &str,
+        config_seals: BTreeMap<String, String>,
+    ) -> Result<Self, LedgerError> {
+        let genesis = create_genesis(protocol_name, protocol_version, config_seals);
+
+        let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
         lock_exclusive_with_timeout(&file, path)?;
         writeln!(file, "{}", genesis.to_jsonl())?;
         file.unlock()?;
@@ -349,7 +378,11 @@ impl Ledger {
 /// The genesis entry has seq 0. Its `prev` is a cryptographically random
 /// nonce (32 bytes, hex-encoded to 64 chars) so that two ledgers initialised
 /// with the same parameters are still distinguishable.
-fn create_genesis(protocol_name: &str, protocol_version: &str) -> LedgerEntry {
+fn create_genesis(
+    protocol_name: &str,
+    protocol_version: &str,
+    extra_fields: BTreeMap<String, String>,
+) -> LedgerEntry {
     let mut nonce = [0u8; 32];
     getrandom::getrandom(&mut nonce).expect("CSPRNG failed");
     let prev = hex::encode(nonce);
@@ -359,6 +392,7 @@ fn create_genesis(protocol_name: &str, protocol_version: &str) -> LedgerEntry {
     let mut fields = BTreeMap::new();
     fields.insert("protocol_name".to_string(), protocol_name.to_string());
     fields.insert("protocol_version".to_string(), protocol_version.to_string());
+    fields.extend(extra_fields);
 
     LedgerEntry::new(0, prev, "genesis", ENGINE_NAME, &protocol, fields)
 }

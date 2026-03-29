@@ -4,7 +4,9 @@
 // guards, and the ledger_lacks_event gate.
 
 use assert_cmd::Command;
+use hmac::{Hmac, Mac};
 use predicates::prelude::*;
+use sha2::Sha256;
 use tempfile::tempdir;
 
 /// Create a temp directory with config that includes restricted events, then run `init`.
@@ -166,4 +168,97 @@ fn test_event_allows_unrestricted_type() {
         .current_dir(dir.path())
         .assert()
         .success();
+}
+
+fn compute_proof(key_path: &std::path::Path, event_type: &str, fields: &[(&str, &str)]) -> String {
+    let key = std::fs::read(key_path).unwrap();
+    let mut sorted_fields: Vec<(&str, &str)> = fields.to_vec();
+    sorted_fields.sort_by_key(|(k, _)| *k);
+
+    let mut payload = event_type.to_string();
+    for (k, v) in &sorted_fields {
+        payload.push('\0');
+        payload.push_str(&format!("{}={}", k, v));
+    }
+
+    let mut mac = Hmac::<Sha256>::new_from_slice(&key).unwrap();
+    mac.update(payload.as_bytes());
+    hex::encode(mac.finalize().into_bytes())
+}
+
+#[test]
+fn test_authed_event_valid_proof() {
+    let dir = setup_auth_dir();
+    let key_path = dir.path().join("output/.sahjhan/session.key");
+
+    let proof = compute_proof(
+        &key_path,
+        "quiz_answered",
+        &[("score", "5/5"), ("pass", "true")],
+    );
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "authed-event",
+            "quiz_answered",
+            "--field",
+            "score=5/5",
+            "--field",
+            "pass=true",
+            "--proof",
+            &proof,
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("recorded: quiz_answered"));
+}
+
+#[test]
+fn test_authed_event_invalid_proof() {
+    let dir = setup_auth_dir();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "authed-event",
+            "quiz_answered",
+            "--field",
+            "score=5/5",
+            "--field",
+            "pass=true",
+            "--proof",
+            "deadbeef",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid proof"));
+}
+
+#[test]
+fn test_authed_event_rejects_unrestricted_type() {
+    let dir = setup_auth_dir();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "authed-event",
+            "finding",
+            "--field",
+            "detail=something",
+            "--proof",
+            "deadbeef",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not restricted"));
 }

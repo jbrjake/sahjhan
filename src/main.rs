@@ -15,6 +15,7 @@
 use clap::{Parser, Subcommand};
 
 use sahjhan::cli::aliases;
+use sahjhan::cli::authed_event;
 use sahjhan::cli::commands;
 use sahjhan::cli::hooks_cmd;
 use sahjhan::cli::init;
@@ -110,6 +111,21 @@ enum Commands {
         /// Field values (key=value)
         #[arg(long = "field", value_name = "KEY=VALUE")]
         fields: Vec<String>,
+    },
+
+    /// Record a restricted event with HMAC proof
+    AuthedEvent {
+        /// Event type
+        #[arg(value_name = "TYPE")]
+        event_type: String,
+
+        /// Field values (key=value)
+        #[arg(long = "field", value_name = "KEY=VALUE")]
+        fields: Vec<String>,
+
+        /// HMAC-SHA256 proof
+        #[arg(long)]
+        proof: String,
     },
 
     /// Archive current run and start fresh
@@ -371,6 +387,17 @@ fn main() {
         Commands::Event { event_type, fields } => {
             transition::cmd_event(&cli.config_dir, &event_type, &fields, &targeting)
         }
+        Commands::AuthedEvent {
+            event_type,
+            fields,
+            proof,
+        } => authed_event::cmd_authed_event(
+            &cli.config_dir,
+            &event_type,
+            &fields,
+            &proof,
+            &targeting,
+        ),
         Commands::Reset { confirm, token } => init::cmd_reset(&cli.config_dir, confirm, &token),
         Commands::Hook { action } => match action {
             HookAction::Generate {

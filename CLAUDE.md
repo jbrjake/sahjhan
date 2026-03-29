@@ -185,6 +185,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | Query | `cli/query.rs` | `[cmd-query]` | SQL queries over events |
 | Render | `cli/render.rs` | `[cmd-render]`, `[cmd-render-dump-context]` | Template rendering |
 | Manifest | `cli/manifest_cmd.rs` | `[cmd-manifest-verify]`, `[cmd-manifest-list]` | File integrity |
+| Authed event | `cli/authed_event.rs` | `[cmd-authed-event]`, `resolve_session_key_path`, `build_canonical_payload` | HMAC-verified restricted event recording |
 | Hooks | `cli/hooks_cmd.rs` | `[cmd-hook-generate]` | Hook script generation |
 
 ---

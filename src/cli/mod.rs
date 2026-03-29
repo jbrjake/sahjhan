@@ -1,6 +1,7 @@
 // src/cli/mod.rs
 
 pub mod aliases;
+pub mod authed_event;
 pub mod commands;
 pub mod hooks_cmd;
 pub mod init;

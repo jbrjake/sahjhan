@@ -3,7 +3,7 @@
 // Initialization, validation, and reset commands.
 //
 // ## Index
-// - [cmd-init] cmd_init() — initialize ledger, manifest, genesis
+// - [cmd-init] cmd_init() — initialize ledger, manifest, session key, genesis
 // - [cmd-validate] cmd_validate() — validate protocol config
 // - [cmd-reset] cmd_reset() — archive and reset run
 
@@ -124,6 +124,17 @@ pub fn cmd_init(config_dir: &str) -> i32 {
                 eprintln!("error: cannot register default ledger: {}", e);
                 return EXIT_INTEGRITY_ERROR;
             }
+        }
+    }
+
+    // Generate session key (32 random bytes)
+    {
+        let key_path = data_dir.join("session.key");
+        let mut key = [0u8; 32];
+        getrandom::getrandom(&mut key).expect("failed to generate random key");
+        if let Err(e) = std::fs::write(&key_path, &key) {
+            eprintln!("error: cannot write session key: {}", e);
+            return EXIT_CONFIG_ERROR;
         }
     }
 

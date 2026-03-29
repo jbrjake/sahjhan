@@ -304,3 +304,4 @@ cli/commands.rs [load-config]
 | `tests/hook_generation_tests.rs` | Hook script generation |
 | `tests/template_security_tests.rs` | Shell escaping, injection prevention |
 | `tests/template_tests.rs` | Template-based ledger creation via cmd_ledger_create |
+| `tests/auth_tests.rs` | Session key generation, restricted events, HMAC auth |

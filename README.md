@@ -337,6 +337,20 @@ fields = [
 
 The `pattern` regex on `severity` means the agent picks from four values or gets rejected. Fields declared here become SQL columns — you define the schema once, then query it forever. No JSON parsing at query time.
 
+Fields are required by default. If a field only matters sometimes, mark it `optional = true`:
+
+```toml
+[events.finding_resolved]
+description = "A finding was resolved"
+fields = [
+    { name = "id", type = "string", pattern = "^B[HJ]-\\d{3}$" },
+    { name = "commit_hash", type = "string" },
+    { name = "evidence_path", type = "string", optional = true },
+]
+```
+
+Omit `evidence_path` and Sahjhan won't complain. Provide it and it still gets validated against `pattern` if one is set. The enforcement logic that decides *when* the field matters lives in your gate scripts, not in the schema. Sahjhan just needs to know whether to reject the event for leaving it out.
+
 ### Renders: status files the agent can't touch
 
 You probably want a STATUS.md that shows where things stand. Normally the agent would write it, which means the agent controls what it says. Instead, Sahjhan renders it from the ledger. The agent never touches these files directly.

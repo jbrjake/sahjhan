@@ -6,11 +6,13 @@
 // - [cmd-transition] cmd_transition() — execute a named transition (runs gates)
 // - [cmd-gate-check] cmd_gate_check() — dry-run gate evaluation
 // - [record-and-render] record_and_render() — shared event recording + render triggering logic
+// - validate_event_fields() — validate event fields against an EventConfig (shared by cmd_event + cmd_authed_event)
 // - [cmd-event] cmd_event() — record a protocol event
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use crate::config::events::EventConfig;
 use crate::gates::evaluator::{evaluate_gates, GateContext};
 use crate::render::engine::RenderEngine;
 use crate::state::machine::StateMachine;
@@ -346,6 +348,61 @@ pub fn record_and_render(
 // event
 // ---------------------------------------------------------------------------
 
+/// Validate event fields against an event definition.
+///
+/// Checks that required fields are present, and validates pattern/values
+/// constraints on all provided fields (including optional ones).
+pub fn validate_event_fields(
+    event_config: &EventConfig,
+    fields: &HashMap<String, String>,
+    event_type: &str,
+) -> Result<(), (i32, String)> {
+    // Check required fields are present (skip optional fields)
+    for field_def in &event_config.fields {
+        if !field_def.optional && !fields.contains_key(&field_def.name) {
+            return Err((
+                EXIT_USAGE_ERROR,
+                format!(
+                    "error: missing field '{}' for event '{}'",
+                    field_def.name, event_type
+                ),
+            ));
+        }
+    }
+
+    // Validate provided field values against patterns and allowed values
+    for field_def in &event_config.fields {
+        if let Some(value) = fields.get(&field_def.name) {
+            if let Some(pattern) = &field_def.pattern {
+                if let Ok(re) = regex::Regex::new(pattern) {
+                    if !re.is_match(value) {
+                        return Err((
+                            EXIT_USAGE_ERROR,
+                            format!(
+                                "error: field '{}' value '{}' doesn't match pattern '{}'",
+                                field_def.name, value, pattern
+                            ),
+                        ));
+                    }
+                }
+            }
+            if let Some(allowed) = &field_def.values {
+                if !allowed.contains(value) {
+                    return Err((
+                        EXIT_USAGE_ERROR,
+                        format!(
+                            "error: field '{}' value '{}' not in allowed values {:?}",
+                            field_def.name, value, allowed
+                        ),
+                    ));
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 // [cmd-event]
 pub fn cmd_event(
     config_dir: &str,
@@ -403,44 +460,9 @@ pub fn cmd_event(
 
     // Validate fields against events.toml definitions (E11)
     if let Some(event_config) = config.events.get(event_type) {
-        // Check required fields are present
-        for field_def in &event_config.fields {
-            if !fields.contains_key(&field_def.name) {
-                eprintln!(
-                    "error: missing field '{}' for event '{}'",
-                    field_def.name, event_type
-                );
-                return EXIT_USAGE_ERROR;
-            }
-        }
-
-        // Validate field values against patterns if defined
-        for field_def in &event_config.fields {
-            if let Some(pattern) = &field_def.pattern {
-                if let Some(value) = fields.get(&field_def.name) {
-                    if let Ok(re) = regex::Regex::new(pattern) {
-                        if !re.is_match(value) {
-                            eprintln!(
-                                "error: field '{}' value '{}' doesn't match pattern '{}'",
-                                field_def.name, value, pattern
-                            );
-                            return EXIT_USAGE_ERROR;
-                        }
-                    }
-                }
-            }
-            // Validate against allowed values if defined
-            if let Some(allowed) = &field_def.values {
-                if let Some(value) = fields.get(&field_def.name) {
-                    if !allowed.contains(value) {
-                        eprintln!(
-                            "error: field '{}' value '{}' not in allowed values {:?}",
-                            field_def.name, value, allowed
-                        );
-                        return EXIT_USAGE_ERROR;
-                    }
-                }
-            }
+        if let Err((code, msg)) = validate_event_fields(event_config, &fields, event_type) {
+            eprintln!("{}", msg);
+            return code;
         }
     }
 

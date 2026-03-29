@@ -142,6 +142,33 @@ fn test_event_recording() {
 }
 
 #[test]
+fn test_event_missing_required_field_rejected() {
+    let dir = setup_initialized_dir();
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "transition", "begin"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // set_member_complete requires "set" and "member" fields — omit "member"
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "event",
+            "set_member_complete",
+            "--field",
+            "set=check",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("missing field 'member'"));
+}
+
+#[test]
 fn test_full_workflow() {
     let dir = setup_initialized_dir();
 

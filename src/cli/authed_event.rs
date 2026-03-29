@@ -19,7 +19,7 @@ use super::commands::{
     load_config, load_manifest, open_targeted_ledger, resolve_config_dir, resolve_data_dir,
     LedgerTargeting, EXIT_INTEGRITY_ERROR, EXIT_USAGE_ERROR,
 };
-use super::transition::record_and_render;
+use super::transition::{record_and_render, validate_event_fields};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -124,40 +124,9 @@ pub fn cmd_authed_event(
 
     // Validate fields against events.toml definitions
     if let Some(event_config) = config.events.get(event_type) {
-        for field_def in &event_config.fields {
-            if !fields.contains_key(&field_def.name) {
-                eprintln!(
-                    "error: missing field '{}' for event '{}'",
-                    field_def.name, event_type
-                );
-                return EXIT_USAGE_ERROR;
-            }
-        }
-        for field_def in &event_config.fields {
-            if let Some(pattern) = &field_def.pattern {
-                if let Some(value) = fields.get(&field_def.name) {
-                    if let Ok(re) = regex::Regex::new(pattern) {
-                        if !re.is_match(value) {
-                            eprintln!(
-                                "error: field '{}' value '{}' doesn't match pattern '{}'",
-                                field_def.name, value, pattern
-                            );
-                            return EXIT_USAGE_ERROR;
-                        }
-                    }
-                }
-            }
-            if let Some(allowed) = &field_def.values {
-                if let Some(value) = fields.get(&field_def.name) {
-                    if !allowed.contains(value) {
-                        eprintln!(
-                            "error: field '{}' value '{}' not in allowed values {:?}",
-                            field_def.name, value, allowed
-                        );
-                        return EXIT_USAGE_ERROR;
-                    }
-                }
-            }
+        if let Err((code, msg)) = validate_event_fields(event_config, &fields, event_type) {
+            eprintln!("{}", msg);
+            return code;
         }
     }
 

@@ -287,6 +287,17 @@ pub fn cmd_event(
         }
     };
 
+    // Check if event type is restricted
+    if let Some(event_config) = config.events.get(event_type) {
+        if event_config.restricted == Some(true) {
+            eprintln!(
+                "error: event type '{}' is restricted. Use 'sahjhan authed-event' with a valid proof.",
+                event_type
+            );
+            return EXIT_USAGE_ERROR;
+        }
+    }
+
     let data_dir = resolve_data_dir(&config.paths.data_dir);
     let mut manifest = match load_manifest(&data_dir) {
         Ok(m) => m,

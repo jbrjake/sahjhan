@@ -4,6 +4,7 @@
 // guards, and the ledger_lacks_event gate.
 
 use assert_cmd::Command;
+use predicates::prelude::*;
 use tempfile::tempdir;
 
 /// Create a temp directory with config that includes restricted events, then run `init`.
@@ -86,4 +87,83 @@ fn test_init_creates_session_key() {
     assert!(key_path.exists(), "session.key should exist after init");
     let key_bytes = std::fs::read(&key_path).unwrap();
     assert_eq!(key_bytes.len(), 32, "session key should be 32 bytes");
+}
+
+#[test]
+fn test_ledger_create_generates_per_ledger_key() {
+    let dir = setup_auth_dir();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "ledger",
+            "create",
+            "--name",
+            "test-ledger",
+            "--path",
+            "output/.sahjhan/test-ledger.jsonl",
+            "--mode",
+            "event-only",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    let key_path = dir
+        .path()
+        .join("output/.sahjhan/ledgers/test-ledger/session.key");
+    assert!(
+        key_path.exists(),
+        "per-ledger session.key should exist after ledger create"
+    );
+    let key_bytes = std::fs::read(&key_path).unwrap();
+    assert_eq!(key_bytes.len(), 32, "per-ledger session key should be 32 bytes");
+
+    // Per-ledger key should differ from global key
+    let global_key = std::fs::read(dir.path().join("output/.sahjhan/session.key")).unwrap();
+    assert_ne!(key_bytes, global_key.as_slice(), "per-ledger key should differ from global");
+}
+
+#[test]
+fn test_event_rejects_restricted_type() {
+    let dir = setup_auth_dir();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "event",
+            "quiz_answered",
+            "--field",
+            "score=5/5",
+            "--field",
+            "pass=true",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("restricted"))
+        .stderr(predicate::str::contains("authed-event"));
+}
+
+#[test]
+fn test_event_allows_unrestricted_type() {
+    let dir = setup_auth_dir();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "event",
+            "finding",
+            "--field",
+            "detail=something",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success();
 }

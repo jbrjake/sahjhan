@@ -158,6 +158,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | Concept | File | Anchor/Item | Purpose |
 |---------|------|-------------|---------|
 | Render engine | `render/engine.rs` | `RenderEngine` | Tera-based markdown generation |
+| where_eq filter | `render/engine.rs` | `filter_where_eq` | Tera filter: keep array items where attribute == value (dot-notation supported) |
 | Active ledger name | `render/engine.rs` | `with_active_ledger_name` | Set active ledger for template resolution |
 | Resolve render ledger | `render/engine.rs` | `resolve_render_ledger` | Dispatch to by-name or by-template resolution |
 | Resolve by name | `render/engine.rs` | `resolve_ledger_by_name` | Literal registry lookup |
@@ -363,3 +364,4 @@ cli/authed_event.rs [cmd-reseal]
 | `tests/auth_tests.rs` | Session key generation, restricted events, HMAC auth |
 | `tests/mermaid_tests.rs` | Mermaid stateDiagram-v2 output, hyphen sanitization, gate labels, ASCII tree, cycle detection |
 | `tests/config_integrity_tests.rs` | Config sealing, tamper detection, reseal, backward compat |
+| `tests/render_filter_tests.rs` | Custom Tera filters registered by the render engine (where_eq) |

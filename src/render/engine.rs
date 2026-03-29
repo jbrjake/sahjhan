@@ -6,6 +6,7 @@
 // - EventSummary             — event data for templates
 // - MemberSummary            — set member status for templates
 // - SetSummary               — set completion status for templates
+// - filter_where_eq          — Tera filter: keep array items where attribute == value (dot-notation supported)
 // - RenderEngine             — Tera-based renderer with config + templates + active_ledger_name
 // - with_active_ledger_name  — set active ledger name for template resolution
 // - resolve_render_ledger    — dispatch to by-name or by-template resolution
@@ -22,6 +23,7 @@ use std::path::Path;
 use serde::Serialize;
 use serde_json::json;
 use tera::Tera;
+use tera::Value;
 
 use crate::config::ProtocolConfig;
 use crate::ledger::chain::Ledger;
@@ -52,6 +54,46 @@ pub struct SetSummary {
     pub members: Vec<MemberSummary>,
 }
 
+// ---------------------------------------------------------------------------
+// Custom Tera filters
+// ---------------------------------------------------------------------------
+
+/// Filter an array of objects, keeping only those where `attribute` equals `value`.
+///
+/// Usage: `{{ events | where_eq(attribute="event_type", value="finding") }}`
+fn filter_where_eq(value: &Value, args: &HashMap<String, Value>) -> tera::Result<Value> {
+    let arr = value
+        .as_array()
+        .ok_or_else(|| tera::Error::msg("where_eq: input must be an array"))?;
+
+    let attribute = args
+        .get("attribute")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| tera::Error::msg("where_eq: missing 'attribute' argument"))?;
+
+    let target = args
+        .get("value")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| tera::Error::msg("where_eq: missing 'value' argument"))?;
+
+    let filtered: Vec<Value> = arr
+        .iter()
+        .filter(|item| {
+            let resolved = attribute
+                .split('.')
+                .fold(Some((*item).clone()), |acc, key| {
+                    acc.and_then(|v| v.get(key).cloned())
+                });
+            resolved
+                .and_then(|v| v.as_str().map(|s| s == target))
+                .unwrap_or(false)
+        })
+        .cloned()
+        .collect();
+
+    Ok(Value::Array(filtered))
+}
+
 /// Template rendering engine powered by Tera.
 pub struct RenderEngine {
     tera: Tera,
@@ -78,6 +120,8 @@ impl RenderEngine {
             tera.add_raw_template(&render_cfg.template, &template_src)
                 .map_err(|e| format!("cannot parse template '{}': {}", render_cfg.template, e))?;
         }
+
+        tera.register_filter("where_eq", filter_where_eq);
 
         Ok(RenderEngine {
             tera,

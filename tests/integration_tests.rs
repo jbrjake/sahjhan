@@ -1845,3 +1845,154 @@ gates = [
         .assert()
         .code(1); // EXIT_GATE_FAILED
 }
+
+/// Create a temp directory with a config that has an optional field, then run `init`.
+fn setup_optional_field_dir() -> tempfile::TempDir {
+    let dir = tempdir().unwrap();
+    let config_dir = dir.path().join("enforcement");
+    std::fs::create_dir_all(&config_dir).unwrap();
+
+    std::fs::write(
+        config_dir.join("protocol.toml"),
+        r#"
+[protocol]
+name = "test-optional"
+version = "1.0.0"
+description = "Optional field test"
+
+[paths]
+managed = ["output"]
+data_dir = "output/.sahjhan"
+render_dir = "output"
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        config_dir.join("states.toml"),
+        r#"
+[states.idle]
+label = "Idle"
+initial = true
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        config_dir.join("transitions.toml"),
+        "[[transitions]]\nfrom = \"idle\"\nto = \"idle\"\ncommand = \"noop\"\ngates = []\n",
+    )
+    .unwrap();
+
+    std::fs::write(
+        config_dir.join("events.toml"),
+        r#"
+[events.finding_resolved]
+description = "A finding was resolved"
+fields = [
+    { name = "id", type = "string", pattern = "^F-\\d{3}$" },
+    { name = "commit_hash", type = "string" },
+    { name = "evidence_path", type = "string", optional = true, pattern = "^evidence/" },
+]
+"#,
+    )
+    .unwrap();
+
+    std::fs::create_dir_all(dir.path().join("output")).unwrap();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "init"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    dir
+}
+
+#[test]
+fn test_optional_field_provided_and_validated() {
+    let dir = setup_optional_field_dir();
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "event",
+            "finding_resolved",
+            "--field",
+            "id=F-001",
+            "--field",
+            "commit_hash=abc1234",
+            "--field",
+            "evidence_path=evidence/justification.md",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("recorded: finding_resolved"));
+}
+
+#[test]
+fn test_optional_field_omitted_accepted() {
+    let dir = setup_optional_field_dir();
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "event",
+            "finding_resolved",
+            "--field",
+            "id=F-002",
+            "--field",
+            "commit_hash=def5678",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("recorded: finding_resolved"));
+}
+
+#[test]
+fn test_optional_field_bad_pattern_rejected() {
+    let dir = setup_optional_field_dir();
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "event",
+            "finding_resolved",
+            "--field",
+            "id=F-003",
+            "--field",
+            "commit_hash=abc1234",
+            "--field",
+            "evidence_path=wrong/path.md",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("doesn't match pattern"));
+}
+
+#[test]
+fn test_required_field_still_required_with_optional_present() {
+    let dir = setup_optional_field_dir();
+    // Omit required "id" field — should fail even though optional field exists
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "event",
+            "finding_resolved",
+            "--field",
+            "commit_hash=abc1234",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("missing field 'id'"));
+}

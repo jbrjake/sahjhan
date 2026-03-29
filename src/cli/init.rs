@@ -86,11 +86,15 @@ pub fn cmd_init(config_dir: &str) -> i32 {
         return EXIT_USAGE_ERROR;
     }
 
-    // Initialize ledger with genesis block
-    let _ledger = match crate::ledger::chain::Ledger::init(
+    // Compute config integrity seals
+    let config_seals = crate::config::compute_config_seals(&config_path);
+
+    // Initialize ledger with genesis block (including config seals)
+    let _ledger = match crate::ledger::chain::Ledger::init_with_seals(
         &lp,
         &config.protocol.name,
         &config.protocol.version,
+        config_seals,
     ) {
         Ok(l) => l,
         Err(e) => {
@@ -186,7 +190,7 @@ pub fn cmd_reset(config_dir: &str, confirm: bool, token: &Option<String>) -> i32
     };
 
     let data_dir = resolve_data_dir(&config.paths.data_dir);
-    let ledger = match open_ledger(&data_dir) {
+    let ledger = match open_ledger(&data_dir, &config_path) {
         Ok(l) => l,
         Err((code, msg)) => {
             eprintln!("{}", msg);

@@ -1664,11 +1664,7 @@ fn test_query_on_named_ledger() {
 
 #[test]
 fn test_gate_check_with_args() {
-    let dir = setup_initialized_dir();
-
-    // Overwrite transitions.toml with a gate that uses {{item_id}}
-    std::fs::write(
-        dir.path().join("enforcement/transitions.toml"),
+    let dir = setup_dir_with_custom_transitions(
         r#"
 [[transitions]]
 from = "idle"
@@ -1686,8 +1682,7 @@ gates = [
     { type = "set_covered", set = "check", event = "set_member_complete", field = "member" },
 ]
 "#,
-    )
-    .unwrap();
+    );
 
     // Gate check with args should show the gate passing
     Command::cargo_bin("sahjhan")
@@ -1709,11 +1704,7 @@ gates = [
 
 #[test]
 fn test_render_with_named_ledger_falls_back_to_default() {
-    let dir = setup_initialized_dir();
-
-    // Overwrite renders.toml to reference a named ledger that doesn't exist
-    std::fs::write(
-        dir.path().join("enforcement/renders.toml"),
+    let dir = setup_dir_with_custom_renders(
         r#"
 [[renders]]
 target = "STATUS.md"
@@ -1721,8 +1712,7 @@ template = "templates/status.md.tera"
 trigger = "on_transition"
 ledger = "run"
 "#,
-    )
-    .unwrap();
+    );
 
     // Render should succeed by falling back to the default ledger
     Command::cargo_bin("sahjhan")
@@ -1740,11 +1730,7 @@ ledger = "run"
 
 #[test]
 fn test_transition_with_template_args() {
-    let dir = setup_initialized_dir();
-
-    // Overwrite transitions.toml with a gate using {{item_id}}
-    std::fs::write(
-        dir.path().join("enforcement/transitions.toml"),
+    let dir = setup_dir_with_custom_transitions(
         r#"
 [[transitions]]
 from = "idle"
@@ -1762,8 +1748,7 @@ gates = [
     { type = "set_covered", set = "check", event = "set_member_complete", field = "member" },
 ]
 "#,
-    )
-    .unwrap();
+    );
 
     // Transition with item_id arg should succeed
     Command::cargo_bin("sahjhan")
@@ -1812,11 +1797,7 @@ fn test_transition_terse_output() {
 
 #[test]
 fn test_transition_without_required_arg_fails() {
-    let dir = setup_initialized_dir();
-
-    // Same gate requiring {{item_id}}
-    std::fs::write(
-        dir.path().join("enforcement/transitions.toml"),
+    let dir = setup_dir_with_custom_transitions(
         r#"
 [[transitions]]
 from = "idle"
@@ -1834,8 +1815,7 @@ gates = [
     { type = "set_covered", set = "check", event = "set_member_complete", field = "member" },
 ]
 "#,
-    )
-    .unwrap();
+    );
 
     // Transition without the arg — gate should fail because {{item_id}} is literal
     Command::cargo_bin("sahjhan")
@@ -1844,6 +1824,72 @@ gates = [
         .current_dir(dir.path())
         .assert()
         .code(1); // EXIT_GATE_FAILED
+}
+
+/// Create a temp directory with a minimal config but custom transitions.toml, then run `init`.
+/// Use this instead of setup_initialized_dir() + overwrite when you need a different
+/// transitions.toml — writing the config before init ensures the seal matches.
+fn setup_dir_with_custom_transitions(transitions_toml: &str) -> tempfile::TempDir {
+    let dir = tempdir().unwrap();
+    let config_dir = dir.path().join("enforcement");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    for file in &["protocol.toml", "states.toml", "events.toml", "renders.toml"] {
+        std::fs::copy(format!("examples/minimal/{}", file), config_dir.join(file)).unwrap();
+    }
+    // Write the custom transitions.toml before init so the seal covers it
+    std::fs::write(config_dir.join("transitions.toml"), transitions_toml).unwrap();
+    // Copy templates directory
+    let templates_dir = config_dir.join("templates");
+    std::fs::create_dir_all(&templates_dir).unwrap();
+    for file in &["status.md.tera", "history.md.tera"] {
+        std::fs::copy(
+            format!("examples/minimal/templates/{}", file),
+            templates_dir.join(file),
+        )
+        .unwrap();
+    }
+    std::fs::create_dir_all(dir.path().join("output")).unwrap();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "init"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    dir
+}
+
+/// Create a temp directory with a minimal config but custom renders.toml, then run `init`.
+fn setup_dir_with_custom_renders(renders_toml: &str) -> tempfile::TempDir {
+    let dir = tempdir().unwrap();
+    let config_dir = dir.path().join("enforcement");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    for file in &["protocol.toml", "states.toml", "transitions.toml", "events.toml"] {
+        std::fs::copy(format!("examples/minimal/{}", file), config_dir.join(file)).unwrap();
+    }
+    // Write the custom renders.toml before init so the seal covers it
+    std::fs::write(config_dir.join("renders.toml"), renders_toml).unwrap();
+    // Copy templates directory
+    let templates_dir = config_dir.join("templates");
+    std::fs::create_dir_all(&templates_dir).unwrap();
+    for file in &["status.md.tera", "history.md.tera"] {
+        std::fs::copy(
+            format!("examples/minimal/templates/{}", file),
+            templates_dir.join(file),
+        )
+        .unwrap();
+    }
+    std::fs::create_dir_all(dir.path().join("output")).unwrap();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "init"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    dir
 }
 
 /// Create a temp directory with a config that has an optional field, then run `init`.

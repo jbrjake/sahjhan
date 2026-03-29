@@ -119,9 +119,19 @@ pub(crate) fn manifest_path(data_dir: &Path) -> PathBuf {
 }
 
 // [open-ledger]
-pub(crate) fn open_ledger(data_dir: &Path) -> Result<Ledger, (i32, String)> {
-    Ledger::open(&ledger_path(data_dir))
-        .map_err(|e| (EXIT_INTEGRITY_ERROR, format!("Cannot open ledger: {}", e)))
+pub(crate) fn open_ledger(data_dir: &Path, config_dir: &Path) -> Result<Ledger, (i32, String)> {
+    let ledger = Ledger::open(&ledger_path(data_dir))
+        .map_err(|e| (EXIT_INTEGRITY_ERROR, format!("Cannot open ledger: {}", e)))?;
+    ledger.verify_config_seal(config_dir).map_err(|e| {
+        (
+            EXIT_INTEGRITY_ERROR,
+            format!(
+                "{}\n\nRun 'sahjhan reseal' with a valid session key to update the seal,\nor 'sahjhan init' to start a new ledger.",
+                e
+            ),
+        )
+    })?;
+    Ok(ledger)
 }
 
 // [load-manifest]
@@ -226,10 +236,20 @@ pub(crate) fn resolve_ledger_from_targeting(
 pub(crate) fn open_targeted_ledger(
     config: &ProtocolConfig,
     targeting: &LedgerTargeting,
+    config_dir: &Path,
 ) -> Result<(Ledger, Option<LedgerMode>), (i32, String)> {
     let (path, mode) = resolve_ledger_from_targeting(config, targeting)?;
     let ledger = Ledger::open(&path)
         .map_err(|e| (EXIT_INTEGRITY_ERROR, format!("Cannot open ledger: {}", e)))?;
+    ledger.verify_config_seal(config_dir).map_err(|e| {
+        (
+            EXIT_INTEGRITY_ERROR,
+            format!(
+                "{}\n\nRun 'sahjhan reseal' with a valid session key to update the seal,\nor 'sahjhan init' to start a new ledger.",
+                e
+            ),
+        )
+    })?;
     Ok((ledger, mode))
 }
 

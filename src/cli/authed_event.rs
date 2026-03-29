@@ -94,7 +94,7 @@ pub fn cmd_authed_event(
         }
     }
 
-    let (ledger, _mode) = match open_targeted_ledger(&config, targeting) {
+    let (ledger, _mode) = match open_targeted_ledger(&config, targeting, &config_path) {
         Ok(lm) => lm,
         Err((code, msg)) => {
             eprintln!("{}", msg);

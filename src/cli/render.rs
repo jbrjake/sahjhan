@@ -34,7 +34,7 @@ pub fn cmd_render(config_dir: &str, targeting: &LedgerTargeting) -> i32 {
     }
 
     let data_dir = resolve_data_dir(&config.paths.data_dir);
-    let (ledger, _mode) = match open_targeted_ledger(&config, targeting) {
+    let (ledger, _mode) = match open_targeted_ledger(&config, targeting, &config_path) {
         Ok(lm) => lm,
         Err((code, msg)) => {
             eprintln!("{}", msg);
@@ -98,7 +98,7 @@ pub fn cmd_render_dump_context(config_dir: &str, targeting: &LedgerTargeting) ->
         }
     };
 
-    let (ledger, _mode) = match open_targeted_ledger(&config, targeting) {
+    let (ledger, _mode) = match open_targeted_ledger(&config, targeting, &config_path) {
         Ok(lm) => lm,
         Err((code, msg)) => {
             eprintln!("{}", msg);

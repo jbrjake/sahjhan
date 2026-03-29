@@ -37,7 +37,7 @@ pub fn cmd_status(config_dir: &str, targeting: &LedgerTargeting) -> i32 {
         }
     };
 
-    let (ledger, mode) = match open_targeted_ledger(&config, targeting) {
+    let (ledger, mode) = match open_targeted_ledger(&config, targeting, &config_path) {
         Ok(lm) => lm,
         Err((code, msg)) => {
             eprintln!("error: {}", msg);
@@ -176,7 +176,7 @@ pub fn cmd_set_status(config_dir: &str, set_name: &str, targeting: &LedgerTarget
         return EXIT_USAGE_ERROR;
     }
 
-    let (ledger, _mode) = match open_targeted_ledger(&config, targeting) {
+    let (ledger, _mode) = match open_targeted_ledger(&config, targeting, &config_path) {
         Ok(lm) => lm,
         Err((code, msg)) => {
             eprintln!("error: {}", msg);
@@ -245,7 +245,7 @@ pub fn cmd_set_complete(
         return EXIT_USAGE_ERROR;
     }
 
-    let (ledger, _mode) = match open_targeted_ledger(&config, targeting) {
+    let (ledger, _mode) = match open_targeted_ledger(&config, targeting, &config_path) {
         Ok(lm) => lm,
         Err((code, msg)) => {
             eprintln!("error: {}", msg);

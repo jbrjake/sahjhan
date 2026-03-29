@@ -28,7 +28,7 @@ pub fn cmd_log_dump(config_dir: &str, targeting: &LedgerTargeting) -> i32 {
         }
     };
 
-    let (ledger, _mode) = match open_targeted_ledger(&config, targeting) {
+    let (ledger, _mode) = match open_targeted_ledger(&config, targeting, &config_path) {
         Ok(lm) => lm,
         Err((code, msg)) => {
             eprintln!("{}", msg);
@@ -55,7 +55,7 @@ pub fn cmd_log_verify(config_dir: &str, targeting: &LedgerTargeting) -> i32 {
         }
     };
 
-    let (ledger, _mode) = match open_targeted_ledger(&config, targeting) {
+    let (ledger, _mode) = match open_targeted_ledger(&config, targeting, &config_path) {
         Ok(lm) => lm,
         Err((code, msg)) => {
             eprintln!("{}", msg);
@@ -90,7 +90,7 @@ pub fn cmd_log_tail(config_dir: &str, n: usize, targeting: &LedgerTargeting) -> 
         }
     };
 
-    let (ledger, _mode) = match open_targeted_ledger(&config, targeting) {
+    let (ledger, _mode) = match open_targeted_ledger(&config, targeting, &config_path) {
         Ok(lm) => lm,
         Err((code, msg)) => {
             eprintln!("{}", msg);

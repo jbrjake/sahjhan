@@ -319,7 +319,7 @@ The `intent` field is optional but worth writing. When a gate blocks, Sahjhan pr
 
 That `set_covered` gate references something called `suites`. Here's the idea: sometimes you need the agent to do something for every item in a list. Write unit tests *and* integration tests. Review file A *and* file B *and* file C. Not just one. All of them.
 
-A set is that list. You declare the members up front, and the agent has to check them off one by one. Sahjhan tracks which ones are done in the ledger — when the agent runs `sahjhan set complete suites unit`, Sahjhan records a `set_member_complete` event with `set=suites` and `member=unit`. The `set_covered` gate just asks: has every member in this set had one of those events recorded? If not, you're not moving.
+A set is that list. You declare the members up front, and the agent has to check them off one by one. Sahjhan tracks which ones are done in the ledger — when the agent runs `sahjhan set complete suites unit-tests`, Sahjhan records a `set_member_complete` event with `set=suites` and `member=unit-tests`. The `set_covered` gate just asks: has every member in this set had one of those events recorded? If not, you're not moving.
 
 That's all a set is. A checklist the agent can't skip items on.
 
@@ -339,14 +339,14 @@ render_dir = "."
 
 [sets.suites]
 description = "Test suites that must be written"
-values = ["unit", "integration"]
+values = ["unit-tests", "integration-tests"]
 
 [aliases]
 "start" = "transition start"
 "done" = "transition submit"
 ```
 
-Two members: `unit` and `integration`. The agent has to complete both before the `set_covered` gate will pass. No shortcuts, no "I'll do integration tests later." Both. Then you move on.
+Two members: `unit-tests` and `integration-tests`. The agent has to complete both before the `set_covered` gate will pass. No shortcuts, no "I'll do integration tests later." Both. Then you move on.
 
 Now that `set_covered` gate in transitions.toml makes more sense: `set = "suites"` says which set to check. `event = "set_member_complete"` and `field = "member"` tell Sahjhan which ledger events count as check-offs — it looks for events of that type where the named field matches a set member. You'll almost always use these exact values; they're the convention for how `sahjhan set complete` records its work.
 
@@ -443,8 +443,8 @@ sahjhan --config-dir tdd-protocol transition tests-done
 #   intent: every test suite must be written before implementing
 
 # Agent marks both suites complete
-sahjhan --config-dir tdd-protocol set complete suites unit
-sahjhan --config-dir tdd-protocol set complete suites integration
+sahjhan --config-dir tdd-protocol set complete suites unit-tests
+sahjhan --config-dir tdd-protocol set complete suites integration-tests
 
 sahjhan --config-dir tdd-protocol transition tests-done
 # writing-tests → implementing

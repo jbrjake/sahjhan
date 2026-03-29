@@ -11,12 +11,15 @@
 // - SetAction                — set subcommand enum
 // - GateAction               — gate subcommand enum
 // - LedgerAction             — ledger subcommand enum
+// - ConfigAction             — config subcommand enum
 
 use clap::{Parser, Subcommand};
 
 use sahjhan::cli::aliases;
 use sahjhan::cli::authed_event;
 use sahjhan::cli::commands;
+use sahjhan::cli::config_cmd;
+use sahjhan::cli::guards;
 use sahjhan::cli::hooks_cmd;
 use sahjhan::cli::init;
 use sahjhan::cli::ledger;
@@ -150,6 +153,15 @@ enum Commands {
         #[command(subcommand)]
         action: LedgerAction,
     },
+
+    /// Configuration queries
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
+
+    /// Show read-guard manifest for enforcement hooks
+    Guards,
 
     /// SQL queries over ledger events
     Query {
@@ -324,6 +336,12 @@ enum LedgerAction {
     },
 }
 
+#[derive(Subcommand)]
+enum ConfigAction {
+    /// Print the resolved session key path
+    SessionKeyPath,
+}
+
 // [cli-main]
 fn main() {
     // Collect raw args for alias resolution
@@ -434,6 +452,12 @@ fn main() {
                 ledger::cmd_ledger_import(&cli.config_dir, &name, &path)
             }
         },
+        Commands::Config { action } => match action {
+            ConfigAction::SessionKeyPath => {
+                config_cmd::cmd_session_key_path(&cli.config_dir, &targeting)
+            }
+        },
+        Commands::Guards => guards::cmd_guards(&cli.config_dir),
         Commands::Query {
             sql,
             query_path,

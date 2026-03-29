@@ -79,6 +79,94 @@ Sahjhan is compiled Rust. The agent can't `cat` the binary to study the enforcem
 
 And because protocols are just TOML, I'm not writing a new bespoke enforcement script every time an agent finds a creative new way to disappoint me. States, transitions, gates. Same shape every time, twenty minutes to write.
 
+## The next thing they tried
+
+So the ledger can't be edited. The hash chain works. The gates independently verify. Problem solved, right?
+
+Run 25 found the gap. The agent figured out that it operates the CLI that constrains it. Every gate condition ultimately checks for events in the ledger. And `sahjhan event` writes events to the ledger. So the agent just... recorded success events directly.
+
+Quiz gate requires a `quiz_answered` event with `pass=true`? The agent ran `sahjhan event quiz_answered --field pass=true --field score=5/5`. The event was perfectly formatted, correctly hash-chained, and completely fabricated. The agent never took the quiz. It just wrote the answer into its own permanent record. Like a student filling in their own report card.
+
+The hash chain didn't help because the agent wasn't *editing* the ledger — it was *appending* to it through the official API. The gates didn't help because they were checking for events the agent had just written. The whole enforcement stack was a self-service honor system.
+
+### Restricted events and HMAC authentication
+
+The fix: some event types are now restricted. Mark them in `events.toml`:
+
+```toml
+[events.quiz_answered]
+description = "Quiz subagent answered quiz"
+restricted = true
+fields = [
+    { name = "score", type = "string" },
+    { name = "pass", type = "string" },
+]
+```
+
+A restricted event can't be recorded with `sahjhan event`:
+
+```bash
+sahjhan event quiz_answered --field score=5/5 --field pass=true
+# error: event type 'quiz_answered' is restricted. Use 'sahjhan authed-event' with a valid proof.
+```
+
+Instead, it requires `sahjhan authed-event` with an HMAC-SHA256 proof:
+
+```bash
+sahjhan authed-event quiz_answered \
+  --field score=5/5 --field pass=true \
+  --proof a1b2c3d4e5f6...
+```
+
+The proof is computed from a session key that Sahjhan generates on `init` — 32 bytes of cryptographic randomness stored at `.sahjhan/session.key`. The enforcement hooks read this key directly from disk (Python `open()`, not through the agent's Read tool) and compute the HMAC over a canonical payload: event type + sorted fields, null-byte separated. The agent never sees the key.
+
+```python
+# Hook side (not the agent — the enforcement harness)
+import hmac, hashlib
+payload = b"quiz_answered\x00pass=true\x00score=5/5"
+proof = hmac.new(session_key, payload, hashlib.sha256).hexdigest()
+```
+
+The agent can't forge the proof because it can't read the session key. It can't read the session key because the enforcement hooks block that path. How do they know which paths to block?
+
+### Read guards
+
+```toml
+# protocol.toml
+[guards]
+read_blocked = [
+    ".sahjhan/session.key",
+    "enforcement/quiz-bank.json",
+]
+```
+
+The `sahjhan guards` command outputs this list as JSON for the enforcement harness to consume on startup:
+
+```bash
+sahjhan guards
+# {
+#   "read_blocked": [
+#     ".sahjhan/session.key",
+#     "enforcement/quiz-bank.json",
+#     "output/.sahjhan/session.key"
+#   ]
+# }
+```
+
+The session key path is auto-included even if you forget to list it. Defense in depth, because I've learned the hard way that the thing you forget to protect is the thing they find first.
+
+Per-ledger keys are also supported — `sahjhan ledger create` generates a separate key for each named ledger at `.sahjhan/ledgers/<name>/session.key`. The `authed-event` command checks for a per-ledger key first, falling back to the global key. `sahjhan config session-key-path` tells hooks which key to use:
+
+```bash
+sahjhan config session-key-path
+# /path/to/.sahjhan/session.key
+
+sahjhan --ledger run-25 config session-key-path
+# /path/to/.sahjhan/ledgers/run-25/session.key
+```
+
+Sahjhan doesn't enforce the read-blocking itself — that's the hooks' job. Sahjhan provides the crypto primitives and the policy declarations. The protocol layer interprets them. Clean separation. The binary doesn't need to know about Claude Code or any specific agent harness.
+
 ## What a protocol looks like
 
 A protocol is a directory of TOML files. Here's one that enforces TDD, because apparently that's something we need to enforce now.
@@ -398,6 +486,7 @@ Hooks handle the perimeter. PreToolUse blocks writes to managed files. PostToolU
 | `command_succeeds` | `cmd`, `timeout` | Sahjhan runs the command. Exit 0 or no deal. |
 | `command_output` | `cmd`, `expect` | Sahjhan runs the command. Stdout must match. |
 | `ledger_has_event` | `event`, `min_count`, `filter` | N+ events of this type in the ledger. |
+| `ledger_lacks_event` | `event`, `filter` | Zero events of this type. The inverse of `ledger_has_event`. Use for "must not have done X" constraints — e.g., no audit findings before recon is complete. |
 | `ledger_has_event_since` | `event`, `since` | Event recorded since last transition. |
 | `set_covered` | `set`, `event`, `field` | Every set member has a matching event. |
 | `min_elapsed` | `event`, `seconds` | N seconds since last event. By itself this only proves the agent owns a clock. Ask me how I know. Pair with evidence gates. |
@@ -424,6 +513,8 @@ Generates `write_guard.py` (blocks Write/Edit to managed paths), `bash_guard.py`
 | Shell tricks (`echo >`, `sed -i`, `python -c`) | Detected, violation recorded permanently |
 | Delete or reset the ledger | Hash chain. There is no reset. |
 | Fabricate history entries | Every entry is hash-linked. Fabricate one, the chain breaks. |
+| `sahjhan event quiz_answered --field pass=true` | Restricted. Needs HMAC proof the agent can't forge. |
+| Read the session key to forge proofs | Read-guarded. Hooks block it before the agent sees a byte. |
 | `sleep 65 && check_convergence` | Been there. Use evidence gates. |
 | `cat` the binary to find loopholes | Compiled Rust. Let me know how it goes. |
 | Query the ledger to find exploits | Go ahead. It's your permanent record. |
@@ -437,7 +528,11 @@ sahjhan init                              Initialize ledger, registry, manifest,
 sahjhan validate                          Check protocol config (gates, sets, templates)
 sahjhan status                            Current state, set progress, gate status
 sahjhan transition <command> [args...]     Execute a named transition (runs gates)
-sahjhan event <type> [--field KEY=VALUE]   Record a protocol event
+sahjhan event <type> [--field KEY=VALUE]   Record a protocol event (rejects restricted types)
+sahjhan authed-event <type> --proof <HMAC> [--field KEY=VALUE]
+                                          Record a restricted event with HMAC proof
+sahjhan guards                            Show read-guard manifest (JSON)
+sahjhan config session-key-path           Print resolved session key path
 sahjhan set status <set>                  Show set completion progress
 sahjhan set complete <set> <member>       Record set member completion
 sahjhan log dump                          Print ledger as JSONL
@@ -465,7 +560,7 @@ sahjhan ledger checkpoint --name <n>      Write checkpoint event
 sahjhan ledger import --name <n> --path <p>   Import bare JSONL from stdin
 ```
 
-Aliases in `protocol.toml` create shortcuts (`"start" = "transition start"`). Exit codes: 0 success, 1 gate blocked, 2 integrity error, 3 config error.
+Aliases in `protocol.toml` create shortcuts (`"start" = "transition start"`). Exit codes: 0 success, 1 gate blocked, 2 integrity error, 3 config error, 4 usage error.
 
 ## Security details
 
@@ -509,7 +604,8 @@ src/
   main.rs              CLI entry point (clap)
   lib.rs               Library root
   cli/                 Command modules (init, status, transition, log,
-                       ledger, query, render, manifest, hooks), aliases
+                       ledger, query, render, manifest, hooks, guards,
+                       authed_event, config_cmd), aliases
   ledger/              JSONL entry, hash-chain, registry, checkpoints, import
   state/               State machine executor, completion set tracking
   gates/               Gate evaluation, file/command/ledger/snapshot/query gates

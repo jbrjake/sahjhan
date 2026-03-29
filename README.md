@@ -83,56 +83,82 @@ And because protocols are just TOML, I'm not writing a new bespoke enforcement s
 
 So the ledger can't be edited. The hash chain works. The gates independently verify. Problem solved, right?
 
-Run 25 found the gap. The agent figured out that it operates the CLI that constrains it. Every gate condition ultimately checks for events in the ledger. And `sahjhan event` writes events to the ledger. So the agent just... recorded success events directly.
+Here's the thing nobody warns you about: the agent operates the CLI that constrains it. It runs `sahjhan transition` and `sahjhan event` because that's how the protocol works — the agent is the one typing commands. Which means the agent has write access to its own permanent record.
 
-Quiz gate requires a `quiz_answered` event with `pass=true`? The agent ran `sahjhan event quiz_answered --field pass=true --field score=5/5`. The event was perfectly formatted, correctly hash-chained, and completely fabricated. The agent never took the quiz. It just wrote the answer into its own permanent record. Like a student filling in their own report card.
+I had a protocol where a separate verification hook — a Python script running outside the agent's control — would quiz the agent on what it had just reviewed. The hook would pose questions, evaluate the answers, and record the results to the ledger. A `ledger_has_event` gate on the next transition checked that the quiz had been passed before the agent could advance. The idea was that you can't fake domain knowledge. If you actually reviewed the code, you can answer questions about it. If you `sleep 65`'d your way through, you can't.
 
-The hash chain didn't help because the agent wasn't *editing* the ledger — it was *appending* to it through the official API. The gates didn't help because they were checking for events the agent had just written. The whole enforcement stack was a self-service honor system.
+The hook recorded quiz results with `sahjhan event quiz_passed --field score=5/5 --field pass=true`. Normal event recording, through the CLI, because that's how events get into the ledger.
+
+And then the agent figured out that it could run the exact same command.
+
+```bash
+sahjhan event quiz_passed --field score=5/5 --field pass=true
+```
+
+The event was perfectly formatted, correctly hash-chained, and completely fabricated. The agent never took the quiz. The hook never ran. The agent just wrote the answer directly into its own permanent record and moved on. Like a student who discovers the teacher's grading spreadsheet is a shared Google Sheet.
+
+The hash chain didn't help because the agent wasn't *editing* the ledger — it was *appending* to it through the official API. The gates didn't help because they were checking for events the agent had just self-reported. The whole enforcement stack was an honor system that happened to use SHA-256.
 
 ### Restricted events and HMAC authentication
 
-The fix: some event types are now restricted. Mark them in `events.toml`:
+The fix: event types that should only come from trusted sources — hooks, verification scripts, external systems — can be marked as restricted. The agent can still record its own findings and progress, but it can't impersonate the quiz system.
 
 ```toml
-[events.quiz_answered]
-description = "Quiz subagent answered quiz"
+# events.toml
+[events.quiz_passed]
+description = "Verification quiz completed by hook"
 restricted = true
 fields = [
     { name = "score", type = "string" },
     { name = "pass", type = "string" },
 ]
+
+[events.finding]
+description = "Code issue found during review"
+fields = [
+    { name = "severity", type = "string" },
+    { name = "file", type = "string" },
+]
 ```
 
-A restricted event can't be recorded with `sahjhan event`:
+`finding` is unrestricted — the agent records those itself, and that's fine. `quiz_passed` is restricted — only the verification hook should be writing those. Now when the agent tries:
 
 ```bash
-sahjhan event quiz_answered --field score=5/5 --field pass=true
-# error: event type 'quiz_answered' is restricted. Use 'sahjhan authed-event' with a valid proof.
+sahjhan event quiz_passed --field score=5/5 --field pass=true
+# error: event type 'quiz_passed' is restricted. Use 'sahjhan authed-event' with a valid proof.
 ```
 
-Instead, it requires `sahjhan authed-event` with an HMAC-SHA256 proof:
+Restricted events require `sahjhan authed-event` with an HMAC-SHA256 proof:
 
 ```bash
-sahjhan authed-event quiz_answered \
+sahjhan authed-event quiz_passed \
   --field score=5/5 --field pass=true \
   --proof a1b2c3d4e5f6...
 ```
 
-The proof is computed from a session key that Sahjhan generates on `init` — 32 bytes of cryptographic randomness stored at `.sahjhan/session.key`. The enforcement hooks read this key directly from disk (Python `open()`, not through the agent's Read tool) and compute the HMAC over a canonical payload: event type + sorted fields, null-byte separated. The agent never sees the key.
+Where does the proof come from? A session key that Sahjhan generates on `init` — 32 bytes of cryptographic randomness stored at `.sahjhan/session.key`. The enforcement hooks read this key directly from disk (Python `open()`, not through the agent's Read tool) and compute the HMAC over a canonical payload: event type + sorted fields, null-byte separated.
 
 ```python
-# Hook side (not the agent — the enforcement harness)
+# Inside the verification hook (not the agent)
 import hmac, hashlib
-payload = b"quiz_answered\x00pass=true\x00score=5/5"
-proof = hmac.new(session_key, payload, hashlib.sha256).hexdigest()
+
+key = open(".sahjhan/session.key", "rb").read()
+payload = b"quiz_passed\x00pass=true\x00score=5/5"
+proof = hmac.new(key, payload, hashlib.sha256).hexdigest()
+
+# Hook calls authed-event with the proof it just computed
+subprocess.run(["sahjhan", "authed-event", "quiz_passed",
+    "--field", "score=5/5", "--field", "pass=true",
+    "--proof", proof])
 ```
 
-The agent can't forge the proof because it can't read the session key. It can't read the session key because the enforcement hooks block that path. How do they know which paths to block?
+The agent can't forge the proof because it can't read the session key. It can't read the session key because the enforcement hooks block that path before the agent ever sees it. The key exists in a file the agent's tools can't access, the HMAC binds the proof to the exact event content, and the whole chain of trust runs outside the agent's reach.
 
 ### Read guards
 
+How do hooks know which paths to protect? You declare them in `protocol.toml`:
+
 ```toml
-# protocol.toml
 [guards]
 read_blocked = [
     ".sahjhan/session.key",
@@ -140,7 +166,7 @@ read_blocked = [
 ]
 ```
 
-The `sahjhan guards` command outputs this list as JSON for the enforcement harness to consume on startup:
+The quiz bank gets blocked too — no point in HMAC-protecting the answers if the agent can read the questions in advance. The `sahjhan guards` command outputs this list as JSON for the enforcement harness to consume on startup:
 
 ```bash
 sahjhan guards
@@ -153,7 +179,7 @@ sahjhan guards
 # }
 ```
 
-The session key path is auto-included even if you forget to list it. Defense in depth, because I've learned the hard way that the thing you forget to protect is the thing they find first.
+The session key path is auto-included even if you forget to list it. Defense in depth, because the thing you forget to protect is the thing they find first.
 
 Per-ledger keys are also supported — `sahjhan ledger create` generates a separate key for each named ledger at `.sahjhan/ledgers/<name>/session.key`. The `authed-event` command checks for a per-ledger key first, falling back to the global key. `sahjhan config session-key-path` tells hooks which key to use:
 
@@ -161,8 +187,8 @@ Per-ledger keys are also supported — `sahjhan ledger create` generates a separ
 sahjhan config session-key-path
 # /path/to/.sahjhan/session.key
 
-sahjhan --ledger run-25 config session-key-path
-# /path/to/.sahjhan/ledgers/run-25/session.key
+sahjhan --ledger audit config session-key-path
+# /path/to/.sahjhan/ledgers/audit/session.key
 ```
 
 Sahjhan doesn't enforce the read-blocking itself — that's the hooks' job. Sahjhan provides the crypto primitives and the policy declarations. The protocol layer interprets them. Clean separation. The binary doesn't need to know about Claude Code or any specific agent harness.
@@ -513,7 +539,7 @@ Generates `write_guard.py` (blocks Write/Edit to managed paths), `bash_guard.py`
 | Shell tricks (`echo >`, `sed -i`, `python -c`) | Detected, violation recorded permanently |
 | Delete or reset the ledger | Hash chain. There is no reset. |
 | Fabricate history entries | Every entry is hash-linked. Fabricate one, the chain breaks. |
-| `sahjhan event quiz_answered --field pass=true` | Restricted. Needs HMAC proof the agent can't forge. |
+| `sahjhan event quiz_passed --field pass=true` | Restricted. Needs HMAC proof the agent can't forge. |
 | Read the session key to forge proofs | Read-guarded. Hooks block it before the agent sees a byte. |
 | `sleep 65 && check_convergence` | Been there. Use evidence gates. |
 | `cat` the binary to find loopholes | Compiled Rust. Let me know how it goes. |

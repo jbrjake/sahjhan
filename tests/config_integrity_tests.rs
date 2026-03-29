@@ -5,6 +5,10 @@
 use std::collections::BTreeMap;
 use tempfile::tempdir;
 
+use assert_cmd::Command;
+use hmac::Mac;
+use predicates::prelude::*;
+
 #[test]
 fn test_compute_config_seals_all_files_present() {
     let dir = tempdir().unwrap();
@@ -225,4 +229,196 @@ fn test_verify_config_seal_after_reseal() {
 
     // Now verify should pass
     assert!(ledger.verify_config_seal(config_dir.path()).is_ok());
+}
+
+/// Set up a minimal config dir with all files, run init.
+fn setup_sealed_dir() -> tempfile::TempDir {
+    let dir = tempdir().unwrap();
+    let config_dir = dir.path().join("enforcement");
+    std::fs::create_dir_all(&config_dir).unwrap();
+
+    std::fs::write(
+        config_dir.join("protocol.toml"),
+        r#"
+[protocol]
+name = "test-seal"
+version = "1.0.0"
+description = "Seal test"
+
+[paths]
+managed = ["output"]
+data_dir = "output/.sahjhan"
+render_dir = "output"
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        config_dir.join("states.toml"),
+        "[states.idle]\nlabel = \"Idle\"\ninitial = true\n",
+    )
+    .unwrap();
+
+    std::fs::write(
+        config_dir.join("transitions.toml"),
+        "[[transitions]]\nfrom = \"idle\"\nto = \"idle\"\ncommand = \"noop\"\ngates = []\n",
+    )
+    .unwrap();
+
+    std::fs::create_dir_all(dir.path().join("output")).unwrap();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "init"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    dir
+}
+
+#[test]
+fn test_cli_tamper_detection_blocks_status() {
+    let dir = setup_sealed_dir();
+
+    // Status should work before tampering
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "status"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Tamper with transitions.toml
+    std::fs::write(
+        dir.path().join("enforcement/transitions.toml"),
+        "[[transitions]]\nfrom = \"idle\"\nto = \"idle\"\ncommand = \"noop\"\ngates = []\n# tampered\n",
+    )
+    .unwrap();
+
+    // Status should now fail
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "status"])
+        .current_dir(dir.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("config integrity violation"))
+        .stderr(predicate::str::contains("transitions"));
+}
+
+#[test]
+fn test_cli_reseal_requires_proof() {
+    let dir = setup_sealed_dir();
+
+    // Tamper so we need to reseal
+    std::fs::write(
+        dir.path().join("enforcement/transitions.toml"),
+        "[[transitions]]\nfrom = \"idle\"\nto = \"idle\"\ncommand = \"noop\"\ngates = []\n# v2\n",
+    )
+    .unwrap();
+
+    // Reseal without valid proof should fail
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "reseal", "--proof", "bad"])
+        .current_dir(dir.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid proof"));
+}
+
+#[test]
+fn test_cli_reseal_with_valid_proof_succeeds() {
+    let dir = setup_sealed_dir();
+
+    // Tamper
+    std::fs::write(
+        dir.path().join("enforcement/transitions.toml"),
+        "[[transitions]]\nfrom = \"idle\"\nto = \"idle\"\ncommand = \"noop\"\ngates = []\n# v2\n",
+    )
+    .unwrap();
+
+    // Read session key and compute HMAC proof
+    let key = std::fs::read(dir.path().join("output/.sahjhan/session.key")).unwrap();
+    let payload = "config_reseal";
+    let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(&key).unwrap();
+    hmac::Mac::update(&mut mac, payload.as_bytes());
+    let proof = hex::encode(hmac::Mac::finalize(mac).into_bytes());
+
+    // Reseal with valid proof
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "reseal", "--proof", &proof])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("resealed"));
+
+    // Status should now work again
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "status"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_cli_backward_compat_legacy_ledger() {
+    // Manually create a legacy ledger (no seals) and verify commands still work
+    let dir = tempdir().unwrap();
+    let config_dir = dir.path().join("enforcement");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    let data_dir = dir.path().join("output/.sahjhan");
+    std::fs::create_dir_all(&data_dir).unwrap();
+    std::fs::create_dir_all(dir.path().join("output")).unwrap();
+
+    std::fs::write(
+        config_dir.join("protocol.toml"),
+        "[protocol]\nname = \"test\"\nversion = \"1.0.0\"\ndescription = \"t\"\n\n[paths]\nmanaged = [\"output\"]\ndata_dir = \"output/.sahjhan\"\nrender_dir = \"output\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        config_dir.join("states.toml"),
+        "[states.idle]\nlabel = \"Idle\"\ninitial = true\n",
+    )
+    .unwrap();
+    std::fs::write(
+        config_dir.join("transitions.toml"),
+        "[[transitions]]\nfrom = \"idle\"\nto = \"idle\"\ncommand = \"noop\"\ngates = []\n",
+    )
+    .unwrap();
+
+    // Create a legacy ledger without seals (using Ledger::init directly)
+    let ledger_path = data_dir.join("ledger.jsonl");
+    let _ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    // Create registry
+    let reg_path = data_dir.join("ledgers.toml");
+    let mut registry = sahjhan::ledger::registry::LedgerRegistry::new(&reg_path).unwrap();
+    registry
+        .create(
+            "default",
+            "ledger.jsonl",
+            sahjhan::ledger::registry::LedgerMode::Stateful,
+        )
+        .unwrap();
+
+    // Create manifest
+    let mut manifest =
+        sahjhan::manifest::tracker::Manifest::init("output/.sahjhan", vec!["output".to_string()])
+            .unwrap();
+    manifest.save(&data_dir.join("manifest.json")).unwrap();
+
+    // Create session key
+    std::fs::write(data_dir.join("session.key"), &[0u8; 32]).unwrap();
+
+    // Status should work (no seals = skip verification)
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "status"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
 }

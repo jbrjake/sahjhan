@@ -132,6 +132,13 @@ enum Commands {
         proof: String,
     },
 
+    /// Re-seal config file hashes after legitimate changes (requires HMAC proof)
+    Reseal {
+        /// HMAC-SHA256 proof
+        #[arg(long)]
+        proof: String,
+    },
+
     /// Archive current run and start fresh
     Reset {
         /// Confirm the reset
@@ -424,6 +431,9 @@ fn main() {
             &proof,
             &targeting,
         ),
+        Commands::Reseal { proof } => {
+            authed_event::cmd_reseal(&cli.config_dir, &proof, &targeting)
+        }
         Commands::Reset { confirm, token } => init::cmd_reset(&cli.config_dir, confirm, &token),
         Commands::Hook { action } => match action {
             HookAction::Generate {

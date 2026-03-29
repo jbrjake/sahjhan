@@ -48,7 +48,7 @@ fn test_compute_config_seals_all_files_present() {
     assert!(seals.contains_key("config_seal_renders"));
 
     // Each value should be a 64-char hex SHA-256
-    for (_key, hash) in &seals {
+    for hash in seals.values() {
         assert_eq!(hash.len(), 64);
         assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
     }
@@ -438,7 +438,7 @@ fn test_cli_backward_compat_legacy_ledger() {
     manifest.save(&data_dir.join("manifest.json")).unwrap();
 
     // Create session key
-    std::fs::write(data_dir.join("session.key"), &[0u8; 32]).unwrap();
+    std::fs::write(data_dir.join("session.key"), [0u8; 32]).unwrap();
 
     // Status should work (no seals = skip verification)
     Command::cargo_bin("sahjhan")

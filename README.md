@@ -179,6 +179,24 @@ sahjhan --ledger audit config session-key-path
 
 Sahjhan doesn't enforce the read-blocking itself. That's the hooks' job. Sahjhan provides the crypto and the policy declarations. The hooks interpret them. The binary doesn't need to know about Claude Code or any particular agent harness.
 
+### Config integrity
+
+So the ledger can't be edited. The hash chain works. Restricted events need a proof the agent can't forge. The session key is read-guarded. Everything is locked down.
+
+Everything except the TOML config files. You know, the ones that define every gate, every transition, every rule. `transitions.toml` is just a text file sitting in a directory the agent can write to. Remove a gate, lower a threshold, add `gates = []` to the one transition that matters — and Sahjhan's hardened ledger will faithfully enforce your gutted protocol. The vault door is six inches of steel. The wall next to it is drywall.
+
+On `sahjhan init`, Sahjhan SHA-256 hashes all five config files and stores those hashes in the genesis ledger entry. Every subsequent command re-hashes and compares. One byte different — a gate removed, a timeout changed, a comment added to make the diff look innocent — and Sahjhan won't run:
+
+```
+error: config integrity violation:
+  - transitions.toml (expected: 7f83b1657ff1..., found: a3c2e88d1f2b...)
+
+Run 'sahjhan reseal' with a valid session key to update the seal,
+or 'sahjhan init' to start a new ledger.
+```
+
+Config changes do happen legitimately. You add a state, tune a gate, fix a typo. `sahjhan reseal` updates the seal — but it requires an HMAC proof, same as restricted events. Without the session key, the agent can rewrite transitions.toml all day long. It just can't use it. The reseal event goes into the ledger, so you can see exactly when the rules changed and decide whether that was you or the agent getting creative.
+
 ## What a protocol looks like
 
 A protocol is a directory of TOML files. Here's one that enforces TDD, because apparently that's something we need to enforce now.
@@ -671,6 +689,7 @@ Generates `write_guard.py` (blocks Write/Edit to managed paths), `bash_guard.py`
 | Fabricate history entries | Every entry is hash-linked. Fabricate one, the chain breaks. |
 | `sahjhan event quiz_passed --field pass=true` | Restricted. Needs HMAC proof the agent can't forge. |
 | Read the session key to forge proofs | Read-guarded. Hooks block it before the agent sees a byte. |
+| Edit `transitions.toml` to remove gates | Config sealed at init. One byte different, Sahjhan won't run. |
 | `sleep 65 && check_convergence` | Been there. Use evidence gates. |
 | `cat` the binary to find loopholes | Compiled Rust. Let me know how it goes. |
 | Query the ledger to find exploits | Go ahead. It's your permanent record. |
@@ -687,6 +706,7 @@ sahjhan transition <command> [args...]     Execute a named transition (runs gate
 sahjhan event <type> [--field KEY=VALUE]   Record a protocol event (rejects restricted types)
 sahjhan authed-event <type> --proof <HMAC> [--field KEY=VALUE]
                                           Record a restricted event with HMAC proof
+sahjhan reseal --proof <HMAC>             Re-seal config hashes after legitimate changes
 sahjhan guards                            Show read-guard manifest (JSON)
 sahjhan config session-key-path           Print resolved session key path
 sahjhan set status <set>                  Show set completion progress
@@ -728,6 +748,8 @@ The ledger is JSONL. Each line: schema version, monotonic sequence number, ISO 8
 The format is human-readable on purpose. You should be able to audit what your agents did. But readability and editability are different things, and the hash chain makes the distinction sharp. The agent can `cat` the ledger all day. The moment it `sed`s a single character, the chain is broken and Sahjhan will tell you about it.
 
 The manifest hashes its own entries and stores that hash in the ledger. Tampering with the manifest means tampering with the ledger. Circular on purpose.
+
+Config files are SHA-256 sealed into the genesis entry at init time. Every command verifies the seal. `sahjhan reseal` updates the seal but requires HMAC proof — same session key, same mechanism as restricted events. The reseal event is recorded in the ledger, so config changes are auditable.
 
 Template variables in gate commands are POSIX shell-escaped before interpolation. Field patterns validated before escaping. The `cmd` string comes from TOML config (write-protected), so only variable values come from the agent.
 

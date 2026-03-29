@@ -161,6 +161,7 @@ fn test_command_gate_with_injection_attempt() {
     let gate = GateConfig {
         gate_type: "command_succeeds".to_string(),
         intent: None,
+        gates: vec![],
         params: [(
             "cmd".to_string(),
             toml::Value::String("echo {{id}}".to_string()),
@@ -208,6 +209,7 @@ fn test_injection_via_semicolon() {
     let gate = GateConfig {
         gate_type: "command_succeeds".to_string(),
         intent: None,
+        gates: vec![],
         params: [(
             "cmd".to_string(),
             toml::Value::String("echo {{val}}".to_string()),
@@ -254,6 +256,7 @@ fn test_injection_via_backtick() {
     let gate = GateConfig {
         gate_type: "command_succeeds".to_string(),
         intent: None,
+        gates: vec![],
         params: [(
             "cmd".to_string(),
             toml::Value::String("echo {{val}}".to_string()),
@@ -300,6 +303,7 @@ fn test_injection_via_dollar_parens() {
     let gate = GateConfig {
         gate_type: "command_succeeds".to_string(),
         intent: None,
+        gates: vec![],
         params: [(
             "cmd".to_string(),
             toml::Value::String("echo {{val}}".to_string()),

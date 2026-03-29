@@ -5,7 +5,7 @@
 // ## Index
 // - TransitionsFile         — top-level wrapper
 // - TransitionConfig        — from, to, command, args (positional params), gates
-// - GateConfig              — gate_type + optional intent + flattened params
+// - GateConfig              — gate_type + optional intent + nested gates (composite) + flattened params
 
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -46,6 +46,10 @@ pub struct GateConfig {
     /// If absent, a default intent is derived from the gate type at evaluation time.
     #[serde(default)]
     pub intent: Option<String>,
+    /// Nested gates for composite types (any_of, all_of, not, k_of_n).
+    /// Empty for leaf gates.
+    #[serde(default)]
+    pub gates: Vec<GateConfig>,
     #[serde(flatten)]
     pub params: HashMap<String, toml::Value>,
 }

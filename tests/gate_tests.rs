@@ -20,6 +20,7 @@ fn make_gate(gate_type: &str, params: Vec<(&str, toml::Value)>) -> GateConfig {
     GateConfig {
         gate_type: gate_type.to_string(),
         intent: None,
+        gates: vec![],
         params: params
             .into_iter()
             .map(|(k, v)| (k.to_string(), v))
@@ -1872,6 +1873,7 @@ fn test_gate_result_has_intent_from_config() {
     let gate = GateConfig {
         gate_type: "file_exists".to_string(),
         intent: Some("spec must have real content".to_string()),
+        gates: vec![],
         params: vec![(
             "path".to_string(),
             toml::Value::String(test_file.to_str().unwrap().to_string()),
@@ -1910,6 +1912,7 @@ fn test_gate_result_has_default_intent_when_missing() {
     let gate = GateConfig {
         gate_type: "file_exists".to_string(),
         intent: None,
+        gates: vec![],
         params: vec![(
             "path".to_string(),
             toml::Value::String(test_file.to_str().unwrap().to_string()),

@@ -2,6 +2,28 @@ use sahjhan::config::ProtocolConfig;
 use std::path::Path;
 
 #[test]
+fn test_gate_config_nested_gates_deserialize() {
+    let toml_str = r#"
+[[transitions]]
+from = "idle"
+to = "done"
+command = "go"
+gates = [
+    { type = "any_of", gates = [
+        { type = "file_exists", path = "a.txt" },
+        { type = "file_exists", path = "b.txt" },
+    ]},
+]
+"#;
+    let tf: sahjhan::config::transitions::TransitionsFile = toml::from_str(toml_str).unwrap();
+    let gate = &tf.transitions[0].gates[0];
+    assert_eq!(gate.gate_type, "any_of");
+    assert_eq!(gate.gates.len(), 2);
+    assert_eq!(gate.gates[0].gate_type, "file_exists");
+    assert_eq!(gate.gates[1].gate_type, "file_exists");
+}
+
+#[test]
 fn test_event_field_optional_defaults_false() {
     let toml_str = r#"
 [events.test_event]

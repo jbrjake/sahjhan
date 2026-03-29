@@ -1996,3 +1996,103 @@ fn test_required_field_still_required_with_optional_present() {
         .failure()
         .stderr(predicate::str::contains("missing field 'id'"));
 }
+
+// ===========================================================================
+// Task 5 — branching transition tests
+// ===========================================================================
+
+/// Create a temp directory with a branching protocol (two candidates for "go") and run `init`.
+fn setup_branching_dir() -> tempfile::TempDir {
+    let dir = tempdir().unwrap();
+    let config_dir = dir.path().join("enforcement");
+    std::fs::create_dir_all(&config_dir).unwrap();
+
+    std::fs::write(
+        config_dir.join("protocol.toml"),
+        r#"
+[protocol]
+name = "branch-test"
+version = "1.0.0"
+description = "Branching test protocol"
+
+[paths]
+managed = ["output"]
+data_dir = "output/.sahjhan"
+render_dir = "output"
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        config_dir.join("states.toml"),
+        r#"
+[states.idle]
+label = "Idle"
+initial = true
+
+[states.happy]
+label = "Happy path"
+
+[states.fallback]
+label = "Fallback path"
+terminal = true
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        config_dir.join("transitions.toml"),
+        r#"
+[[transitions]]
+from = "idle"
+to = "happy"
+command = "go"
+gates = [
+    { type = "file_exists", path = "output/required.txt" },
+]
+
+[[transitions]]
+from = "idle"
+to = "fallback"
+command = "go"
+gates = []
+"#,
+    )
+    .unwrap();
+
+    std::fs::create_dir_all(dir.path().join("output")).unwrap();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "init"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    dir
+}
+
+#[test]
+fn test_cli_branching_takes_fallback() {
+    let dir = setup_branching_dir();
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "transition", "go"])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("fallback"));
+}
+
+#[test]
+fn test_cli_branching_takes_first_when_gates_pass() {
+    let dir = setup_branching_dir();
+    std::fs::write(dir.path().join("output/required.txt"), "present").unwrap();
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "transition", "go"])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("happy"));
+}

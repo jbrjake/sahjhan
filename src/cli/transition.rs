@@ -3,8 +3,8 @@
 // Transition, gate check, and event recording commands.
 //
 // ## Index
-// - [cmd-transition] cmd_transition() — execute a named transition (runs gates)
-// - [cmd-gate-check] cmd_gate_check() — dry-run gate evaluation
+// - [cmd-transition] cmd_transition() — execute a named transition (runs gates); handles GateBlocked + AllCandidatesBlocked
+// - [cmd-gate-check] cmd_gate_check() — dry-run gate evaluation; multi-candidate aware
 // - [record-and-render] record_and_render() — shared event recording + render triggering logic
 // - validate_event_fields() — validate event fields against an EventConfig (shared by cmd_event + cmd_authed_event)
 // - [cmd-event] cmd_event() — record a protocol event
@@ -138,6 +138,16 @@ pub fn cmd_transition(
             eprintln!("\u{2717} {}: {}", gate_type, reason);
             EXIT_GATE_FAILED
         }
+        Err(crate::state::machine::StateError::AllCandidatesBlocked {
+            command: _,
+            state: _,
+            candidates,
+        }) => {
+            for (target, gate_type, reason) in &candidates {
+                eprintln!("\u{2717} \u{2192} {} blocked by {}: {}", target, gate_type, reason);
+            }
+            EXIT_GATE_FAILED
+        }
         Err(crate::state::machine::StateError::NoTransition { command, state }) => {
             eprintln!("error: no transition '{}' from state '{}'", command, state);
             EXIT_USAGE_ERROR
@@ -186,77 +196,107 @@ pub fn cmd_gate_check(
     let machine = StateMachine::new(&config, ledger);
     let current_state = machine.current_state().to_string();
 
-    // Find the transition
-    let transition = match config
+    // Collect ALL candidates matching this command + current state.
+    let candidates: Vec<_> = config
         .transitions
         .iter()
-        .find(|t| t.command == transition_name && t.from == current_state)
-    {
-        Some(t) => t.clone(),
-        None => {
-            eprintln!(
-                "error: no transition '{}' from state '{}'",
-                transition_name, current_state
-            );
-            return EXIT_USAGE_ERROR;
-        }
-    };
+        .filter(|t| t.command == transition_name && t.from == current_state)
+        .cloned()
+        .collect();
+
+    if candidates.is_empty() {
+        eprintln!(
+            "error: no transition '{}' from state '{}'",
+            transition_name, current_state
+        );
+        return EXIT_USAGE_ERROR;
+    }
 
     println!("gate-check: {}", transition_name);
 
-    if transition.gates.is_empty() {
-        println!("result: ready (no gates)");
-        return EXIT_SUCCESS;
-    }
-
-    let mut state_params = build_state_params(&config, &transition.to, machine.ledger());
-
-    // Map CLI args into state_params.
-    // - key=value args are inserted directly (override state params)
-    // - Positional args (no '=') are mapped to declared transition.args names
-    let mut positional_idx = 0;
-    for arg in args {
-        if let Some((key, value)) = arg.split_once('=') {
-            state_params.insert(key.to_string(), value.to_string());
-        } else if positional_idx < transition.args.len() {
-            state_params.insert(transition.args[positional_idx].clone(), arg.clone());
-            positional_idx += 1;
-        }
-    }
-
+    let multi = candidates.len() > 1;
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let ctx = GateContext {
-        ledger: machine.ledger(),
-        config: &config,
-        current_state: &current_state,
-        state_params,
-        working_dir: cwd,
-        event_fields: None,
-    };
+    let mut would_take: Option<String> = None;
 
-    let results = evaluate_gates(&transition.gates, &ctx);
-    let all_passed = results.iter().all(|r| r.passed);
+    for (idx, transition) in candidates.iter().enumerate() {
+        if multi {
+            println!("candidate {}: {} \u{2192} {}", idx + 1, transition.from, transition.to);
+        }
 
-    for result in &results {
-        if result.passed {
-            println!("  \u{2713} {}", result.description);
-        } else {
-            println!(
-                "  \u{2717} {}: {} \u{2014} {}",
-                result.gate_type,
-                result.reason.as_deref().unwrap_or("failed"),
-                result
-                    .intent
-                    .as_deref()
-                    .unwrap_or("gate condition must be met")
-            );
+        if transition.gates.is_empty() {
+            if multi {
+                println!("  (no gates — always passes)");
+            } else {
+                println!("result: ready (no gates)");
+                return EXIT_SUCCESS;
+            }
+            if would_take.is_none() {
+                would_take = Some(transition.to.clone());
+            }
+            continue;
+        }
+
+        let mut state_params = build_state_params(&config, &transition.to, machine.ledger());
+
+        // Map CLI args into state_params.
+        // - key=value args are inserted directly (override state params)
+        // - Positional args (no '=') are mapped to declared transition.args names
+        let mut positional_idx = 0;
+        for arg in args {
+            if let Some((key, value)) = arg.split_once('=') {
+                state_params.insert(key.to_string(), value.to_string());
+            } else if positional_idx < transition.args.len() {
+                state_params.insert(transition.args[positional_idx].clone(), arg.clone());
+                positional_idx += 1;
+            }
+        }
+
+        let ctx = GateContext {
+            ledger: machine.ledger(),
+            config: &config,
+            current_state: &current_state,
+            state_params,
+            working_dir: cwd.clone(),
+            event_fields: None,
+        };
+
+        let results = evaluate_gates(&transition.gates, &ctx);
+        let all_passed = results.iter().all(|r| r.passed);
+
+        for result in &results {
+            if result.passed {
+                println!("  \u{2713} {}", result.description);
+            } else {
+                println!(
+                    "  \u{2717} {}: {} \u{2014} {}",
+                    result.gate_type,
+                    result.reason.as_deref().unwrap_or("failed"),
+                    result
+                        .intent
+                        .as_deref()
+                        .unwrap_or("gate condition must be met")
+                );
+            }
+        }
+
+        if all_passed && would_take.is_none() {
+            would_take = Some(transition.to.clone());
         }
     }
 
-    if all_passed {
-        println!("result: ready");
+    if multi {
+        if let Some(ref target) = would_take {
+            println!("result: would take \u{2192} {}", target);
+        } else {
+            println!("result: blocked");
+        }
     } else {
-        println!("result: blocked");
+        // Single candidate path — backward-compatible output.
+        if would_take.is_some() {
+            println!("result: ready");
+        } else {
+            println!("result: blocked");
+        }
     }
 
     EXIT_SUCCESS // dry-run always returns 0

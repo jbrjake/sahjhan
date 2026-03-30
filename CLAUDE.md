@@ -196,8 +196,9 @@ Sahjhan is a protocol enforcement engine. It has:
 
 | Concept | File | Anchor | Purpose |
 |---------|------|--------|---------|
-| CLI entry point | `main.rs` | `[cli-main]` | clap arg parsing, alias resolution, dispatch |
+| CLI entry point | `main.rs` | `[cli-main]` | clap arg parsing, alias resolution, dispatch; `--json` global flag |
 | Alias resolution | `cli/aliases.rs` | `[resolve-alias]` | Rewrite CLI args via protocol aliases |
+| JSON output types | `cli/output.rs` | `CommandOutput`, `CommandResult<T>`, data structs | Structured output with JSON envelope (`schema_version: 1`) |
 | Shared helpers | `cli/commands.rs` | (see file index) | Exit codes, ledger targeting, config loading, `[compute-registry-path]` |
 | Init/validate/reset | `cli/init.rs` | `[cmd-init]`, `[cmd-validate]`, `[cmd-reset]` | Lifecycle commands |
 | Transition/gate/event | `cli/transition.rs` | `[cmd-transition]`, `[cmd-gate-check]`, `[record-and-render]`, `validate_event_fields`, `[cmd-event]` | State machine commands |
@@ -369,4 +370,5 @@ cli/authed_event.rs [cmd-reseal]
 | `tests/mermaid_tests.rs` | Mermaid stateDiagram-v2 output, hyphen sanitization, gate labels, ASCII tree, cycle detection |
 | `tests/config_integrity_tests.rs` | Config sealing, tamper detection, reseal, backward compat |
 | `tests/render_filter_tests.rs` | Custom Tera filters (where_eq, unique_by) |
+| `tests/json_output_tests.rs` | JSON envelope serialization, per-command data structs, CLI --json integration |
 | `tests/horizons1_tests.rs` | HORIZONS-1 mission protocol: status, transitions, gates, sets with --json |

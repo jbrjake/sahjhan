@@ -2787,3 +2787,38 @@ fn test_non_command_gates_have_no_attestation() {
         "file_exists should never produce attestation"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Attestation stdout hash determinism
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_attestation_stdout_hash_is_deterministic() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let gate = make_gate(
+        "command_succeeds",
+        vec![("cmd", toml::Value::String("echo hello".to_string()))],
+    );
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+
+    use sha2::{Digest, Sha256};
+    let expected_hash = format!("{:x}", Sha256::digest(b"hello\n"));
+
+    let result = evaluate_gate(&gate, &ctx);
+    let att = result.attestation.unwrap();
+    assert_eq!(
+        att.stdout_hash, expected_hash,
+        "stdout hash should match sha256 of 'hello\\n'"
+    );
+}

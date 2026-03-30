@@ -50,6 +50,10 @@ struct Cli {
     #[arg(long = "ledger-path", global = true)]
     ledger_path: Option<String>,
 
+    /// Output JSON instead of text
+    #[arg(long, global = true)]
+    json: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -380,64 +384,103 @@ fn main() {
         ledger_path: cli.ledger_path.clone(),
     };
 
-    let exit_code = match cli.command {
-        Commands::Validate => init::cmd_validate(&cli.config_dir),
-        Commands::Init => init::cmd_init(&cli.config_dir),
+    use sahjhan::cli::output::{CommandOutput, LegacyResult};
+
+    // Whether to emit JSON envelope at the end.
+    // Normally follows cli.json, but Query's own --json flag conflicts with the
+    // global one (both share the same name via `global = true`), so we suppress
+    // the envelope for Query when its local json flag was the trigger.
+    let mut use_json_envelope = cli.json;
+
+    let result: Box<dyn CommandOutput> = match cli.command {
+        // Converted commands return Box<dyn CommandOutput> directly
         Commands::Status => status::cmd_status(&cli.config_dir, &targeting),
         Commands::Log { action } => match action {
             LogAction::Dump => log::cmd_log_dump(&cli.config_dir, &targeting),
-            LogAction::Verify => log::cmd_log_verify(&cli.config_dir, &targeting),
             LogAction::Tail { n } => log::cmd_log_tail(&cli.config_dir, n, &targeting),
+            LogAction::Verify => {
+                let code = log::cmd_log_verify(&cli.config_dir, &targeting);
+                Box::new(LegacyResult::new("log_verify", code))
+            }
         },
         Commands::Manifest { action } => match action {
             ManifestAction::Verify => manifest_cmd::cmd_manifest_verify(&cli.config_dir),
-            ManifestAction::List => manifest_cmd::cmd_manifest_list(&cli.config_dir),
+            ManifestAction::List => {
+                let code = manifest_cmd::cmd_manifest_list(&cli.config_dir);
+                Box::new(LegacyResult::new("manifest_list", code))
+            }
             ManifestAction::Restore { path } => {
-                manifest_cmd::cmd_manifest_restore(&cli.config_dir, &path)
+                let code = manifest_cmd::cmd_manifest_restore(&cli.config_dir, &path);
+                Box::new(LegacyResult::new("manifest_restore", code))
             }
         },
-        Commands::Render { dump_context } => {
-            if dump_context {
-                render::cmd_render_dump_context(&cli.config_dir, &targeting)
-            } else {
-                render::cmd_render(&cli.config_dir, &targeting)
-            }
-        }
         Commands::Set { action } => match action {
             SetAction::Status { set } => status::cmd_set_status(&cli.config_dir, &set, &targeting),
             SetAction::Complete { set, member } => {
-                status::cmd_set_complete(&cli.config_dir, &set, &member, &targeting)
+                let code = status::cmd_set_complete(&cli.config_dir, &set, &member, &targeting);
+                Box::new(LegacyResult::new("set_complete", code))
             }
         },
-        Commands::Transition { name, args } => {
-            transition::cmd_transition(&cli.config_dir, &name, &args, &targeting)
-        }
         Commands::Gate { action } => match action {
             GateAction::Check { transition, args } => {
                 transition::cmd_gate_check(&cli.config_dir, &transition, &args, &targeting)
             }
         },
+        // All other commands wrapped in LegacyResult
+        Commands::Validate => {
+            let code = init::cmd_validate(&cli.config_dir);
+            Box::new(LegacyResult::new("validate", code))
+        }
+        Commands::Init => {
+            let code = init::cmd_init(&cli.config_dir);
+            Box::new(LegacyResult::new("init", code))
+        }
+        Commands::Render { dump_context } => {
+            let code = if dump_context {
+                render::cmd_render_dump_context(&cli.config_dir, &targeting)
+            } else {
+                render::cmd_render(&cli.config_dir, &targeting)
+            };
+            Box::new(LegacyResult::new("render", code))
+        }
+        Commands::Transition { name, args } => {
+            let code = transition::cmd_transition(&cli.config_dir, &name, &args, &targeting);
+            Box::new(LegacyResult::new("transition", code))
+        }
         Commands::Event { event_type, fields } => {
-            transition::cmd_event(&cli.config_dir, &event_type, &fields, &targeting)
+            let code = transition::cmd_event(&cli.config_dir, &event_type, &fields, &targeting);
+            Box::new(LegacyResult::new("event", code))
         }
         Commands::AuthedEvent {
             event_type,
             fields,
             proof,
-        } => authed_event::cmd_authed_event(
-            &cli.config_dir,
-            &event_type,
-            &fields,
-            &proof,
-            &targeting,
-        ),
-        Commands::Reseal { proof } => authed_event::cmd_reseal(&cli.config_dir, &proof, &targeting),
-        Commands::Reset { confirm, token } => init::cmd_reset(&cli.config_dir, confirm, &token),
+        } => {
+            let code = authed_event::cmd_authed_event(
+                &cli.config_dir,
+                &event_type,
+                &fields,
+                &proof,
+                &targeting,
+            );
+            Box::new(LegacyResult::new("authed_event", code))
+        }
+        Commands::Reseal { proof } => {
+            let code = authed_event::cmd_reseal(&cli.config_dir, &proof, &targeting);
+            Box::new(LegacyResult::new("reseal", code))
+        }
+        Commands::Reset { confirm, token } => {
+            let code = init::cmd_reset(&cli.config_dir, confirm, &token);
+            Box::new(LegacyResult::new("reset", code))
+        }
         Commands::Hook { action } => match action {
             HookAction::Generate {
                 harness,
                 output_dir,
-            } => hooks_cmd::cmd_hook_generate(&cli.config_dir, &harness, &output_dir),
+            } => {
+                let code = hooks_cmd::cmd_hook_generate(&cli.config_dir, &harness, &output_dir);
+                Box::new(LegacyResult::new("hook_generate", code))
+            }
         },
         Commands::Ledger { action } => match action {
             LedgerAction::Create {
@@ -446,35 +489,61 @@ fn main() {
                 from,
                 instance_id,
                 mode,
-            } => ledger::cmd_ledger_create(
-                &cli.config_dir,
-                name.as_deref(),
-                path.as_deref(),
-                from.as_deref(),
-                instance_id.as_deref(),
-                &mode,
-            ),
-            LedgerAction::List => ledger::cmd_ledger_list(&cli.config_dir),
-            LedgerAction::Remove { name } => ledger::cmd_ledger_remove(&cli.config_dir, &name),
+            } => {
+                let code = ledger::cmd_ledger_create(
+                    &cli.config_dir,
+                    name.as_deref(),
+                    path.as_deref(),
+                    from.as_deref(),
+                    instance_id.as_deref(),
+                    &mode,
+                );
+                Box::new(LegacyResult::new("ledger_create", code))
+            }
+            LedgerAction::List => {
+                let code = ledger::cmd_ledger_list(&cli.config_dir);
+                Box::new(LegacyResult::new("ledger_list", code))
+            }
+            LedgerAction::Remove { name } => {
+                let code = ledger::cmd_ledger_remove(&cli.config_dir, &name);
+                Box::new(LegacyResult::new("ledger_remove", code))
+            }
             LedgerAction::Verify { name, path } => {
-                ledger::cmd_ledger_verify(&cli.config_dir, name.as_deref(), path.as_deref())
+                let code = ledger::cmd_ledger_verify(
+                    &cli.config_dir,
+                    name.as_deref(),
+                    path.as_deref(),
+                );
+                Box::new(LegacyResult::new("ledger_verify", code))
             }
             LedgerAction::Checkpoint {
                 name,
                 scope,
                 snapshot,
-            } => ledger::cmd_ledger_checkpoint(&cli.config_dir, &name, &scope, &snapshot),
+            } => {
+                let code =
+                    ledger::cmd_ledger_checkpoint(&cli.config_dir, &name, &scope, &snapshot);
+                Box::new(LegacyResult::new("ledger_checkpoint", code))
+            }
             LedgerAction::Import { name, path } => {
-                ledger::cmd_ledger_import(&cli.config_dir, &name, &path)
+                let code = ledger::cmd_ledger_import(&cli.config_dir, &name, &path);
+                Box::new(LegacyResult::new("ledger_import", code))
             }
         },
         Commands::Config { action } => match action {
             ConfigAction::SessionKeyPath => {
-                config_cmd::cmd_session_key_path(&cli.config_dir, &targeting)
+                let code = config_cmd::cmd_session_key_path(&cli.config_dir, &targeting);
+                Box::new(LegacyResult::new("config_session_key_path", code))
             }
         },
-        Commands::Guards => guards::cmd_guards(&cli.config_dir),
-        Commands::Mermaid { rendered } => mermaid_cmd::cmd_mermaid(&cli.config_dir, rendered),
+        Commands::Guards => {
+            let code = guards::cmd_guards(&cli.config_dir);
+            Box::new(LegacyResult::new("guards", code))
+        }
+        Commands::Mermaid { rendered } => {
+            let code = mermaid_cmd::cmd_mermaid(&cli.config_dir, rendered);
+            Box::new(LegacyResult::new("mermaid", code))
+        }
         Commands::Query {
             sql,
             query_path,
@@ -485,13 +554,18 @@ fn main() {
             format,
             json,
         } => {
+            // When query's own --json flag is set (shortcut for --format json),
+            // it also sets cli.json via the global flag.  Disable the envelope
+            // so the raw DataFusion JSON output is not double-wrapped.
+            if json {
+                use_json_envelope = false;
+            }
             let effective_format = if json { "json".to_string() } else { format };
-            // For query, use --path from query subcommand, falling back to global flags
             let query_targeting = commands::LedgerTargeting {
                 ledger_name: cli.ledger,
                 ledger_path: query_path.or(cli.ledger_path),
             };
-            query::cmd_query(
+            let code = query::cmd_query(
                 &cli.config_dir,
                 sql.as_deref(),
                 &query_targeting,
@@ -500,11 +574,24 @@ fn main() {
                 &fields,
                 count,
                 &effective_format,
-            )
+            );
+            Box::new(LegacyResult::new("query", code))
         }
     };
 
-    std::process::exit(exit_code);
+    if use_json_envelope {
+        println!("{}", result.to_json());
+    } else {
+        let text = result.to_text();
+        if !text.is_empty() {
+            if result.exit_code() == 0 {
+                print!("{}", text);
+            } else {
+                eprint!("{}", text);
+            }
+        }
+    }
+    std::process::exit(result.exit_code());
 }
 
 /// Extract --config-dir value from raw args (before clap parsing).

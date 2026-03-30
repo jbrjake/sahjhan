@@ -15,19 +15,24 @@ use super::commands::{
     load_config, load_manifest, resolve_config_dir, resolve_data_dir, EXIT_INTEGRITY_ERROR,
     EXIT_SUCCESS, EXIT_USAGE_ERROR,
 };
+use super::output::{CommandOutput, CommandResult, ManifestVerifyData, MismatchData};
 
 // ---------------------------------------------------------------------------
 // manifest verify
 // ---------------------------------------------------------------------------
 
 // [cmd-manifest-verify]
-pub fn cmd_manifest_verify(config_dir: &str) -> i32 {
+pub fn cmd_manifest_verify(config_dir: &str) -> Box<dyn CommandOutput> {
     let config_path = resolve_config_dir(config_dir);
     let config = match load_config(&config_path) {
         Ok(c) => c,
         Err((code, msg)) => {
-            eprintln!("{}", msg);
-            return code;
+            return Box::new(CommandResult::<ManifestVerifyData>::err(
+                "manifest_verify",
+                code,
+                "config_error",
+                msg,
+            ));
         }
     };
 
@@ -35,32 +40,44 @@ pub fn cmd_manifest_verify(config_dir: &str) -> i32 {
     let manifest = match load_manifest(&data_dir) {
         Ok(m) => m,
         Err((code, msg)) => {
-            eprintln!("{}", msg);
-            return code;
+            return Box::new(CommandResult::<ManifestVerifyData>::err(
+                "manifest_verify",
+                code,
+                "integrity_error",
+                msg,
+            ));
         }
     };
 
+    let tracked_count = manifest.entries.len();
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let result = manifest_verify::verify(&manifest, &cwd);
 
-    if result.clean {
-        println!("manifest clean ({} tracked)", manifest.entries.len());
-        EXIT_SUCCESS
+    let mismatches: Vec<MismatchData> = result
+        .mismatches
+        .iter()
+        .map(|m| MismatchData {
+            path: m.path.clone(),
+            expected: m.expected.clone(),
+            actual: m.actual.clone(),
+        })
+        .collect();
+
+    let clean = result.clean;
+    let data = ManifestVerifyData {
+        clean,
+        tracked_count,
+        mismatches,
+    };
+
+    if clean {
+        Box::new(CommandResult::ok("manifest_verify", data))
     } else {
-        eprintln!("manifest: {} modified", result.mismatches.len());
-        for m in &result.mismatches {
-            let actual_str = match &m.actual {
-                Some(h) => format!("got {}", &h[..12]),
-                None => "missing".to_string(),
-            };
-            eprintln!(
-                "  {} \u{2014} expected {}, {}",
-                m.path,
-                &m.expected[..12],
-                actual_str
-            );
-        }
-        EXIT_INTEGRITY_ERROR
+        Box::new(CommandResult::ok_with_exit_code(
+            "manifest_verify",
+            data,
+            EXIT_INTEGRITY_ERROR,
+        ))
     }
 }
 

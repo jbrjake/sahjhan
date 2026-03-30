@@ -18,8 +18,12 @@ use crate::state::machine::StateMachine;
 use super::commands::{
     build_state_params, load_config, load_manifest, open_targeted_ledger,
     registry_path_from_config, resolve_config_dir, resolve_data_dir, save_manifest,
-    track_ledger_in_manifest, LedgerTargeting, EXIT_INTEGRITY_ERROR, EXIT_SUCCESS,
-    EXIT_USAGE_ERROR,
+    track_ledger_in_manifest, LedgerTargeting, EXIT_CONFIG_ERROR, EXIT_INTEGRITY_ERROR,
+    EXIT_SUCCESS, EXIT_USAGE_ERROR,
+};
+use super::output::{
+    CommandOutput, CommandResult, EventOnlyStatusData, GateResultData, MemberData, SetSummaryData,
+    StatusData, TransitionSummaryData,
 };
 
 // ---------------------------------------------------------------------------
@@ -27,96 +31,112 @@ use super::commands::{
 // ---------------------------------------------------------------------------
 
 // [cmd-status]
-pub fn cmd_status(config_dir: &str, targeting: &LedgerTargeting) -> i32 {
+pub fn cmd_status(config_dir: &str, targeting: &LedgerTargeting) -> Box<dyn CommandOutput> {
     let config_path = resolve_config_dir(config_dir);
     let config = match load_config(&config_path) {
         Ok(c) => c,
         Err((code, msg)) => {
-            eprintln!("error: {}", msg);
-            return code;
+            return Box::new(CommandResult::<StatusData>::err(
+                "status",
+                code,
+                "config_error",
+                msg,
+            ));
         }
     };
 
     let (ledger, mode) = match open_targeted_ledger(&config, targeting, &config_path) {
         Ok(lm) => lm,
         Err((code, msg)) => {
-            eprintln!("error: {}", msg);
-            return code;
+            let error_code = if code == EXIT_INTEGRITY_ERROR {
+                "integrity_error"
+            } else if code == EXIT_CONFIG_ERROR {
+                "config_error"
+            } else {
+                "usage_error"
+            };
+            return Box::new(CommandResult::<StatusData>::err(
+                "status",
+                code,
+                error_code,
+                msg,
+            ));
         }
     };
 
     // Event-only ledger: terse single-line output
     if let Some(LedgerMode::EventOnly) = mode {
-        let ledger_len = ledger.len();
-        let chain_status = match ledger.verify() {
-            Ok(()) => "chain valid".to_string(),
-            Err(e) => format!("chain INVALID ({})", e),
+        let event_count = ledger.len();
+        let (chain_valid, chain_error) = match ledger.verify() {
+            Ok(()) => (true, None),
+            Err(e) => (false, Some(e.to_string())),
         };
-        println!("event-only: {} events, {}", ledger_len, chain_status);
-        return EXIT_SUCCESS;
+        return Box::new(CommandResult::ok(
+            "status",
+            EventOnlyStatusData {
+                event_count,
+                chain_valid,
+                chain_error,
+            },
+        ));
     }
 
     let _data_dir = resolve_data_dir(&config.paths.data_dir);
     let _manifest = match load_manifest(&_data_dir) {
         Ok(m) => m,
         Err((code, msg)) => {
-            eprintln!("error: {}", msg);
-            return code;
+            return Box::new(CommandResult::<StatusData>::err(
+                "status",
+                code,
+                "integrity_error",
+                msg,
+            ));
         }
     };
 
     let machine = StateMachine::new(&config, ledger);
     let current_state = machine.current_state().to_string();
 
-    let ledger_len = machine.ledger().len();
-    let chain_status = match machine.ledger().verify() {
-        Ok(()) => "chain valid".to_string(),
-        Err(e) => format!("chain INVALID ({})", e),
+    let event_count = machine.ledger().len();
+    let (chain_valid, chain_error) = match machine.ledger().verify() {
+        Ok(()) => (true, None),
+        Err(e) => (false, Some(e.to_string())),
     };
 
-    // Line 1: state: {current_state} ({event_count} events, {chain_status})
-    println!(
-        "state: {} ({} events, {})",
-        current_state, ledger_len, chain_status
-    );
-
-    // Sets: one line each, only if there are sets
-    if !config.sets.is_empty() {
-        println!("sets:");
-        for set_name in config.sets.keys() {
+    // Build sets summary
+    let sets: Vec<SetSummaryData> = config
+        .sets
+        .keys()
+        .map(|set_name| {
             let set_status = machine.set_status(set_name);
-            let members_str: Vec<String> = set_status
+            let members: Vec<MemberData> = set_status
                 .members
                 .iter()
-                .map(|m| {
-                    if m.done {
-                        format!("\u{2713} {}", m.name)
-                    } else {
-                        format!("\u{00B7} {}", m.name)
-                    }
+                .map(|m| MemberData {
+                    name: m.name.clone(),
+                    done: m.done,
                 })
                 .collect();
-            println!(
-                "  {}: {}/{} [{}]",
-                set_name,
-                set_status.completed,
-                set_status.total,
-                members_str.join(", ")
-            );
-        }
-    }
+            SetSummaryData {
+                name: set_name.clone(),
+                completed: set_status.completed,
+                total: set_status.total,
+                members,
+            }
+        })
+        .collect();
 
-    // Next transitions from current state
+    // Build transitions summary
     let available_transitions: Vec<_> = config
         .transitions
         .iter()
         .filter(|t| t.from == current_state)
         .collect();
 
-    if !available_transitions.is_empty() {
-        println!("next:");
-        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        for transition in &available_transitions {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let transitions: Vec<TransitionSummaryData> = available_transitions
+        .iter()
+        .map(|transition| {
             let state_params = build_state_params(&config, &transition.to, machine.ledger());
             let ctx = GateContext {
                 ledger: machine.ledger(),
@@ -134,26 +154,39 @@ pub fn cmd_status(config_dir: &str, targeting: &LedgerTargeting) -> i32 {
             };
 
             let all_passed = results.iter().all(|r| r.passed);
-            let readiness = if all_passed { "ready" } else { "blocked" };
-            println!("  {}: {}", transition.command, readiness);
+            let gates: Vec<GateResultData> = results
+                .iter()
+                .map(|r| GateResultData {
+                    passed: r.passed,
+                    evaluable: r.evaluable,
+                    gate_type: r.gate_type.clone(),
+                    description: r.description.clone(),
+                    reason: r.reason.clone(),
+                    intent: r.intent.clone(),
+                })
+                .collect();
 
-            for r in &results {
-                if r.passed {
-                    println!("    \u{2713} {}", r.description);
-                } else {
-                    let intent = r.intent.as_deref().unwrap_or("gate condition must be met");
-                    println!(
-                        "    \u{2717} {}: {} \u{2014} {}",
-                        r.gate_type,
-                        r.reason.as_deref().unwrap_or("failed"),
-                        intent
-                    );
-                }
+            TransitionSummaryData {
+                command: transition.command.clone(),
+                from: transition.from.clone(),
+                to: transition.to.clone(),
+                ready: all_passed,
+                gates,
             }
-        }
-    }
+        })
+        .collect();
 
-    EXIT_SUCCESS
+    Box::new(CommandResult::ok(
+        "status",
+        StatusData {
+            state: current_state,
+            event_count,
+            chain_valid,
+            chain_error,
+            sets,
+            transitions,
+        },
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -161,53 +194,71 @@ pub fn cmd_status(config_dir: &str, targeting: &LedgerTargeting) -> i32 {
 // ---------------------------------------------------------------------------
 
 // [cmd-set-status]
-pub fn cmd_set_status(config_dir: &str, set_name: &str, targeting: &LedgerTargeting) -> i32 {
+pub fn cmd_set_status(
+    config_dir: &str,
+    set_name: &str,
+    targeting: &LedgerTargeting,
+) -> Box<dyn CommandOutput> {
     let config_path = resolve_config_dir(config_dir);
     let config = match load_config(&config_path) {
         Ok(c) => c,
         Err((code, msg)) => {
-            eprintln!("error: {}", msg);
-            return code;
+            return Box::new(CommandResult::<SetSummaryData>::err(
+                "set_status",
+                code,
+                "config_error",
+                msg,
+            ));
         }
     };
 
     if !config.sets.contains_key(set_name) {
-        eprintln!("error: unknown set '{}'", set_name);
-        return EXIT_USAGE_ERROR;
+        return Box::new(CommandResult::<SetSummaryData>::err(
+            "set_status",
+            EXIT_USAGE_ERROR,
+            "usage_error",
+            format!("unknown set '{}'", set_name),
+        ));
     }
 
     let (ledger, _mode) = match open_targeted_ledger(&config, targeting, &config_path) {
         Ok(lm) => lm,
         Err((code, msg)) => {
-            eprintln!("error: {}", msg);
-            return code;
+            let error_code = if code == EXIT_INTEGRITY_ERROR {
+                "integrity_error"
+            } else {
+                "config_error"
+            };
+            return Box::new(CommandResult::<SetSummaryData>::err(
+                "set_status",
+                code,
+                error_code,
+                msg,
+            ));
         }
     };
 
     let machine = StateMachine::new(&config, ledger);
     let status = machine.set_status(set_name);
 
-    let members_str: Vec<String> = status
+    let members: Vec<MemberData> = status
         .members
         .iter()
-        .map(|m| {
-            if m.done {
-                format!("\u{2713} {}", m.name)
-            } else {
-                format!("\u{00B7} {}", m.name)
-            }
+        .map(|m| MemberData {
+            name: m.name.clone(),
+            done: m.done,
         })
         .collect();
 
-    println!(
-        "{}: {}/{} [{}]",
-        set_name,
-        status.completed,
-        status.total,
-        members_str.join(", ")
-    );
-
-    EXIT_SUCCESS
+    Box::new(CommandResult::ok(
+        "set_status",
+        SetSummaryData {
+            name: set_name.to_string(),
+            completed: status.completed,
+            total: status.total,
+            members,
+        },
+    ))
 }
 
 // ---------------------------------------------------------------------------

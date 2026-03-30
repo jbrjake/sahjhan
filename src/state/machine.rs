@@ -4,6 +4,7 @@
 //
 // ## Index
 // - StateError               — NoTransition, GateBlocked, AllCandidatesBlocked, Ledger, Serialization, UnknownSet
+// - TransitionOutcome        — result of a successful transition (from, to, attestations)
 // - StateMachine             — owns config + ledger, executes transitions
 // - [transition]             transition()              — execute named command (multi-candidate branching with fallthrough)
 // - [record-event]           record_event()            — append event to ledger
@@ -20,7 +21,7 @@ use thiserror::Error;
 
 use super::sets::{MemberStatus, SetStatus};
 use crate::config::ProtocolConfig;
-use crate::gates::evaluator::{evaluate_gate, evaluate_gates, GateContext};
+use crate::gates::evaluator::{evaluate_gate, evaluate_gates, GateAttestation, GateContext};
 use crate::ledger::chain::Ledger;
 use crate::ledger::entry::LedgerError;
 
@@ -52,6 +53,17 @@ pub enum StateError {
 
     #[error("unknown set '{0}'")]
     UnknownSet(String),
+}
+
+/// The result of a successful transition, including machine-attested gate evidence.
+#[derive(Debug)]
+pub struct TransitionOutcome {
+    /// State before the transition.
+    pub from: String,
+    /// State after the transition.
+    pub to: String,
+    /// Attestation evidence from command/snapshot gates that passed.
+    pub attestations: Vec<GateAttestation>,
 }
 
 // ---------------------------------------------------------------------------
@@ -120,7 +132,9 @@ impl StateMachine {
     /// If a single candidate is blocked, the backward-compatible `GateBlocked`
     /// error is returned.  If multiple candidates all fail,
     /// `AllCandidatesBlocked` is returned with per-candidate failure details.
-    pub fn transition(&mut self, command: &str, args: &[String]) -> Result<(), StateError> {
+    pub fn transition(&mut self, command: &str, args: &[String]) -> Result<TransitionOutcome, StateError> {
+        let from_state = self.current_state.clone();
+
         // Collect ALL matching candidates (preserving TOML order).
         let candidates: Vec<_> = self
             .config
@@ -200,7 +214,33 @@ impl StateMachine {
                 .map_err(StateError::Ledger)?;
 
             self.current_state = candidate.to.clone();
-            return Ok(());
+
+            // Collect attestation from passing gates.
+            let attestations: Vec<GateAttestation> = results
+                .into_iter()
+                .filter_map(|r| r.attestation)
+                .collect();
+
+            // Emit gate_attestation events for each attestation.
+            for att in &attestations {
+                let mut att_fields = BTreeMap::new();
+                att_fields.insert("gate_type".to_string(), att.gate_type.clone());
+                att_fields.insert("command".to_string(), att.command.clone());
+                att_fields.insert("exit_code".to_string(), att.exit_code.to_string());
+                att_fields.insert("stdout_hash".to_string(), att.stdout_hash.clone());
+                att_fields.insert("wall_time_ms".to_string(), att.wall_time_ms.to_string());
+                att_fields.insert("executed_at".to_string(), att.executed_at.clone());
+                att_fields.insert("transition_command".to_string(), command.to_string());
+                self.ledger
+                    .append("gate_attestation", att_fields)
+                    .map_err(StateError::Ledger)?;
+            }
+
+            return Ok(TransitionOutcome {
+                from: from_state,
+                to: self.current_state.clone(),
+                attestations,
+            });
         }
 
         // No candidate passed. Choose error style based on candidate count.

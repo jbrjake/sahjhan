@@ -111,7 +111,8 @@ Sahjhan is a protocol enforcement engine. It has:
 | Concept | File | Anchor/Item | Purpose |
 |---------|------|-------------|---------|
 | State machine | `state/machine.rs` | `StateMachine` | Owns config + ledger, executes transitions |
-| Transition | `state/machine.rs` | `[transition]` | Execute named command: build params → check gates → append event |
+| Transition outcome | `state/machine.rs` | `TransitionOutcome` | Result of a successful transition (from, to, attestations) |
+| Transition | `state/machine.rs` | `[transition]` | Execute named command: build params → check gates → append event → emit gate_attestation events |
 | Build state params | `state/machine.rs` | `[build-state-params]` | Derive params from state config + set state (`source` field) |
 | Record event | `state/machine.rs` | `[record-event]` | Append event to ledger |
 | Set status | `state/machine.rs` | `[set-status]` | Completion status of a named set |

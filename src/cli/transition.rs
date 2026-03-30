@@ -67,10 +67,9 @@ pub fn cmd_transition(
     };
 
     let mut machine = StateMachine::new(&config, ledger);
-    let from_state = machine.current_state().to_string();
 
     match machine.transition(name, args) {
-        Ok(()) => {
+        Ok(outcome) => {
             // Update manifest with ledger
             if let Err((code, msg)) =
                 track_ledger_in_manifest(&mut manifest, &data_dir, machine.ledger())
@@ -124,12 +123,12 @@ pub fn cmd_transition(
             if render_count > 0 {
                 println!(
                     "{} \u{2192} {} ({} rendered)",
-                    from_state,
-                    machine.current_state(),
+                    outcome.from,
+                    outcome.to,
                     render_count
                 );
             } else {
-                println!("{} \u{2192} {}", from_state, machine.current_state());
+                println!("{} \u{2192} {}", outcome.from, outcome.to);
             }
 
             EXIT_SUCCESS

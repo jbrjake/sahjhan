@@ -45,6 +45,7 @@ pub struct GateContext<'a> {
 /// Populated by command_succeeds, command_output, and snapshot_compare gates.
 /// Carried on GateResult and used by StateMachine::transition() to emit
 /// gate_attestation events.
+#[derive(Debug)]
 pub struct GateAttestation {
     /// Gate type that produced this attestation (e.g. "command_succeeds").
     pub gate_type: String,

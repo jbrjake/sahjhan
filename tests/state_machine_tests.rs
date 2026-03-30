@@ -225,3 +225,16 @@ fn test_branching_all_candidates_blocked() {
         err_msg
     );
 }
+
+#[test]
+fn test_transition_returns_outcome_with_states() {
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let dir = tempdir().unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "minimal", "1.0.0").unwrap();
+    let mut sm = StateMachine::new(&config, ledger);
+    let outcome = sm.transition("begin", &[]).unwrap();
+    assert_eq!(outcome.from, "idle");
+    assert_eq!(outcome.to, "working");
+    assert!(outcome.attestations.is_empty(), "no command gates, no attestations");
+}

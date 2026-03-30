@@ -1,9 +1,8 @@
 // src/gates/command.rs
 //
 // ## Index
-// - [eval-command-succeeds]        eval_command_succeeds()         — run a shell command; pass if exit code is 0
-// - [eval-command-output]          eval_command_output()           — run a shell command; pass if stdout matches expected string
-// - [run-shell-with-timeout]       run_shell_with_timeout()        — run a command with polling timeout, status only
+// - [eval-command-succeeds]        eval_command_succeeds()         — run a shell command; pass if exit code is 0; captures stdout for attestation
+// - [eval-command-output]          eval_command_output()           — run a shell command; pass if stdout matches expected string; captures stdout for attestation
 // - [run-shell-output-with-timeout] run_shell_output_with_timeout() — run a command with polling timeout, captures stdout + ExitStatus
 
 use std::path::Path;
@@ -22,14 +21,6 @@ use super::types::{build_template_vars, validate_template_fields};
 // ---------------------------------------------------------------------------
 // Outcome types
 // ---------------------------------------------------------------------------
-
-/// Outcome of running a shell command with timeout.
-pub(super) enum CommandOutcome {
-    /// Command completed within the timeout.
-    Completed(std::process::ExitStatus),
-    /// Command exceeded the timeout and was killed.
-    TimedOut,
-}
 
 /// Outcome of running a shell command with output capture and timeout.
 pub(super) enum CommandOutputOutcome {
@@ -277,40 +268,6 @@ pub(super) fn eval_command_output(gate: &GateConfig, ctx: &GateContext) -> GateR
 // Command execution with timeout enforcement
 // (Issue #1, #6: Use try_wait() polling loop)
 // ---------------------------------------------------------------------------
-
-// [run-shell-with-timeout]
-/// Run a shell command with timeout enforcement using `try_wait()` polling.
-pub(super) fn run_shell_with_timeout(
-    cmd: &str,
-    working_dir: &Path,
-    timeout_secs: u64,
-) -> Result<CommandOutcome, std::io::Error> {
-    let mut child = Command::new("sh")
-        .arg("-c")
-        .arg(cmd)
-        .current_dir(working_dir)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()?;
-
-    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
-    let poll_interval = Duration::from_millis(50);
-
-    loop {
-        match child.try_wait()? {
-            Some(status) => return Ok(CommandOutcome::Completed(status)),
-            None => {
-                if Instant::now() >= deadline {
-                    // Kill the process and return timeout.
-                    let _ = child.kill();
-                    let _ = child.wait(); // Reap the zombie.
-                    return Ok(CommandOutcome::TimedOut);
-                }
-                std::thread::sleep(poll_interval);
-            }
-        }
-    }
-}
 
 // [run-shell-output-with-timeout]
 /// Run a shell command capturing stdout, with timeout enforcement.

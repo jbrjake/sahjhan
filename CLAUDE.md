@@ -84,7 +84,6 @@ Sahjhan is a protocol enforcement engine. It has:
 | evaluate_gates | `gates/evaluator.rs` | `[evaluate-gates]` | Evaluate all gates, returns all results |
 | Shell command gate | `gates/command.rs` | `[eval-command-succeeds]` | Run command, pass if exit 0 |
 | Command output gate | `gates/command.rs` | `[eval-command-output]` | Run command, pass if stdout matches |
-| Shell timeout | `gates/command.rs` | `[run-shell-with-timeout]` | try_wait polling loop |
 | File exists gate | `gates/file.rs` | `[eval-file-exists]` | Single file check |
 | Files exist gate | `gates/file.rs` | `[eval-files-exist]` | Multiple files check |
 | Ledger event gate | `gates/ledger.rs` | `[eval-ledger-has-event]` | N+ events of type |
@@ -241,12 +240,14 @@ main.rs [cli-main]
                   → gates/types.rs [build-template-vars]    ← clones state_params + injects config paths/sets
                   → gates/types.rs [validate-template-fields]
                   → gates/template.rs [resolve-template]    ← {{var}} → shell-escaped value
-                  → gates/command.rs [run-shell-with-timeout]
+                  → gates/command.rs [run-shell-output-with-timeout]
         → if all gates pass: take this candidate, break
         → if any gate fails: try next candidate
       → if no candidate passed: StateError::AllCandidatesBlocked
       → ledger/chain.rs [ledger-reload]          ← re-read after gate commands may have appended
       → ledger/chain.rs [ledger-append]           ← state_transition event
+      → for each GateAttestation from passing gates:
+        → ledger/chain.rs [ledger-append]           ← gate_attestation event (stdout_hash, exit_code, etc.)
     → render/engine.rs [render-triggered]         ← on_transition renders
 ```
 
@@ -350,7 +351,7 @@ cli/authed_event.rs [cmd-reseal]
 
 | Test file | Tests |
 |-----------|-------|
-| `tests/gate_tests.rs` | All gate types, template interpolation, field validation, StateParam source |
+| `tests/gate_tests.rs` | All gate types, template interpolation, field validation, StateParam source, attestation |
 | `tests/integration_tests.rs` | Full CLI end-to-end (init, transition, events, queries, renders, sets) |
 | `tests/chain_integrity_tests.rs` | Ledger hash chain, append, reload, tamper detection |
 | `tests/config_tests.rs` | Config loading and validation |

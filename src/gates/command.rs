@@ -4,7 +4,7 @@
 // - [eval-command-succeeds]        eval_command_succeeds()         — run a shell command; pass if exit code is 0
 // - [eval-command-output]          eval_command_output()           — run a shell command; pass if stdout matches expected string
 // - [run-shell-with-timeout]       run_shell_with_timeout()        — run a command with polling timeout, status only
-// - [run-shell-output-with-timeout] run_shell_output_with_timeout() — run a command with polling timeout, captures stdout
+// - [run-shell-output-with-timeout] run_shell_output_with_timeout() — run a command with polling timeout, captures stdout + ExitStatus
 
 use std::path::Path;
 use std::process::Command;
@@ -30,8 +30,8 @@ pub(super) enum CommandOutcome {
 
 /// Outcome of running a shell command with output capture and timeout.
 pub(super) enum CommandOutputOutcome {
-    /// Command completed within the timeout, producing this stdout.
-    Completed(String),
+    /// Command completed within the timeout, producing this stdout and exit status.
+    Completed(String, std::process::ExitStatus),
     /// Command exceeded the timeout and was killed.
     TimedOut,
 }
@@ -183,7 +183,7 @@ pub(super) fn eval_command_output(gate: &GateConfig, ctx: &GateContext) -> GateR
     }
 
     match run_shell_output_with_timeout(&cmd, &ctx.working_dir, timeout_secs) {
-        Ok(CommandOutputOutcome::Completed(stdout)) => {
+        Ok(CommandOutputOutcome::Completed(stdout, _status)) => {
             let trimmed = stdout.trim().to_string();
             let passed = trimmed == expect;
             GateResult {
@@ -287,7 +287,7 @@ pub(super) fn run_shell_output_with_timeout(
                 // Process has exited — read stdout.
                 let output = child.wait_with_output()?;
                 let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-                return Ok(CommandOutputOutcome::Completed(stdout));
+                return Ok(CommandOutputOutcome::Completed(stdout, output.status));
             }
             None => {
                 if Instant::now() >= deadline {

@@ -89,7 +89,7 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
 
     // Run command and get stdout with timeout enforcement.
     let stdout = match run_shell_output_with_timeout(&cmd, &ctx.working_dir, timeout_secs) {
-        Ok(CommandOutputOutcome::Completed(s)) => s,
+        Ok(CommandOutputOutcome::Completed(s, _status)) => s,
         Ok(CommandOutputOutcome::TimedOut) => {
             return GateResult {
                 passed: false,

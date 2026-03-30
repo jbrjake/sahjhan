@@ -22,6 +22,7 @@ use super::commands::{
     resolve_config_dir, resolve_data_dir, save_manifest, track_ledger_in_manifest, LedgerTargeting,
     EXIT_GATE_FAILED, EXIT_INTEGRITY_ERROR, EXIT_SUCCESS, EXIT_USAGE_ERROR,
 };
+use super::output::{CandidateData, CommandOutput, CommandResult, GateCheckData, GateResultData};
 
 // ---------------------------------------------------------------------------
 // transition
@@ -171,28 +172,45 @@ pub fn cmd_gate_check(
     transition_name: &str,
     args: &[String],
     targeting: &LedgerTargeting,
-) -> i32 {
+) -> Box<dyn CommandOutput> {
     let config_path = resolve_config_dir(config_dir);
     let config = match load_config(&config_path) {
         Ok(c) => c,
         Err((code, msg)) => {
-            eprintln!("{}", msg);
-            return code;
+            return Box::new(CommandResult::<GateCheckData>::err(
+                "gate_check",
+                code,
+                "config_error",
+                msg,
+            ));
         }
     };
 
     let (ledger, mode) = match open_targeted_ledger(&config, targeting, &config_path) {
         Ok(lm) => lm,
         Err((code, msg)) => {
-            eprintln!("{}", msg);
-            return code;
+            let error_code = if code == EXIT_INTEGRITY_ERROR {
+                "integrity_error"
+            } else {
+                "config_error"
+            };
+            return Box::new(CommandResult::<GateCheckData>::err(
+                "gate_check",
+                code,
+                error_code,
+                msg,
+            ));
         }
     };
 
     // Guard: event-only ledgers cannot check gates
     if let Err((code, msg)) = guard_event_only(&mode, "check gates") {
-        eprintln!("{}", msg);
-        return code;
+        return Box::new(CommandResult::<GateCheckData>::err(
+            "gate_check",
+            code,
+            "usage_error",
+            msg,
+        ));
     }
 
     let machine = StateMachine::new(&config, ledger);
@@ -207,38 +225,43 @@ pub fn cmd_gate_check(
         .collect();
 
     if candidates.is_empty() {
-        eprintln!(
-            "error: no transition '{}' from state '{}'",
-            transition_name, current_state
-        );
-        return EXIT_USAGE_ERROR;
+        return Box::new(CommandResult::<GateCheckData>::err(
+            "gate_check",
+            EXIT_USAGE_ERROR,
+            "usage_error",
+            format!(
+                "no transition '{}' from state '{}'",
+                transition_name, current_state
+            ),
+        ));
     }
-
-    println!("gate-check: {}", transition_name);
 
     let multi = candidates.len() > 1;
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let mut would_take: Option<String> = None;
+    let mut candidate_data: Vec<CandidateData> = Vec::new();
 
-    for (idx, transition) in candidates.iter().enumerate() {
-        if multi {
-            println!(
-                "candidate {}: {} \u{2192} {}",
-                idx + 1,
-                transition.from,
-                transition.to
-            );
-        }
-
+    for transition in candidates.iter() {
         if transition.gates.is_empty() {
-            if multi {
-                println!("  (no gates — always passes)");
-            } else {
-                println!("result: ready (no gates)");
-                return EXIT_SUCCESS;
-            }
             if would_take.is_none() {
                 would_take = Some(transition.to.clone());
+            }
+            candidate_data.push(CandidateData {
+                from: transition.from.clone(),
+                to: transition.to.clone(),
+                gates: vec![],
+                all_passed: true,
+            });
+            // Single candidate with no gates: short-circuit
+            if !multi {
+                let data = GateCheckData {
+                    transition: transition_name.to_string(),
+                    current_state: current_state.clone(),
+                    candidates: candidate_data,
+                    result: "ready (no gates)".to_string(),
+                    would_take,
+                };
+                return Box::new(CommandResult::ok("gate_check", data));
             }
             continue;
         }
@@ -270,49 +293,52 @@ pub fn cmd_gate_check(
         let results = evaluate_gates(&transition.gates, &ctx);
         let all_passed = results.iter().all(|r| r.passed);
 
-        for result in &results {
-            if result.passed {
-                println!("  \u{2713} {}", result.description);
-            } else if !result.evaluable {
-                println!(
-                    "  ? {}: {}",
-                    result.gate_type,
-                    result.reason.as_deref().unwrap_or("unevaluable"),
-                );
-            } else {
-                println!(
-                    "  \u{2717} {}: {} \u{2014} {}",
-                    result.gate_type,
-                    result.reason.as_deref().unwrap_or("failed"),
-                    result
-                        .intent
-                        .as_deref()
-                        .unwrap_or("gate condition must be met")
-                );
-            }
-        }
+        let gates: Vec<GateResultData> = results
+            .iter()
+            .map(|r| GateResultData {
+                passed: r.passed,
+                evaluable: r.evaluable,
+                gate_type: r.gate_type.clone(),
+                description: r.description.clone(),
+                reason: r.reason.clone(),
+                intent: r.intent.clone(),
+            })
+            .collect();
 
         if all_passed && would_take.is_none() {
             would_take = Some(transition.to.clone());
         }
+
+        candidate_data.push(CandidateData {
+            from: transition.from.clone(),
+            to: transition.to.clone(),
+            gates,
+            all_passed,
+        });
     }
 
-    if multi {
+    let result_str = if multi {
         if let Some(ref target) = would_take {
-            println!("result: would take \u{2192} {}", target);
+            format!("would take \u{2192} {}", target)
         } else {
-            println!("result: blocked");
+            "blocked".to_string()
         }
+    } else if would_take.is_some() {
+        "ready".to_string()
     } else {
-        // Single candidate path — backward-compatible output.
-        if would_take.is_some() {
-            println!("result: ready");
-        } else {
-            println!("result: blocked");
-        }
-    }
+        "blocked".to_string()
+    };
 
-    EXIT_SUCCESS // dry-run always returns 0
+    let data = GateCheckData {
+        transition: transition_name.to_string(),
+        current_state,
+        candidates: candidate_data,
+        result: result_str,
+        would_take,
+    };
+
+    Box::new(CommandResult::ok("gate_check", data))
+    // dry-run always returns 0
 }
 
 // ---------------------------------------------------------------------------

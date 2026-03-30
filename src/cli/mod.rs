@@ -11,6 +11,7 @@ pub mod ledger;
 pub mod log;
 pub mod manifest_cmd;
 pub mod mermaid;
+pub mod output;
 pub mod query;
 pub mod render;
 pub mod status;

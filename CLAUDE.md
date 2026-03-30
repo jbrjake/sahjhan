@@ -21,7 +21,7 @@ When you modify any source file in this repository, you MUST update documentatio
 
 ```
 cargo build                    # Build
-cargo test                     # Run all tests (347 tests)
+cargo test                     # Run all tests (377 tests)
 cargo test <test_name>         # Run one test
 cargo clippy -- -D warnings    # Lint
 cargo fmt                      # Format
@@ -369,3 +369,4 @@ cli/authed_event.rs [cmd-reseal]
 | `tests/mermaid_tests.rs` | Mermaid stateDiagram-v2 output, hyphen sanitization, gate labels, ASCII tree, cycle detection |
 | `tests/config_integrity_tests.rs` | Config sealing, tamper detection, reseal, backward compat |
 | `tests/render_filter_tests.rs` | Custom Tera filters (where_eq, unique_by) |
+| `tests/horizons1_tests.rs` | HORIZONS-1 mission protocol: status, transitions, gates, sets with --json |

@@ -1,0 +1,46 @@
+[events.telemetry_update]
+description = "Telemetry reading from probe subsystems"
+fields = [
+    { name = "subsystem", type = "string", values = ["eps", "adcs", "telecom", "propulsion", "payload"] },
+    { name = "status", type = "string", values = ["nominal", "degraded", "failed"] },
+    { name = "power_draw_watts", type = "string", pattern = "^[0-9]+(\\.[0-9]+)?$" },
+]
+
+[events.trajectory_update]
+description = "Navigation trajectory update"
+fields = [
+    { name = "delta_v_remaining_ms", type = "string", pattern = "^[0-9]+(\\.[0-9]+)?$" },
+    { name = "periapsis_km", type = "string", pattern = "^[0-9]+(\\.[0-9]+)?$" },
+    { name = "target", type = "string" },
+]
+
+[events.anomaly_report]
+description = "Anomaly detection and reporting"
+fields = [
+    { name = "subsystem", type = "string" },
+    { name = "severity", type = "string", values = ["warning", "critical", "emergency"] },
+    { name = "description", type = "string" },
+]
+
+[events.science_data_downlink]
+description = "Science data transmission to Earth"
+fields = [
+    { name = "instrument", type = "string" },
+    { name = "data_volume_mb", type = "string", pattern = "^[0-9]+(\\.[0-9]+)?$" },
+    { name = "snr_db", type = "string", pattern = "^[0-9]+(\\.[0-9]+)?$", optional = true },
+]
+
+[events.subsystem_checkout]
+description = "Individual subsystem verification during testing phase"
+fields = [
+    { name = "subsystem", type = "string", values = ["eps", "adcs", "telecom", "propulsion", "payload"] },
+    { name = "result", type = "string", values = ["pass", "fail"] },
+    { name = "notes", type = "string", optional = true },
+]
+
+[events.set_member_complete]
+description = "Subsystem verification complete"
+fields = [
+    { name = "set", type = "string" },
+    { name = "member", type = "string" },
+]

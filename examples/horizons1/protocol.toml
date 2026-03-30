@@ -1,0 +1,17 @@
+[protocol]
+name = "horizons1"
+version = "1.0.0"
+description = "HORIZONS-1 interplanetary probe mission control protocol"
+
+[paths]
+managed = ["output"]
+data_dir = "output/.sahjhan"
+render_dir = "output"
+
+[sets.subsystems]
+description = "Probe subsystem verification"
+values = ["eps", "adcs", "telecom", "propulsion", "payload"]
+
+[aliases]
+"launch" = "transition launch"
+"status-check" = "gate check clear_for_launch"

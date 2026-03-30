@@ -1,0 +1,34 @@
+[states.pre_launch]
+label = "Pre-Launch"
+initial = true
+
+[states.assembly_complete]
+label = "Assembly Complete"
+
+[states.testing]
+label = "Testing"
+params = [
+    { name = "current_subsystem", set = "subsystems", source = "current" },
+]
+
+[states.launch_ready]
+label = "Launch Ready"
+
+[states.launched]
+label = "Launched"
+
+[states.cruise]
+label = "Cruise"
+
+[states.encounter]
+label = "Encounter"
+
+[states.science_ops]
+label = "Science Operations"
+
+[states.mission_complete]
+label = "Mission Complete"
+terminal = true
+
+[states.anomaly]
+label = "Anomaly"

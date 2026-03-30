@@ -1,0 +1,98 @@
+[[transitions]]
+from = "pre_launch"
+to = "assembly_complete"
+command = "complete_assembly"
+gates = []
+
+[[transitions]]
+from = "assembly_complete"
+to = "testing"
+command = "begin_testing"
+gates = []
+
+[[transitions]]
+from = "testing"
+to = "launch_ready"
+command = "clear_for_launch"
+gates = [
+    { type = "set_covered", set = "subsystems", event = "set_member_complete", field = "member" },
+]
+
+[[transitions]]
+from = "launch_ready"
+to = "launched"
+command = "launch"
+gates = []
+
+[[transitions]]
+from = "launched"
+to = "cruise"
+command = "begin_cruise"
+gates = []
+
+[[transitions]]
+from = "cruise"
+to = "encounter"
+command = "begin_encounter"
+gates = []
+
+[[transitions]]
+from = "encounter"
+to = "science_ops"
+command = "begin_science"
+gates = []
+
+[[transitions]]
+from = "science_ops"
+to = "mission_complete"
+command = "complete_mission"
+gates = []
+
+# Anomaly transitions — reachable from every non-terminal state
+[[transitions]]
+from = "pre_launch"
+to = "anomaly"
+command = "declare_anomaly"
+gates = []
+
+[[transitions]]
+from = "assembly_complete"
+to = "anomaly"
+command = "declare_anomaly"
+gates = []
+
+[[transitions]]
+from = "testing"
+to = "anomaly"
+command = "declare_anomaly"
+gates = []
+
+[[transitions]]
+from = "launch_ready"
+to = "anomaly"
+command = "declare_anomaly"
+gates = []
+
+[[transitions]]
+from = "launched"
+to = "anomaly"
+command = "declare_anomaly"
+gates = []
+
+[[transitions]]
+from = "cruise"
+to = "anomaly"
+command = "declare_anomaly"
+gates = []
+
+[[transitions]]
+from = "encounter"
+to = "anomaly"
+command = "declare_anomaly"
+gates = []
+
+[[transitions]]
+from = "science_ops"
+to = "anomaly"
+command = "declare_anomaly"
+gates = []

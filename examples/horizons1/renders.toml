@@ -1,0 +1,3 @@
+# Renderer plugins arrive in Phase 5.
+# For now, no built-in renders are configured.
+renders = []

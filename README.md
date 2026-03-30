@@ -197,6 +197,39 @@ or 'sahjhan init' to start a new ledger.
 
 Config changes do happen legitimately. You add a state, tune a gate, fix a typo. `sahjhan reseal` updates the seal — but it requires an HMAC proof, same as restricted events. Without the session key, the agent can rewrite transitions.toml all day long. It just can't use it. The reseal event goes into the ledger, so you can see exactly when the rules changed and decide whether that was you or the agent getting creative.
 
+### Gate attestation
+
+So the ledger can't be edited. Restricted events need proof. Config is sealed. What about the gates themselves?
+
+When a `command_succeeds` gate runs `python -m pytest tests/`, Sahjhan executes the command, checks the exit code, and records a `state_transition` event: "moved from implementing to verifying." That's it. The transition happened. But the ledger says nothing about *why* it was allowed. What command ran? What did it output? When? The evidence exists for about three hundred milliseconds inside a Rust struct, then gets thrown away.
+
+Which means: you can see that the agent transitioned, but you can't see that the tests actually passed. You're trusting the gate's boolean. That's better than trusting the agent, but it's still a gap you could drive a fabricated quiz result through.
+
+Gate attestation closes it. When a `command_succeeds`, `command_output`, or `snapshot_compare` gate passes during a transition, Sahjhan now emits a `gate_attestation` event immediately after the `state_transition`:
+
+```bash
+sahjhan log tail 2
+# {"event_type": "state_transition", "fields": {"from": "implementing", "to": "verifying", "command": "submit"}, ...}
+# {"event_type": "gate_attestation", "fields": {"gate_type": "command_succeeds", "command": "python -m pytest tests/", "exit_code": "0", "stdout_hash": "a3c2e88d1f2b...", "wall_time_ms": "4523", "executed_at": "2026-03-30T14:23:07.123Z", "transition_command": "submit"}, ...}
+```
+
+The `stdout_hash` is SHA-256 of the raw command output. The agent can't fabricate it because Sahjhan runs the command and computes the hash — the agent never touches either. For deterministic commands (most test suites, linters, build tools), replaying the command should reproduce the hash. That's an independently verifiable claim sitting in a hash-chained ledger.
+
+Every command and snapshot gate attests by default. If a gate runs something trivial that isn't worth recording (a warmup check, an `echo`), suppress it:
+
+```toml
+{ type = "command_succeeds", cmd = "echo warmup", attest = false }
+```
+
+The attestation event is `restricted` — mark it in your `events.toml` and the agent can't forge one via `sahjhan event record`. It'll get the same rejection as a fabricated quiz result:
+
+```bash
+sahjhan event gate_attestation --field gate_type=command_succeeds --field stdout_hash=abc123 ...
+# error: event type 'gate_attestation' is restricted. Use 'sahjhan authed-event' with a valid proof.
+```
+
+The ledger now has two tiers of evidence: machine-attested (the gate ran, here's the hash) and agent-reported (I reviewed this, trust me). Different confidence levels, explicitly marked. An auditor can tell which is which. The agent can't blur the line.
+
 ## What a protocol looks like
 
 A protocol is a directory of TOML files. Here's one that enforces TDD, because apparently that's something we need to enforce now.

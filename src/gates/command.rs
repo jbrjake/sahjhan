@@ -10,9 +10,12 @@ use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+use chrono::Utc;
+use sha2::{Digest, Sha256};
+
 use crate::config::GateConfig;
 
-use super::evaluator::{GateContext, GateResult};
+use super::evaluator::{GateAttestation, GateContext, GateResult};
 use super::template::{find_unresolved_vars, resolve_template};
 use super::types::{build_template_vars, validate_template_fields};
 
@@ -83,9 +86,32 @@ pub(super) fn eval_command_succeeds(gate: &GateConfig, ctx: &GateContext) -> Gat
         };
     }
 
-    match run_shell_with_timeout(&cmd, &ctx.working_dir, timeout_secs) {
-        Ok(CommandOutcome::Completed(status)) => {
+    let should_attest = gate
+        .params
+        .get("attest")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+
+    let started_at = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let start = Instant::now();
+
+    match run_shell_output_with_timeout(&cmd, &ctx.working_dir, timeout_secs) {
+        Ok(CommandOutputOutcome::Completed(stdout, status)) => {
+            let wall_time_ms = start.elapsed().as_millis() as u64;
             let passed = status.success();
+            let attestation = if passed && should_attest {
+                let stdout_hash = format!("{:x}", Sha256::digest(stdout.as_bytes()));
+                Some(GateAttestation {
+                    gate_type: "command_succeeds".to_string(),
+                    command: cmd.clone(),
+                    exit_code: status.code().unwrap_or(-1),
+                    stdout_hash,
+                    wall_time_ms,
+                    executed_at: started_at,
+                })
+            } else {
+                None
+            };
             GateResult {
                 passed,
                 evaluable: true,
@@ -101,10 +127,10 @@ pub(super) fn eval_command_succeeds(gate: &GateConfig, ctx: &GateContext) -> Gat
                     ))
                 },
                 intent: None,
-                attestation: None,
+                attestation,
             }
         }
-        Ok(CommandOutcome::TimedOut) => GateResult {
+        Ok(CommandOutputOutcome::TimedOut) => GateResult {
             passed: false,
             evaluable: true,
             gate_type: "command_succeeds".to_string(),
@@ -182,10 +208,33 @@ pub(super) fn eval_command_output(gate: &GateConfig, ctx: &GateContext) -> GateR
         };
     }
 
+    let should_attest = gate
+        .params
+        .get("attest")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+
+    let started_at = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let start = Instant::now();
+
     match run_shell_output_with_timeout(&cmd, &ctx.working_dir, timeout_secs) {
-        Ok(CommandOutputOutcome::Completed(stdout, _status)) => {
+        Ok(CommandOutputOutcome::Completed(stdout, status)) => {
+            let wall_time_ms = start.elapsed().as_millis() as u64;
             let trimmed = stdout.trim().to_string();
             let passed = trimmed == expect;
+            let attestation = if passed && should_attest {
+                let stdout_hash = format!("{:x}", Sha256::digest(stdout.as_bytes()));
+                Some(GateAttestation {
+                    gate_type: "command_output".to_string(),
+                    command: cmd.clone(),
+                    exit_code: status.code().unwrap_or(-1),
+                    stdout_hash,
+                    wall_time_ms,
+                    executed_at: started_at,
+                })
+            } else {
+                None
+            };
             GateResult {
                 passed,
                 evaluable: true,
@@ -197,7 +246,7 @@ pub(super) fn eval_command_output(gate: &GateConfig, ctx: &GateContext) -> GateR
                     Some(format!("expected '{}', got '{}'", expect, trimmed))
                 },
                 intent: None,
-                attestation: None,
+                attestation,
             }
         }
         Ok(CommandOutputOutcome::TimedOut) => GateResult {

@@ -197,6 +197,40 @@ or 'sahjhan init' to start a new ledger.
 
 Config changes do happen legitimately. You add a state, tune a gate, fix a typo. `sahjhan reseal` updates the seal — but it requires an HMAC proof, same as restricted events. Without the session key, the agent can rewrite transitions.toml all day long. It just can't use it. The reseal event goes into the ledger, so you can see exactly when the rules changed and decide whether that was you or the agent getting creative.
 
+To reseal after a legitimate config change, compute the proof over the literal string `config_reseal` using the session key, then pass it:
+
+```bash
+# Compute the HMAC proof
+PROOF=$(echo -n "config_reseal" | openssl dgst -sha256 -hmac "$(cat .sahjhan/session.key)" -hex | awk '{print $NF}')
+
+# Reseal
+sahjhan reseal --proof "$PROOF"
+```
+
+Or from Python, if you're calling it from a hook:
+
+```python
+import hmac, hashlib, subprocess
+
+key = open(".sahjhan/session.key", "rb").read()
+proof = hmac.new(key, b"config_reseal", hashlib.sha256).hexdigest()
+subprocess.run(["sahjhan", "reseal", "--proof", proof])
+```
+
+The payload is just the event type — no fields, no null-byte separators. Unlike `authed-event`, there's nothing to sort.
+
+If you're using a named ledger with its own session key, point at that key instead:
+
+```bash
+# Check which key path Sahjhan will use
+sahjhan --ledger audit config session-key-path
+# /path/to/.sahjhan/ledgers/audit/session.key
+
+# Compute proof with the per-ledger key
+PROOF=$(echo -n "config_reseal" | openssl dgst -sha256 -hmac "$(cat .sahjhan/ledgers/audit/session.key)" -hex | awk '{print $NF}')
+sahjhan --ledger audit reseal --proof "$PROOF"
+```
+
 ### Gate attestation
 
 So the ledger can't be edited. Restricted events need proof. Config is sealed. What about the gates themselves?

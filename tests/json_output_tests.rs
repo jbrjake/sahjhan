@@ -283,3 +283,198 @@ fn test_event_only_status_data_json() {
     assert_eq!(v["data"]["event_count"], 42);
     assert_eq!(v["data"]["chain_valid"], true);
 }
+
+// ---------------------------------------------------------------------------
+// CLI integration tests — require a real binary
+// ---------------------------------------------------------------------------
+
+use assert_cmd::Command;
+use tempfile::tempdir;
+
+fn setup_minimal() -> tempfile::TempDir {
+    let dir = tempdir().unwrap();
+    let config_dir = dir.path().join("enforcement");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    for file in &[
+        "protocol.toml",
+        "states.toml",
+        "transitions.toml",
+        "events.toml",
+        "renders.toml",
+    ] {
+        std::fs::copy(
+            format!("examples/minimal/{}", file),
+            config_dir.join(file),
+        )
+        .unwrap();
+    }
+    let templates_dir = config_dir.join("templates");
+    std::fs::create_dir_all(&templates_dir).unwrap();
+    for file in &["status.md.tera", "history.md.tera"] {
+        std::fs::copy(
+            format!("examples/minimal/templates/{}", file),
+            templates_dir.join(file),
+        )
+        .unwrap();
+    }
+    std::fs::create_dir_all(dir.path().join("output")).unwrap();
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "init"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+    dir
+}
+
+#[test]
+fn test_cli_status_json_envelope() {
+    let dir = setup_minimal();
+    let output = Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "--json", "status"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let v: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(v["schema_version"], 1);
+    assert_eq!(v["ok"], true);
+    assert_eq!(v["command"], "status");
+    assert_eq!(v["data"]["state"], "idle");
+    assert!(v["data"]["event_count"].as_u64().unwrap() >= 1);
+    assert_eq!(v["data"]["chain_valid"], true);
+}
+
+#[test]
+fn test_cli_status_text_unchanged() {
+    let dir = setup_minimal();
+    let output = Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "status"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("state: idle"));
+    assert!(stdout.contains("chain valid"));
+}
+
+#[test]
+fn test_cli_set_status_json() {
+    let dir = setup_minimal();
+    let output = Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "--json", "set", "status", "check"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let v: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(v["data"]["name"], "check");
+    assert_eq!(v["data"]["total"], 2);
+    assert_eq!(v["data"]["completed"], 0);
+}
+
+#[test]
+fn test_cli_log_dump_json() {
+    let dir = setup_minimal();
+    let output = Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "--json", "log", "dump"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let v: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(v["command"], "log_dump");
+    let entries = v["data"]["entries"].as_array().unwrap();
+    assert!(!entries.is_empty());
+    assert_eq!(entries[0]["seq"], 0);
+    assert!(entries[0]["hash"].as_str().unwrap().len() == 64);
+}
+
+#[test]
+fn test_cli_log_tail_json() {
+    let dir = setup_minimal();
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "transition", "begin"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+    let output = Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "--json", "log", "tail", "1"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let v: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(v["command"], "log_tail");
+    let entries = v["data"]["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["event_type"], "state_transition");
+}
+
+#[test]
+fn test_cli_gate_check_json_ready() {
+    let dir = setup_minimal();
+    let output = Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "--json", "gate", "check", "begin"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let v: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(v["command"], "gate_check");
+    assert_eq!(v["data"]["transition"], "begin");
+    assert_eq!(v["data"]["current_state"], "idle");
+    assert_eq!(v["data"]["result"], "ready (no gates)");
+}
+
+#[test]
+fn test_cli_gate_check_json_blocked() {
+    let dir = setup_minimal();
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "transition", "begin"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+    let output = Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "--json",
+            "gate",
+            "check",
+            "complete",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let v: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(v["data"]["result"], "blocked");
+    let candidates = v["data"]["candidates"].as_array().unwrap();
+    assert_eq!(candidates[0]["all_passed"], false);
+}
+
+#[test]
+fn test_cli_manifest_verify_json_clean() {
+    let dir = setup_minimal();
+    let output = Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "--json", "manifest", "verify"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let v: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(v["command"], "manifest_verify");
+    assert_eq!(v["data"]["clean"], true);
+}

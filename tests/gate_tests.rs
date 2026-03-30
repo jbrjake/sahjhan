@@ -2720,3 +2720,70 @@ fn test_snapshot_compare_produces_attestation() {
     assert_eq!(att.exit_code, 0);
     assert!(!att.stdout_hash.is_empty());
 }
+
+// ---------------------------------------------------------------------------
+// attest=false opt-out + non-command gates produce no attestation
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_attest_false_suppresses_attestation() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let gate = make_gate(
+        "command_succeeds",
+        vec![
+            ("cmd", toml::Value::String("true".to_string())),
+            ("attest", toml::Value::Boolean(false)),
+        ],
+    );
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(result.passed);
+    assert!(
+        result.attestation.is_none(),
+        "attest=false should suppress attestation"
+    );
+}
+
+#[test]
+fn test_non_command_gates_have_no_attestation() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let test_file = dir.path().join("exists.txt");
+    std::fs::write(&test_file, "content").unwrap();
+
+    let gate = make_gate(
+        "file_exists",
+        vec![(
+            "path",
+            toml::Value::String(test_file.to_str().unwrap().to_string()),
+        )],
+    );
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(result.passed);
+    assert!(
+        result.attestation.is_none(),
+        "file_exists should never produce attestation"
+    );
+}

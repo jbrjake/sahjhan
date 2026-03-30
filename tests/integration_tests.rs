@@ -2249,3 +2249,397 @@ gates = [
         .stdout(predicate::str::contains("unevaluable"))
         .stdout(predicate::str::contains("my_arg"));
 }
+
+/// Create a temp directory with a protocol that includes command gates, and run `init`.
+fn setup_attestation_dir() -> tempfile::TempDir {
+    let dir = tempdir().unwrap();
+    let config_dir = dir.path().join("enforcement");
+    std::fs::create_dir_all(&config_dir).unwrap();
+
+    std::fs::write(
+        config_dir.join("protocol.toml"),
+        r#"
+[protocol]
+name = "attest-test"
+version = "1.0.0"
+description = "Attestation test protocol"
+
+[paths]
+managed = ["output"]
+data_dir = "output/.sahjhan"
+render_dir = "output"
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        config_dir.join("states.toml"),
+        r#"
+[states.idle]
+label = "Idle"
+initial = true
+
+[states.done]
+label = "Done"
+terminal = true
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        config_dir.join("transitions.toml"),
+        r#"
+[[transitions]]
+from = "idle"
+to = "done"
+command = "finish"
+gates = [
+    { type = "command_succeeds", cmd = "echo attested" },
+]
+"#,
+    )
+    .unwrap();
+
+    std::fs::create_dir_all(dir.path().join("output")).unwrap();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "init"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    dir
+}
+
+#[test]
+fn test_transition_emits_gate_attestation_events() {
+    let dir = setup_attestation_dir();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "transition", "finish"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Dump the ledger and check for gate_attestation event
+    let output = Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "log", "dump"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        stdout.contains("gate_attestation"),
+        "ledger should contain gate_attestation event, got:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("stdout_hash"),
+        "gate_attestation should include stdout_hash field"
+    );
+    assert!(
+        stdout.contains("command_succeeds"),
+        "gate_attestation should reference gate_type command_succeeds"
+    );
+
+    // Verify the hash chain is still valid
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "log", "verify"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_attest_false_suppresses_attestation_event() {
+    let dir = tempdir().unwrap();
+    let config_dir = dir.path().join("enforcement");
+    std::fs::create_dir_all(&config_dir).unwrap();
+
+    std::fs::write(
+        config_dir.join("protocol.toml"),
+        r#"
+[protocol]
+name = "no-attest-test"
+version = "1.0.0"
+description = "Attestation opt-out test"
+
+[paths]
+managed = ["output"]
+data_dir = "output/.sahjhan"
+render_dir = "output"
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        config_dir.join("states.toml"),
+        r#"
+[states.idle]
+label = "Idle"
+initial = true
+
+[states.done]
+label = "Done"
+terminal = true
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        config_dir.join("transitions.toml"),
+        r#"
+[[transitions]]
+from = "idle"
+to = "done"
+command = "finish"
+gates = [
+    { type = "command_succeeds", cmd = "echo suppressed", attest = false },
+]
+"#,
+    )
+    .unwrap();
+
+    std::fs::create_dir_all(dir.path().join("output")).unwrap();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "init"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "transition", "finish"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    let output = Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "log", "dump"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        !stdout.contains("gate_attestation"),
+        "ledger should NOT contain gate_attestation when attest=false, got:\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn test_gate_attestation_restricted_blocks_agent() {
+    let dir = tempdir().unwrap();
+    let config_dir = dir.path().join("enforcement");
+    std::fs::create_dir_all(&config_dir).unwrap();
+
+    std::fs::write(
+        config_dir.join("protocol.toml"),
+        r#"
+[protocol]
+name = "restricted-test"
+version = "1.0.0"
+description = "Restricted attestation test"
+
+[paths]
+managed = ["output"]
+data_dir = "output/.sahjhan"
+render_dir = "output"
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        config_dir.join("states.toml"),
+        r#"
+[states.idle]
+label = "Idle"
+initial = true
+
+[states.done]
+label = "Done"
+terminal = true
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        config_dir.join("transitions.toml"),
+        r#"
+[[transitions]]
+from = "idle"
+to = "done"
+command = "finish"
+gates = []
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        config_dir.join("events.toml"),
+        r#"
+[events.gate_attestation]
+description = "Machine-attested gate evidence"
+restricted = true
+fields = [
+    { name = "gate_type", type = "string" },
+    { name = "command", type = "string" },
+    { name = "exit_code", type = "string" },
+    { name = "stdout_hash", type = "string" },
+    { name = "wall_time_ms", type = "string" },
+    { name = "executed_at", type = "string" },
+    { name = "transition_command", type = "string" },
+]
+"#,
+    )
+    .unwrap();
+
+    std::fs::create_dir_all(dir.path().join("output")).unwrap();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "init"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Agent tries to forge a gate_attestation via `event record`
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "event",
+            "gate_attestation",
+            "--field",
+            "gate_type=command_succeeds",
+            "--field",
+            "command=true",
+            "--field",
+            "exit_code=0",
+            "--field",
+            "stdout_hash=abc123",
+            "--field",
+            "wall_time_ms=100",
+            "--field",
+            "executed_at=2026-03-30T00:00:00Z",
+            "--field",
+            "transition_command=finish",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("restricted"));
+}
+
+#[test]
+fn test_branching_only_winning_candidate_attested() {
+    let dir = tempdir().unwrap();
+    let config_dir = dir.path().join("enforcement");
+    std::fs::create_dir_all(&config_dir).unwrap();
+
+    std::fs::write(
+        config_dir.join("protocol.toml"),
+        r#"
+[protocol]
+name = "branch-attest-test"
+version = "1.0.0"
+description = "Branching attestation test"
+
+[paths]
+managed = ["output"]
+data_dir = "output/.sahjhan"
+render_dir = "output"
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        config_dir.join("states.toml"),
+        r#"
+[states.idle]
+label = "Idle"
+initial = true
+
+[states.passed]
+label = "Passed"
+terminal = true
+
+[states.failed]
+label = "Failed"
+terminal = true
+"#,
+    )
+    .unwrap();
+
+    // First candidate has a failing gate, second is fallback
+    std::fs::write(
+        config_dir.join("transitions.toml"),
+        r#"
+[[transitions]]
+from = "idle"
+to = "passed"
+command = "check"
+gates = [
+    { type = "command_succeeds", cmd = "false" },
+]
+
+[[transitions]]
+from = "idle"
+to = "failed"
+command = "check"
+gates = [
+    { type = "command_succeeds", cmd = "echo fallback" },
+]
+"#,
+    )
+    .unwrap();
+
+    std::fs::create_dir_all(dir.path().join("output")).unwrap();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "init"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "transition", "check"])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("failed"));
+
+    // Check ledger: should have exactly one gate_attestation (from fallback candidate)
+    let output = Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "log", "dump"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    let attestation_count = stdout.matches("gate_attestation").count();
+    assert_eq!(
+        attestation_count, 1,
+        "should have exactly 1 gate_attestation (from winning candidate only), found {}",
+        attestation_count
+    );
+
+    // The attestation should reference the fallback command, not the failing one
+    assert!(
+        stdout.contains("echo fallback"),
+        "attestation should be from the winning candidate's gate"
+    );
+}

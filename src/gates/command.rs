@@ -60,6 +60,7 @@ pub(super) fn eval_command_succeeds(gate: &GateConfig, ctx: &GateContext) -> Gat
             description: format!("command succeeds: {}", raw_cmd),
             reason: Some(reason),
             intent: None,
+            attestation: None,
         };
     }
 
@@ -78,6 +79,7 @@ pub(super) fn eval_command_succeeds(gate: &GateConfig, ctx: &GateContext) -> Gat
                 unresolved.join(", ")
             )),
             intent: None,
+            attestation: None,
         };
     }
 
@@ -99,6 +101,7 @@ pub(super) fn eval_command_succeeds(gate: &GateConfig, ctx: &GateContext) -> Gat
                     ))
                 },
                 intent: None,
+                attestation: None,
             }
         }
         Ok(CommandOutcome::TimedOut) => GateResult {
@@ -111,6 +114,7 @@ pub(super) fn eval_command_succeeds(gate: &GateConfig, ctx: &GateContext) -> Gat
                 cmd, timeout_secs
             )),
             intent: None,
+            attestation: None,
         },
         Err(e) => GateResult {
             passed: false,
@@ -119,6 +123,7 @@ pub(super) fn eval_command_succeeds(gate: &GateConfig, ctx: &GateContext) -> Gat
             description: format!("command succeeds: {}", cmd),
             reason: Some(format!("failed to run command '{}': {}", cmd, e)),
             intent: None,
+            attestation: None,
         },
     }
 }
@@ -154,6 +159,7 @@ pub(super) fn eval_command_output(gate: &GateConfig, ctx: &GateContext) -> GateR
             description: format!("command output matches '{}'", expect),
             reason: Some(reason),
             intent: None,
+            attestation: None,
         };
     }
 
@@ -172,6 +178,7 @@ pub(super) fn eval_command_output(gate: &GateConfig, ctx: &GateContext) -> GateR
                 unresolved.join(", ")
             )),
             intent: None,
+            attestation: None,
         };
     }
 
@@ -190,6 +197,7 @@ pub(super) fn eval_command_output(gate: &GateConfig, ctx: &GateContext) -> GateR
                     Some(format!("expected '{}', got '{}'", expect, trimmed))
                 },
                 intent: None,
+                attestation: None,
             }
         }
         Ok(CommandOutputOutcome::TimedOut) => GateResult {
@@ -202,6 +210,7 @@ pub(super) fn eval_command_output(gate: &GateConfig, ctx: &GateContext) -> GateR
                 cmd, timeout_secs
             )),
             intent: None,
+            attestation: None,
         },
         Err(e) => GateResult {
             passed: false,
@@ -210,6 +219,7 @@ pub(super) fn eval_command_output(gate: &GateConfig, ctx: &GateContext) -> GateR
             description: format!("command output matches '{}'", expect),
             reason: Some(format!("failed to run command '{}': {}", cmd, e)),
             intent: None,
+            attestation: None,
         },
     }
 }

@@ -21,7 +21,7 @@ When you modify any source file in this repository, you MUST update documentatio
 
 ```
 cargo build                    # Build
-cargo test                     # Run all tests (282 tests)
+cargo test                     # Run all tests (284 tests)
 cargo test <test_name>         # Run one test
 cargo clippy -- -D warnings    # Lint
 cargo fmt                      # Format
@@ -77,7 +77,8 @@ Sahjhan is a protocol enforcement engine. It has:
 | Field validation | `gates/types.rs` | `[validate-template-fields]` | Validates var values against event field patterns |
 | Entry filter | `gates/types.rs` | `[entry-matches-filter]` | Checks ledger entry against k/v filter |
 | Gate context | `gates/evaluator.rs` | `GateContext` | All inputs needed to evaluate a gate |
-| Gate result | `gates/evaluator.rs` | `GateResult` | Outcome: passed, evaluable, gate_type, description, reason, intent |
+| Gate attestation | `gates/evaluator.rs` | `GateAttestation` | Evidence from an external command execution (gate_type, command, exit_code, stdout_hash, wall_time_ms, executed_at) |
+| Gate result | `gates/evaluator.rs` | `GateResult` | Outcome: passed, evaluable, gate_type, description, reason, intent, attestation |
 | Default intent | `gates/evaluator.rs` | `default_intent` | Returns default intent string for each gate type |
 | evaluate_gate | `gates/evaluator.rs` | `[evaluate-gate]` | Evaluate single gate |
 | evaluate_gates | `gates/evaluator.rs` | `[evaluate-gates]` | Evaluate all gates, returns all results |

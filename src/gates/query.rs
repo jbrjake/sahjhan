@@ -21,6 +21,7 @@ pub(super) fn eval_query_gate(gate: &GateConfig, ctx: &GateContext) -> GateResul
                 description: "SQL query against ledger".to_string(),
                 reason: Some("gate missing required 'sql' param".to_string()),
                 intent: None,
+                attestation: None,
             }
         }
     };
@@ -34,6 +35,7 @@ pub(super) fn eval_query_gate(gate: &GateConfig, ctx: &GateContext) -> GateResul
             description: format!("SQL: {}", raw_sql),
             reason: Some(reason),
             intent: None,
+            attestation: None,
         };
     }
 
@@ -53,6 +55,7 @@ pub(super) fn eval_query_gate(gate: &GateConfig, ctx: &GateContext) -> GateResul
                 unresolved.join(", ")
             )),
             intent: None,
+            attestation: None,
         };
     }
 
@@ -80,6 +83,7 @@ pub(super) fn eval_query_gate(gate: &GateConfig, ctx: &GateContext) -> GateResul
                 description,
                 reason: Some(format!("failed to build tokio runtime: {}", e)),
                 intent: None,
+                attestation: None,
             }
         }
     };
@@ -102,6 +106,7 @@ pub(super) fn eval_query_gate(gate: &GateConfig, ctx: &GateContext) -> GateResul
                 description,
                 reason: Some(format!("query execution failed: {}", e)),
                 intent: None,
+                attestation: None,
             }
         }
     };
@@ -126,5 +131,6 @@ pub(super) fn eval_query_gate(gate: &GateConfig, ctx: &GateContext) -> GateResul
             format!("query returned '{}', expected '{}'", actual, expect)
         }),
         intent: None,
+        attestation: None,
     }
 }

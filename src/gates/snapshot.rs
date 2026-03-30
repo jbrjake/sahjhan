@@ -63,6 +63,7 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
                 unresolved.join(", ")
             )),
             intent: None,
+            attestation: None,
         };
     }
 
@@ -78,6 +79,7 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
                     description,
                     reason: Some(reason),
                     intent: None,
+                    attestation: None,
                 }
             }
         }
@@ -99,6 +101,7 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
                     cmd, timeout_secs
                 )),
                 intent: None,
+                attestation: None,
             }
         }
         Err(e) => {
@@ -109,6 +112,7 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
                 description,
                 reason: Some(format!("command failed: {}", e)),
                 intent: None,
+                attestation: None,
             }
         }
     };
@@ -124,6 +128,7 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
                 description,
                 reason: Some(format!("stdout is not valid JSON: {}", e)),
                 intent: None,
+                attestation: None,
             }
         }
     };
@@ -138,6 +143,7 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
                 description,
                 reason: Some(format!("JSON field '{}' not found in output", extract)),
                 intent: None,
+                attestation: None,
             }
         }
     };
@@ -167,6 +173,7 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
                     ))
                 },
                 intent: None,
+                attestation: None,
             };
         }
     };
@@ -181,6 +188,7 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
                 description,
                 reason: Some(format!("reference '{}' is not a number: {}", reference, e)),
                 intent: None,
+                attestation: None,
             }
         }
     };
@@ -197,6 +205,7 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
                 description,
                 reason: Some(format!("unknown compare operator '{}'", other)),
                 intent: None,
+                attestation: None,
             }
         }
     };
@@ -215,6 +224,7 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
             ))
         },
         intent: None,
+        attestation: None,
     }
 }
 

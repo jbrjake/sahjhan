@@ -1,10 +1,11 @@
 // src/gates/evaluator.rs
 //
-// GateContext, GateResult, and the top-level evaluate_gate / evaluate_gates functions.
+// GateContext, GateResult, GateAttestation, and the top-level evaluate_gate / evaluate_gates functions.
 //
 // ## Index
 // - GateContext              — all inputs needed to evaluate a gate (ledger, config, state_params, etc.)
-// - GateResult               — outcome: passed, evaluable, gate_type, description, reason, intent
+// - GateAttestation          — evidence produced by a gate that executes an external command
+// - GateResult               — outcome: passed, evaluable, gate_type, description, reason, intent, attestation
 // - default_intent           — returns default intent string for a given gate type
 // - [evaluate-gate]          evaluate_gate()   — evaluate a single gate
 // - [evaluate-gates]         evaluate_gates()  — evaluate all gates, return all results
@@ -39,6 +40,26 @@ pub struct GateContext<'a> {
     pub event_fields: Option<&'a HashMap<String, String>>,
 }
 
+/// Evidence produced by a gate that executes an external command.
+///
+/// Populated by command_succeeds, command_output, and snapshot_compare gates.
+/// Carried on GateResult and used by StateMachine::transition() to emit
+/// gate_attestation events.
+pub struct GateAttestation {
+    /// Gate type that produced this attestation (e.g. "command_succeeds").
+    pub gate_type: String,
+    /// Resolved command string that was executed.
+    pub command: String,
+    /// Numeric exit code of the command.
+    pub exit_code: i32,
+    /// SHA-256 hex digest of raw stdout.
+    pub stdout_hash: String,
+    /// Execution wall time in milliseconds.
+    pub wall_time_ms: u64,
+    /// RFC3339 timestamp of when execution started.
+    pub executed_at: String,
+}
+
 /// The outcome of evaluating a single gate.
 pub struct GateResult {
     /// Whether the gate condition was satisfied.
@@ -55,6 +76,9 @@ pub struct GateResult {
     /// Why this gate exists — taken from `GateConfig.intent` if set,
     /// otherwise filled in from `default_intent` by the dispatch wrapper.
     pub intent: Option<String>,
+    /// Evidence from an external command execution, if applicable.
+    /// Populated by command_succeeds, command_output, and snapshot_compare gates.
+    pub attestation: Option<GateAttestation>,
 }
 
 /// Return the default intent string for a given gate type.

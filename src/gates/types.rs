@@ -64,6 +64,7 @@ pub fn eval(gate: &GateConfig, ctx: &GateContext) -> GateResult {
                 description: format!("{} of {} alternatives passed", passed_count, total),
                 reason,
                 intent: None,
+                attestation: None,
             }
         }
 
@@ -89,6 +90,7 @@ pub fn eval(gate: &GateConfig, ctx: &GateContext) -> GateResult {
                 description: format!("{} of {} conditions passed", passed_count, total),
                 reason,
                 intent: None,
+                attestation: None,
             }
         }
 
@@ -101,6 +103,7 @@ pub fn eval(gate: &GateConfig, ctx: &GateContext) -> GateResult {
                     description: "not gate requires exactly one child gate".to_string(),
                     reason: Some(format!("expected 1 child gate, found {}", gate.gates.len())),
                     intent: None,
+                    attestation: None,
                 };
             }
             let child = eval(&gate.gates[0], ctx);
@@ -118,6 +121,7 @@ pub fn eval(gate: &GateConfig, ctx: &GateContext) -> GateResult {
                     None
                 },
                 intent: None,
+                attestation: None,
             }
         }
 
@@ -153,6 +157,7 @@ pub fn eval(gate: &GateConfig, ctx: &GateContext) -> GateResult {
                 description: format!("{} of {} passed ({} required)", passed_count, total, k),
                 reason,
                 intent: None,
+                attestation: None,
             }
         }
 
@@ -163,6 +168,7 @@ pub fn eval(gate: &GateConfig, ctx: &GateContext) -> GateResult {
             description: format!("unknown gate type '{}'", other),
             reason: Some(format!("gate type '{}' is not implemented", other)),
             intent: None,
+            attestation: None,
         },
     };
     result.intent = Some(

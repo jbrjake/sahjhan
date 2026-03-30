@@ -35,6 +35,7 @@ pub(super) fn eval_file_exists(gate: &GateConfig, ctx: &GateContext) -> GateResu
                 unresolved.join(", ")
             )),
             intent: None,
+            attestation: None,
         };
     }
 
@@ -51,6 +52,7 @@ pub(super) fn eval_file_exists(gate: &GateConfig, ctx: &GateContext) -> GateResu
             Some(format!("file '{}' does not exist", resolved))
         },
         intent: None,
+        attestation: None,
     }
 }
 
@@ -83,6 +85,7 @@ pub(super) fn eval_files_exist(gate: &GateConfig, ctx: &GateContext) -> GateResu
                 unresolved_in_paths.join(", ")
             )),
             intent: None,
+            attestation: None,
         };
     }
 
@@ -105,5 +108,6 @@ pub(super) fn eval_files_exist(gate: &GateConfig, ctx: &GateContext) -> GateResu
             Some(format!("missing files: {}", missing.join(", ")))
         },
         intent: None,
+        attestation: None,
     }
 }

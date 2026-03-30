@@ -67,6 +67,7 @@ pub(super) fn eval_ledger_has_event(gate: &GateConfig, ctx: &GateContext) -> Gat
             ))
         },
         intent: None,
+        attestation: None,
     }
 }
 
@@ -116,6 +117,7 @@ pub(super) fn eval_ledger_has_event_since(gate: &GateConfig, ctx: &GateContext) 
             ))
         },
         intent: None,
+        attestation: None,
     }
 }
 
@@ -161,6 +163,7 @@ pub(super) fn eval_ledger_lacks_event(gate: &GateConfig, ctx: &GateContext) -> G
             ))
         },
         intent: None,
+        attestation: None,
     }
 }
 
@@ -176,6 +179,7 @@ pub(super) fn eval_set_covered(gate: &GateConfig, ctx: &GateContext) -> GateResu
                 description: "set is fully covered".to_string(),
                 reason: Some("gate missing 'set' param".to_string()),
                 intent: None,
+                attestation: None,
             }
         }
     };
@@ -202,6 +206,7 @@ pub(super) fn eval_set_covered(gate: &GateConfig, ctx: &GateContext) -> GateResu
                 description: format!("set '{}' is fully covered", set_name),
                 reason: Some(format!("unknown set '{}'", set_name)),
                 intent: None,
+                attestation: None,
             }
         }
     };
@@ -246,6 +251,7 @@ pub(super) fn eval_set_covered(gate: &GateConfig, ctx: &GateContext) -> GateResu
             ))
         },
         intent: None,
+        attestation: None,
     }
 }
 
@@ -286,6 +292,7 @@ pub(super) fn eval_min_elapsed(gate: &GateConfig, ctx: &GateContext) -> GateResu
                 description,
                 reason: None,
                 intent: None,
+                attestation: None,
             }
         }
         Some(ts_ms) => {
@@ -312,6 +319,7 @@ pub(super) fn eval_min_elapsed(gate: &GateConfig, ctx: &GateContext) -> GateResu
                     ))
                 },
                 intent: None,
+                attestation: None,
             }
         }
     }
@@ -338,6 +346,7 @@ pub(super) fn eval_no_violations(_gate: &GateConfig, ctx: &GateContext) -> GateR
             ))
         },
         intent: None,
+        attestation: None,
     }
 }
 
@@ -364,6 +373,7 @@ pub(super) fn eval_field_not_empty(gate: &GateConfig, ctx: &GateContext) -> Gate
             description,
             reason: Some(format!("field '{}' not present in event payload", field)),
             intent: None,
+            attestation: None,
         },
         Some("") => GateResult {
             passed: false,
@@ -372,6 +382,7 @@ pub(super) fn eval_field_not_empty(gate: &GateConfig, ctx: &GateContext) -> Gate
             description,
             reason: Some(format!("field '{}' is empty", field)),
             intent: None,
+            attestation: None,
         },
         Some(_) => GateResult {
             passed: true,
@@ -380,6 +391,7 @@ pub(super) fn eval_field_not_empty(gate: &GateConfig, ctx: &GateContext) -> Gate
             description,
             reason: None,
             intent: None,
+            attestation: None,
         },
     }
 }

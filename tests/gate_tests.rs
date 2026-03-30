@@ -2618,3 +2618,69 @@ fn test_query_gate_evaluable_when_var_provided() {
         "gate should be evaluable when var provided"
     );
 }
+
+// ---------------------------------------------------------------------------
+// attestation — command gates produce attestation data
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_command_succeeds_produces_attestation() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let gate = make_gate(
+        "command_succeeds",
+        vec![("cmd", toml::Value::String("echo hello".to_string()))],
+    );
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(result.passed);
+    let att = result.attestation.expect("command_succeeds should produce attestation");
+    assert_eq!(att.gate_type, "command_succeeds");
+    assert_eq!(att.exit_code, 0);
+    assert!(!att.stdout_hash.is_empty());
+    assert!(att.wall_time_ms < 10_000);
+    assert!(!att.executed_at.is_empty());
+}
+
+#[test]
+fn test_command_output_produces_attestation() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let gate = make_gate(
+        "command_output",
+        vec![
+            ("cmd", toml::Value::String("echo hello".to_string())),
+            ("expect", toml::Value::String("hello".to_string())),
+        ],
+    );
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(result.passed);
+    let att = result.attestation.expect("command_output should produce attestation");
+    assert_eq!(att.gate_type, "command_output");
+    assert_eq!(att.exit_code, 0);
+
+    use sha2::{Digest, Sha256};
+    let expected_hash = format!("{:x}", Sha256::digest(b"hello\n"));
+    assert_eq!(att.stdout_hash, expected_hash);
+}

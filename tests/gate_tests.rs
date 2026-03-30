@@ -2684,3 +2684,39 @@ fn test_command_output_produces_attestation() {
     let expected_hash = format!("{:x}", Sha256::digest(b"hello\n"));
     assert_eq!(att.stdout_hash, expected_hash);
 }
+
+// ---------------------------------------------------------------------------
+// snapshot_compare attestation
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_snapshot_compare_produces_attestation() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let gate = make_gate(
+        "snapshot_compare",
+        vec![
+            ("cmd", toml::Value::String(r#"echo '{"count": 42}'"#.to_string())),
+            ("extract", toml::Value::String("count".to_string())),
+            ("compare", toml::Value::String("eq".to_string())),
+            ("reference", toml::Value::String("42".to_string())),
+        ],
+    );
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(result.passed);
+    let att = result.attestation.expect("snapshot_compare should produce attestation");
+    assert_eq!(att.gate_type, "snapshot_compare");
+    assert_eq!(att.exit_code, 0);
+    assert!(!att.stdout_hash.is_empty());
+}

@@ -4,10 +4,14 @@
 // - [eval-snapshot-compare]       eval_snapshot_compare()       — run command, extract JSON field, compare to reference
 // - [resolve-snapshot-reference]  resolve_snapshot_reference()  — look up a "snapshot:key" value in the ledger
 
+use chrono::Utc;
+use sha2::{Digest, Sha256};
+use std::time::Instant;
+
 use crate::config::GateConfig;
 
 use super::command::{run_shell_output_with_timeout, CommandOutputOutcome};
-use super::evaluator::{GateContext, GateResult};
+use super::evaluator::{GateAttestation, GateContext, GateResult};
 use super::template::{find_unresolved_vars, resolve_template};
 use super::types::build_template_vars;
 
@@ -67,6 +71,15 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
         };
     }
 
+    let should_attest = gate
+        .params
+        .get("attest")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+
+    let started_at = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let start = Instant::now();
+
     // Resolve reference — if it starts with "snapshot:", look up in ledger.
     let reference = if let Some(snapshot_key) = reference_raw.strip_prefix("snapshot:") {
         match resolve_snapshot_reference(ctx, snapshot_key) {
@@ -88,8 +101,8 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
     };
 
     // Run command and get stdout with timeout enforcement.
-    let stdout = match run_shell_output_with_timeout(&cmd, &ctx.working_dir, timeout_secs) {
-        Ok(CommandOutputOutcome::Completed(s, _status)) => s,
+    let (stdout, status) = match run_shell_output_with_timeout(&cmd, &ctx.working_dir, timeout_secs) {
+        Ok(CommandOutputOutcome::Completed(s, st)) => (s, st),
         Ok(CommandOutputOutcome::TimedOut) => {
             return GateResult {
                 passed: false,
@@ -116,6 +129,7 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
             }
         }
     };
+    let wall_time_ms = start.elapsed().as_millis() as u64;
 
     // Parse stdout as JSON and extract the named field.
     let json_value: serde_json::Value = match serde_json::from_str(&stdout) {
@@ -159,6 +173,19 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
                 "eq" => extracted_str == reference,
                 _ => false,
             };
+            let attestation = if passed && should_attest {
+                let stdout_hash = format!("{:x}", Sha256::digest(stdout.as_bytes()));
+                Some(GateAttestation {
+                    gate_type: "snapshot_compare".to_string(),
+                    command: cmd.clone(),
+                    exit_code: status.code().unwrap_or(-1),
+                    stdout_hash,
+                    wall_time_ms,
+                    executed_at: started_at,
+                })
+            } else {
+                None
+            };
             return GateResult {
                 passed,
                 evaluable: true,
@@ -173,7 +200,7 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
                     ))
                 },
                 intent: None,
-                attestation: None,
+                attestation,
             };
         }
     };
@@ -210,6 +237,20 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
         }
     };
 
+    let attestation = if passed && should_attest {
+        let stdout_hash = format!("{:x}", Sha256::digest(stdout.as_bytes()));
+        Some(GateAttestation {
+            gate_type: "snapshot_compare".to_string(),
+            command: cmd.clone(),
+            exit_code: status.code().unwrap_or(-1),
+            stdout_hash,
+            wall_time_ms,
+            executed_at: started_at,
+        })
+    } else {
+        None
+    };
+
     GateResult {
         passed,
         evaluable: true,
@@ -224,7 +265,7 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
             ))
         },
         intent: None,
-        attestation: None,
+        attestation,
     }
 }
 

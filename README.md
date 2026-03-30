@@ -762,6 +762,20 @@ sahjhan gate check "set complete perspective"
 
 `?` means the gate can't be evaluated without the missing arg. `✓` and `✗` still mean pass and fail. Gates without template variables evaluate normally regardless.
 
+## Violations
+
+When an agent tampers with a managed file, the enforcement hooks record a `protocol_violation` event in the ledger. The `no_violations` gate checks for these — if any are unresolved, the agent can't advance.
+
+To resolve a violation, record a `violation_resolved` event:
+
+```bash
+sahjhan event violation_resolved --field "detail=reverted unauthorized edit to src/main.rs"
+```
+
+Resolution is counter-based, not paired. Each `violation_resolved` cancels one `protocol_violation`. Two violations with one resolution still leaves one unresolved. The gate passes when the count of `violation_resolved` events equals or exceeds the count of `protocol_violation` events.
+
+Both event types are permanent. The violations don't disappear — they stay in the ledger with their resolutions. The agent's full disciplinary record, forever.
+
 ## Integrating with Claude Code
 
 ```bash

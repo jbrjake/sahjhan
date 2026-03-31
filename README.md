@@ -801,9 +801,11 @@ Generates `pre_tool_hook.py` (PreToolUse), `post_tool_hook.py` (PostToolUse), `s
 
 ### Runtime hooks
 
-The generated hook scripts used to contain the enforcement logic themselves — managed path lists baked in at generation time, manifest verification hardcoded in Python. Which meant every time you changed the protocol, you had to regenerate them. And the scripts were readable. The agent could study the conditions and route around them.
+Transitions enforce structure — the agent can't skip states or advance without gates passing. But transitions only fire when the agent explicitly asks to move. Between transitions, the agent is unsupervised. It can edit files, run commands, write summaries, claim completion — all without Sahjhan having a say. The protocol says "you must be in state X to do Y," but nothing was checking whether the agent was actually following that rule on every tool use.
 
-Now the scripts are three-line wrappers. They parse the harness event, call `sahjhan hook eval`, and forward the decision. All the intelligence lives in the Rust binary, evaluated against live ledger state. Change your `hooks.toml`, and the next tool use picks it up. No regeneration needed.
+Runtime hooks close that gap. They evaluate on every tool use, checking the ledger to decide whether the agent should be allowed to proceed. The agent can read `hooks.toml` and see exactly what will block it. That's fine. Knowing the rules doesn't help when the rules are enforced by a binary that checks the ledger before every action. You can't sweet-talk a gate that runs `ledger_has_event_since`.
+
+The generated hook scripts are thin wrappers — they parse the harness event, call `sahjhan hook eval`, and forward the decision. The evaluation logic lives in the Rust binary.
 
 ```bash
 sahjhan hook eval --event PreToolUse --tool Edit --file src/main.rs
@@ -812,7 +814,7 @@ sahjhan hook eval --event PreToolUse --tool Edit --file src/main.rs
 #   "auto_records":[],"monitor_warnings":[]}
 ```
 
-Hooks are defined in `hooks.toml`, a sixth optional config file alongside the existing five. They fire on three events: `PreToolUse` (before the agent uses a tool), `PostToolUse` (after), and `Stop` (when the agent tries to end its turn). Each hook can be gated to specific tools, states, and file paths.
+Hooks are defined in `hooks.toml`, a sixth optional config file alongside the existing five. Like all config files, it's sealed at init time — the agent can't quietly add or remove hooks any more than it can remove a gate from `transitions.toml`. They fire on three events: `PreToolUse` (before the agent uses a tool), `PostToolUse` (after), and `Stop` (when the agent tries to end its turn). Each hook can be gated to specific tools, states, and file paths.
 
 Three kinds of conditions:
 

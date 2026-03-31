@@ -2822,3 +2822,121 @@ fn test_attestation_stdout_hash_is_deterministic() {
         "stdout hash should match sha256 of 'hello\\n'"
     );
 }
+
+// ---------------------------------------------------------------------------
+// ledger_has_event_since — custom since parameter
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_ledger_has_event_since_custom_event() {
+    // transition → fix_commit → failing_test
+    // Gate: has "failing_test" since "fix_commit" → should PASS
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let mut trans_fields = BTreeMap::new();
+    trans_fields.insert("from".to_string(), "idle".to_string());
+    trans_fields.insert("to".to_string(), "working".to_string());
+    trans_fields.insert("command".to_string(), "begin".to_string());
+    ledger.append("state_transition", trans_fields).unwrap();
+    ledger.append("fix_commit", BTreeMap::new()).unwrap();
+    ledger.append("failing_test", BTreeMap::new()).unwrap();
+
+    let gate = make_gate(
+        "ledger_has_event_since",
+        vec![
+            ("event", toml::Value::String("failing_test".to_string())),
+            ("since", toml::Value::String("fix_commit".to_string())),
+        ],
+    );
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "working",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    assert!(
+        evaluate_gate(&gate, &ctx).passed,
+        "should pass: failing_test exists after fix_commit"
+    );
+}
+
+#[test]
+fn test_ledger_has_event_since_custom_event_fail() {
+    // transition → failing_test → fix_commit
+    // Gate: has "failing_test" since "fix_commit" → should FAIL
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let mut trans_fields = BTreeMap::new();
+    trans_fields.insert("from".to_string(), "idle".to_string());
+    trans_fields.insert("to".to_string(), "working".to_string());
+    trans_fields.insert("command".to_string(), "begin".to_string());
+    ledger.append("state_transition", trans_fields).unwrap();
+    ledger.append("failing_test", BTreeMap::new()).unwrap();
+    ledger.append("fix_commit", BTreeMap::new()).unwrap();
+
+    let gate = make_gate(
+        "ledger_has_event_since",
+        vec![
+            ("event", toml::Value::String("failing_test".to_string())),
+            ("since", toml::Value::String("fix_commit".to_string())),
+        ],
+    );
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "working",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    assert!(
+        !evaluate_gate(&gate, &ctx).passed,
+        "should fail: failing_test is before fix_commit"
+    );
+}
+
+#[test]
+fn test_ledger_has_event_since_custom_event_fallback() {
+    // No "fix_commit" exists — falls back to last transition
+    // transition → failing_test
+    // Gate: has "failing_test" since "fix_commit" → should PASS (fallback to last transition)
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let mut trans_fields = BTreeMap::new();
+    trans_fields.insert("from".to_string(), "idle".to_string());
+    trans_fields.insert("to".to_string(), "working".to_string());
+    trans_fields.insert("command".to_string(), "begin".to_string());
+    ledger.append("state_transition", trans_fields).unwrap();
+    ledger.append("failing_test", BTreeMap::new()).unwrap();
+
+    let gate = make_gate(
+        "ledger_has_event_since",
+        vec![
+            ("event", toml::Value::String("failing_test".to_string())),
+            ("since", toml::Value::String("fix_commit".to_string())),
+        ],
+    );
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "working",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    assert!(
+        evaluate_gate(&gate, &ctx).passed,
+        "should pass: fix_commit not found, falls back to last transition, failing_test exists after"
+    );
+}

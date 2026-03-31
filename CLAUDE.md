@@ -57,7 +57,7 @@ Sahjhan is a protocol enforcement engine. It has:
 |---------|------|-------------|---------|
 | Unified config | `config/mod.rs` | `ProtocolConfig` | Loads all TOML, holds full config (includes hooks, monitors) |
 | Config validation | `config/mod.rs` | `[validate]` | Basic structural validation |
-| Deep validation | `config/mod.rs` | `[validate-deep]` | File existence, gate types, aliases, ledger template checks |
+| Deep validation | `config/mod.rs` | `[validate-deep]` | File existence, gate types, aliases, ledger template, hooks, monitors, write_gated checks |
 | Recursive gate validator | `config/mod.rs` | `[validate-gate]` | Validates composite (any_of, all_of, not, k_of_n) and leaf gates recursively |
 | Protocol metadata | `config/protocol.rs` | `ProtocolMeta`, `PathsConfig`, `SetConfig` | protocol.toml structures |
 | Ledger template | `config/protocol.rs` | `LedgerTemplateConfig` | `[ledgers]` section; path or path_template for template-based ledger creation |
@@ -75,7 +75,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | Transition defs | `config/transitions.rs` | `TransitionConfig`, `GateConfig` | transitions.toml; `args` declares positional params; `intent` is optional per-gate "why"; `gates` holds nested child gates for composite types (any_of, all_of, not, k_of_n); remaining fields are `#[serde(flatten)]` into params |
 | Event definitions | `config/events.rs` | `EventConfig`, `EventFieldConfig` | events.toml; field patterns for validation; `restricted` marks HMAC-only events; `optional` marks non-required fields |
 | Render definitions | `config/renders.rs` | `RenderConfig` | renders.toml; trigger/template/target/ledger/ledger_template |
-| Config seal hashing | `config/mod.rs` | `compute_config_seals()` | SHA-256 hash all 5 TOML config files |
+| Config seal hashing | `config/mod.rs` | `compute_config_seals()` | SHA-256 hash all 6 TOML config files |
 
 ### gates/ — Gate Evaluation
 
@@ -96,7 +96,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | File exists gate | `gates/file.rs` | `[eval-file-exists]` | Single file check |
 | Files exist gate | `gates/file.rs` | `[eval-files-exist]` | Multiple files check |
 | Ledger event gate | `gates/ledger.rs` | `[eval-ledger-has-event]` | N+ events of type |
-| Event since gate | `gates/ledger.rs` | `[eval-ledger-has-event-since]` | Event since last transition |
+| Event since gate | `gates/ledger.rs` | `[eval-ledger-has-event-since]` | Event since reference point (last_transition or custom event type) |
 | Ledger lacks event gate | `gates/ledger.rs` | `[eval-ledger-lacks-event]` | Pass if NO matching events exist (negation gate) |
 | Set covered gate | `gates/ledger.rs` | `[eval-set-covered]` | All set members in ledger |
 | Min elapsed gate | `gates/ledger.rs` | `[eval-min-elapsed]` | Time since last event |
@@ -340,7 +340,7 @@ How config seals are created and verified:
 
 ```
 cli/init.rs [cmd-init]
-  → config/mod.rs compute_config_seals()      ← SHA-256 of all 5 TOML files
+  → config/mod.rs compute_config_seals()      ← SHA-256 of all 6 TOML files
   → ledger/chain.rs init_with_seals()          ← seals stored in genesis entry fields
 
 cli/commands.rs [open-ledger] or [open-targeted]
@@ -365,7 +365,7 @@ cli/authed_event.rs [cmd-reseal]
 | `tests/gate_tests.rs` | All gate types, template interpolation, field validation, StateParam source, attestation |
 | `tests/integration_tests.rs` | Full CLI end-to-end (init, transition, events, queries, renders, sets) |
 | `tests/chain_integrity_tests.rs` | Ledger hash chain, append, reload, tamper detection |
-| `tests/config_tests.rs` | Config loading and validation |
+| `tests/config_tests.rs` | Config loading, validation, hooks/monitors/write_gated validation |
 | `tests/state_machine_tests.rs` | StateMachine transitions, gates, sets |
 | `tests/query_tests.rs` | DataFusion SQL queries over ledger |
 | `tests/ledger_tests.rs` | LedgerEntry serialization, hashing, schema |

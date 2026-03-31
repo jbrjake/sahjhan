@@ -8,7 +8,7 @@
 // - [validate-deep]         ProtocolConfig::validate_deep()  — file/alias/gate/render/ledger/branching checks
 // - [validate-gate]         ProtocolConfig::validate_gate()  — recursive gate validator (composite + leaf)
 // - initial_state()         — find the state with initial = true
-// - [compute-config-seals]  compute_config_seals()           — SHA-256 hashes of all five TOML config files
+// - [compute-config-seals]  compute_config_seals()           — SHA-256 hashes of all six TOML config files
 
 pub mod events;
 pub mod hooks;
@@ -260,6 +260,9 @@ impl ProtocolConfig {
     /// - Unreachable state detection warnings
     /// - Branching transitions without a gateless fallback (warning)
     /// - Ledger template validation (exactly one of path/path_template; path_template must contain {template.instance_id})
+    /// - Hook validation (action/message required, state refs, gate/check/auto_record mutual exclusion)
+    /// - Monitor validation (unique names, action = "warn", state refs, trigger types)
+    /// - Write-gated guard validation (writable_in states must exist)
     ///
     /// Returns `(errors, warnings)` — errors are hard failures, warnings are advisory.
     // [validate-deep]
@@ -275,7 +278,7 @@ impl ProtocolConfig {
             ("command_succeeds", vec!["cmd"]),
             ("command_output", vec!["cmd", "expect"]),
             ("ledger_has_event", vec!["event"]),
-            ("ledger_has_event_since", vec!["event"]),
+            ("ledger_has_event_since", vec!["event", "since"]),
             ("ledger_lacks_event", vec!["event"]),
             ("set_covered", vec!["set"]),
             ("min_elapsed", vec!["event", "seconds"]),
@@ -463,6 +466,171 @@ impl ProtocolConfig {
             }
         }
 
+        // 14. Hook validation.
+        let known_check_types: HashSet<&str> =
+            ["query", "output_contains_any", "event_count_since_last_transition"]
+                .iter()
+                .copied()
+                .collect();
+        let state_names: HashSet<&str> = self.states.keys().map(|s| s.as_str()).collect();
+
+        for (idx, hook) in self.hooks.iter().enumerate() {
+            let label = format!("hooks.toml: hook[{}]", idx);
+
+            // Exactly one of gate, check, or auto_record must be present.
+            let mechanism_count = [
+                hook.gate.is_some(),
+                hook.check.is_some(),
+                hook.auto_record.is_some(),
+            ]
+            .iter()
+            .filter(|&&b| b)
+            .count();
+            if mechanism_count != 1 {
+                errors.push(format!(
+                    "{}: exactly one of gate, check, or auto_record must be present (found {})",
+                    label, mechanism_count
+                ));
+            }
+
+            // Non-auto_record hooks require action and message.
+            if hook.auto_record.is_none() {
+                if let Some(ref action) = hook.action {
+                    if action != "block" && action != "warn" {
+                        errors.push(format!(
+                            "{}: action must be 'block' or 'warn', got '{}'",
+                            label, action
+                        ));
+                    }
+                } else {
+                    errors.push(format!("{}: 'action' is required", label));
+                }
+                if hook.message.is_none() {
+                    errors.push(format!("{}: 'message' is required", label));
+                }
+            }
+
+            // auto_record hooks must have event = PostToolUse.
+            if let Some(ref auto) = hook.auto_record {
+                if hook.event != hooks::HookEvent::PostToolUse {
+                    errors.push(format!(
+                        "{}: auto_record hooks must have event = 'PostToolUse'",
+                        label
+                    ));
+                }
+                if !self.events.contains_key(&auto.event_type) {
+                    errors.push(format!(
+                        "{}: auto_record.event_type '{}' is not defined in events.toml",
+                        label, auto.event_type
+                    ));
+                }
+            }
+
+            // states must reference existing states.
+            if let Some(ref states) = hook.states {
+                for s in states {
+                    if !state_names.contains(s.as_str()) {
+                        errors.push(format!(
+                            "{}: references unknown state '{}'",
+                            label, s
+                        ));
+                    }
+                }
+            }
+
+            // states_not must reference existing states.
+            if let Some(ref states_not) = hook.states_not {
+                for s in states_not {
+                    if !state_names.contains(s.as_str()) {
+                        errors.push(format!(
+                            "{}: states_not references unknown state '{}'",
+                            label, s
+                        ));
+                    }
+                }
+            }
+
+            // gate validated through recursive validator.
+            if let Some(ref gate) = hook.gate {
+                Self::validate_gate(gate, &format!("hook[{}]", idx), &known_gates, &mut errors);
+            }
+
+            // check.type must be a known check type.
+            if let Some(ref check) = hook.check {
+                if !known_check_types.contains(check.check_type.as_str()) {
+                    errors.push(format!(
+                        "{}: unknown check type '{}' (known: {})",
+                        label,
+                        check.check_type,
+                        known_check_types.iter().copied().collect::<Vec<_>>().join(", ")
+                    ));
+                }
+            }
+        }
+
+        // 15. Monitor validation.
+        {
+            let known_monitor_trigger_types: HashSet<&str> =
+                ["event_count_since_last_transition"].iter().copied().collect();
+            let mut monitor_names: HashSet<String> = HashSet::new();
+
+            for (idx, monitor) in self.monitors.iter().enumerate() {
+                let label = format!("hooks.toml: monitor[{}] '{}'", idx, monitor.name);
+
+                // Names must be unique.
+                if !monitor_names.insert(monitor.name.clone()) {
+                    errors.push(format!(
+                        "{}: duplicate monitor name",
+                        label
+                    ));
+                }
+
+                // action must be "warn".
+                if monitor.action != "warn" {
+                    errors.push(format!(
+                        "{}: action must be 'warn', got '{}'",
+                        label, monitor.action
+                    ));
+                }
+
+                // states must reference existing states.
+                if let Some(ref states) = monitor.states {
+                    for s in states {
+                        if !state_names.contains(s.as_str()) {
+                            errors.push(format!(
+                                "{}: references unknown state '{}'",
+                                label, s
+                            ));
+                        }
+                    }
+                }
+
+                // trigger.type must be known.
+                if !known_monitor_trigger_types.contains(monitor.trigger.trigger_type.as_str()) {
+                    errors.push(format!(
+                        "{}: unknown trigger type '{}' (known: {})",
+                        label,
+                        monitor.trigger.trigger_type,
+                        known_monitor_trigger_types.iter().copied().collect::<Vec<_>>().join(", ")
+                    ));
+                }
+            }
+        }
+
+        // 16. Write-gated guard validation.
+        if let Some(ref guards) = self.guards {
+            for wg in &guards.write_gated {
+                for s in &wg.writable_in {
+                    if !state_names.contains(s.as_str()) {
+                        errors.push(format!(
+                            "protocol.toml: write_gated path '{}' references unknown state '{}'",
+                            wg.path, s
+                        ));
+                    }
+                }
+            }
+        }
+
         (errors, warnings)
     }
 
@@ -557,11 +725,11 @@ impl ProtocolConfig {
     }
 }
 
-/// Compute SHA-256 hashes of all five TOML config files.
+/// Compute SHA-256 hashes of all six TOML config files.
 ///
-/// Missing optional files (events.toml, renders.toml) hash as empty bytes.
+/// Missing optional files (events.toml, renders.toml, hooks.toml) hash as empty bytes.
 /// Returns a BTreeMap with keys: config_seal_protocol, config_seal_states,
-/// config_seal_transitions, config_seal_events, config_seal_renders.
+/// config_seal_transitions, config_seal_events, config_seal_renders, config_seal_hooks.
 // [compute-config-seals]
 pub fn compute_config_seals(dir: &Path) -> BTreeMap<String, String> {
     use sha2::{Digest, Sha256};
@@ -572,6 +740,7 @@ pub fn compute_config_seals(dir: &Path) -> BTreeMap<String, String> {
         ("config_seal_transitions", "transitions.toml"),
         ("config_seal_events", "events.toml"),
         ("config_seal_renders", "renders.toml"),
+        ("config_seal_hooks", "hooks.toml"),
     ];
 
     let mut seals = BTreeMap::new();

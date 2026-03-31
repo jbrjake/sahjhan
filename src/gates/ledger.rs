@@ -2,7 +2,7 @@
 //
 // ## Index
 // - [eval-ledger-has-event]        eval_ledger_has_event()        — pass if ledger contains N+ events of a type
-// - [eval-ledger-has-event-since]  eval_ledger_has_event_since()  — pass if event exists since last state_transition
+// - [eval-ledger-has-event-since]  eval_ledger_has_event_since()  — pass if event exists since reference point (last_transition or custom event type)
 // - [eval-ledger-lacks-event]      eval_ledger_lacks_event()      — pass if ledger contains NO matching events (negation of ledger_has_event)
 // - [eval-set-covered]             eval_set_covered()             — pass if all set members appear in ledger
 // - [eval-min-elapsed]             eval_min_elapsed()             — pass if enough time has elapsed since last event
@@ -78,24 +78,36 @@ pub(super) fn eval_ledger_has_event_since(gate: &GateConfig, ctx: &GateContext) 
         .get("event")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-
-    // Only "last_transition" is specified in the spec; treat anything else as
-    // "last_transition" too (graceful fallback).
-    let _since = gate
+    let since = gate
         .params
         .get("since")
         .and_then(|v| v.as_str())
         .unwrap_or("last_transition");
 
-    // Find the most recent state_transition event.
-    let last_transition_seq = ctx
-        .ledger
-        .events_of_type("state_transition")
-        .last()
-        .map(|e| e.seq);
-
-    // If there has been no transition yet, we check all entries.
-    let threshold_seq = last_transition_seq.unwrap_or(0);
+    let threshold_seq = if since == "last_transition" {
+        ctx.ledger
+            .events_of_type("state_transition")
+            .last()
+            .map(|e| e.seq)
+            .unwrap_or(0)
+    } else {
+        let since_event_seq = ctx
+            .ledger
+            .entries()
+            .iter()
+            .rev()
+            .find(|e| e.event_type == since)
+            .map(|e| e.seq);
+        match since_event_seq {
+            Some(seq) => seq,
+            None => ctx
+                .ledger
+                .events_of_type("state_transition")
+                .last()
+                .map(|e| e.seq)
+                .unwrap_or(0),
+        }
+    };
 
     let found = ctx
         .ledger
@@ -103,17 +115,23 @@ pub(super) fn eval_ledger_has_event_since(gate: &GateConfig, ctx: &GateContext) 
         .iter()
         .any(|e| e.event_type == event && e.seq > threshold_seq);
 
+    let since_desc = if since == "last_transition" {
+        "last state_transition".to_string()
+    } else {
+        format!("last '{}' event", since)
+    };
+
     GateResult {
         passed: found,
         evaluable: true,
         gate_type: "ledger_has_event_since".to_string(),
-        description: format!("'{}' event exists since last transition", event),
+        description: format!("'{}' event exists since {}", event, since_desc),
         reason: if found {
             None
         } else {
             Some(format!(
-                "no '{}' event found after the last state_transition",
-                event
+                "no '{}' event found after {}",
+                event, since_desc
             ))
         },
         intent: None,

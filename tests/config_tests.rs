@@ -812,3 +812,104 @@ fn test_protocol_config_loads_hooks_toml() {
         "monitors should be empty when hooks.toml is absent"
     );
 }
+
+#[test]
+fn test_validate_hook_states_reference_existing() {
+    use sahjhan::config::hooks::*;
+    use sahjhan::config::GateConfig;
+    let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    config.hooks.push(HookConfig {
+        event: HookEvent::PreToolUse,
+        tools: None,
+        states: Some(vec!["nonexistent_state".to_string()]),
+        states_not: None,
+        action: Some("block".to_string()),
+        message: Some("test".to_string()),
+        gate: Some(GateConfig {
+            gate_type: "no_violations".to_string(),
+            intent: None,
+            gates: vec![],
+            params: std::collections::HashMap::new(),
+        }),
+        check: None,
+        auto_record: None,
+        filter: None,
+    });
+    let (errors, _) = config.validate_deep(Path::new("examples/minimal"));
+    assert!(
+        errors.iter().any(|e| e.contains("nonexistent_state") && e.contains("unknown state")),
+        "Expected error about unknown state: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_validate_auto_record_requires_post_tool_use() {
+    use sahjhan::config::hooks::*;
+    let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    config.hooks.push(HookConfig {
+        event: HookEvent::PreToolUse,
+        tools: None,
+        states: None,
+        states_not: None,
+        action: None,
+        message: None,
+        gate: None,
+        check: None,
+        auto_record: Some(AutoRecordConfig {
+            event_type: "note".to_string(),
+            fields: std::collections::HashMap::new(),
+        }),
+        filter: None,
+    });
+    let (errors, _) = config.validate_deep(Path::new("examples/minimal"));
+    assert!(
+        errors.iter().any(|e| e.contains("auto_record") && e.contains("PostToolUse")),
+        "Expected error about auto_record requiring PostToolUse: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_validate_monitor_names_unique() {
+    use sahjhan::config::hooks::*;
+    let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let monitor = MonitorConfig {
+        name: "dup_monitor".to_string(),
+        states: None,
+        action: "warn".to_string(),
+        message: "test".to_string(),
+        trigger: MonitorTrigger {
+            trigger_type: "event_count_since_last_transition".to_string(),
+            threshold: 5,
+        },
+    };
+    config.monitors.push(monitor.clone());
+    config.monitors.push(monitor);
+    let (errors, _) = config.validate_deep(Path::new("examples/minimal"));
+    assert!(
+        errors.iter().any(|e| e.contains("dup_monitor") && e.contains("duplicate")),
+        "Expected error about duplicate monitor name: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_validate_write_gated_states_exist() {
+    use sahjhan::config::*;
+    let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    config.guards = Some(GuardsConfig {
+        read_blocked: vec![],
+        write_gated: vec![WriteGatedConfig {
+            path: "src/main.rs".to_string(),
+            writable_in: vec!["nonexistent_state".to_string()],
+            message: "test".to_string(),
+        }],
+    });
+    let (errors, _) = config.validate_deep(Path::new("examples/minimal"));
+    assert!(
+        errors.iter().any(|e| e.contains("nonexistent_state") && e.contains("unknown state")),
+        "Expected error about write_gated referencing unknown state: {:?}",
+        errors
+    );
+}

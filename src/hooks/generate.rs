@@ -288,6 +288,8 @@ mod tests {
             checkpoints: Default::default(),
             ledgers: HashMap::new(),
             guards: None,
+            hooks: vec![],
+            monitors: vec![],
         }
     }
 

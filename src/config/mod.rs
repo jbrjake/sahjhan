@@ -3,7 +3,7 @@
 // Unified protocol configuration and validation.
 //
 // ## Index
-// - ProtocolConfig          — unified config loaded from protocol directory (includes guards: Option<GuardsConfig>)
+// - ProtocolConfig          — unified config loaded from protocol directory (includes guards, hooks, monitors)
 // - [validate]              ProtocolConfig::validate()       — basic structural validation
 // - [validate-deep]         ProtocolConfig::validate_deep()  — file/alias/gate/render/ledger/branching checks
 // - [validate-gate]         ProtocolConfig::validate_gate()  — recursive gate validator (composite + leaf)
@@ -11,14 +11,20 @@
 // - [compute-config-seals]  compute_config_seals()           — SHA-256 hashes of all five TOML config files
 
 pub mod events;
+pub mod hooks;
 pub mod protocol;
 pub mod renders;
 pub mod states;
 pub mod transitions;
 
 pub use events::{EventConfig, EventFieldConfig};
+pub use hooks::{
+    AutoRecordConfig, HookCheck, HookConfig, HookEvent, HookFilter, HooksFile, MonitorConfig,
+    MonitorTrigger,
+};
 pub use protocol::{
     CheckpointConfig, GuardsConfig, LedgerTemplateConfig, PathsConfig, ProtocolMeta, SetConfig,
+    WriteGatedConfig,
 };
 pub use renders::RenderConfig;
 pub use states::{StateConfig, StateParam};
@@ -41,6 +47,8 @@ pub struct ProtocolConfig {
     pub checkpoints: CheckpointConfig,
     pub ledgers: HashMap<String, LedgerTemplateConfig>,
     pub guards: Option<GuardsConfig>,
+    pub hooks: Vec<hooks::HookConfig>,
+    pub monitors: Vec<hooks::MonitorConfig>,
 }
 
 impl ProtocolConfig {
@@ -96,6 +104,19 @@ impl ProtocolConfig {
             }
         };
 
+        // --- hooks.toml (optional) ---
+        let (hooks_vec, monitors_vec) = {
+            let hooks_path = dir.join("hooks.toml");
+            match std::fs::read_to_string(&hooks_path) {
+                Ok(src) => {
+                    let hf: hooks::HooksFile = toml::from_str(&src)
+                        .map_err(|e| format!("parse error in {}: {}", hooks_path.display(), e))?;
+                    (hf.hooks, hf.monitors)
+                }
+                Err(_) => (vec![], vec![]),
+            }
+        };
+
         Ok(ProtocolConfig {
             protocol: proto_file.protocol,
             paths: proto_file.paths,
@@ -108,6 +129,8 @@ impl ProtocolConfig {
             checkpoints: proto_file.checkpoints,
             ledgers: proto_file.ledgers,
             guards: proto_file.guards,
+            hooks: hooks_vec,
+            monitors: monitors_vec,
         })
     }
 

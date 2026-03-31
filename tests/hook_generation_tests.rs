@@ -1,6 +1,6 @@
 // tests/hook_generation_tests.rs
 //
-// Integration tests for hook bridge generation (Task 10).
+// Integration tests for hook script generation.
 
 use sahjhan::config::{PathsConfig, ProtocolConfig, ProtocolMeta};
 use sahjhan::hooks::HookGenerator;
@@ -53,22 +53,6 @@ fn hook_generation_produces_valid_python() {
 }
 
 #[test]
-fn hook_generation_injects_managed_paths() {
-    let gen = HookGenerator::new().unwrap();
-    let config = make_config(vec!["output", "docs/gen", "build/artifacts"]);
-    let hooks = gen.generate(&config, "cc", None).unwrap();
-
-    let write_guard = hooks
-        .iter()
-        .find(|h| h.filename == "write_guard.py")
-        .expect("write_guard.py must be generated");
-
-    assert!(write_guard.content.contains("\"output\""));
-    assert!(write_guard.content.contains("\"docs/gen\""));
-    assert!(write_guard.content.contains("\"build/artifacts\""));
-}
-
-#[test]
 fn hook_generation_includes_bootstrap() {
     let gen = HookGenerator::new().unwrap();
     let config = make_config(vec!["output"]);
@@ -92,14 +76,34 @@ fn hook_generation_references_config_dir() {
     let config = make_config(vec!["output"]);
     let hooks = gen.generate(&config, "cc", None).unwrap();
 
-    let bash_guard = hooks
+    let pre_tool = hooks
         .iter()
-        .find(|h| h.filename == "bash_guard.py")
-        .expect("bash_guard.py must be generated");
+        .find(|h| h.filename == "pre_tool_hook.py")
+        .expect("pre_tool_hook.py must be generated");
 
     assert!(
-        bash_guard.content.contains("CONFIG_DIR = \"enforcement\""),
-        "bash_guard must reference config dir"
+        pre_tool.content.contains("CONFIG_DIR = \"enforcement\""),
+        "pre_tool_hook must reference config dir"
+    );
+
+    let post_tool = hooks
+        .iter()
+        .find(|h| h.filename == "post_tool_hook.py")
+        .expect("post_tool_hook.py must be generated");
+
+    assert!(
+        post_tool.content.contains("CONFIG_DIR = \"enforcement\""),
+        "post_tool_hook must reference config dir"
+    );
+
+    let stop = hooks
+        .iter()
+        .find(|h| h.filename == "stop_hook.py")
+        .expect("stop_hook.py must be generated");
+
+    assert!(
+        stop.content.contains("CONFIG_DIR = \"enforcement\""),
+        "stop_hook must reference config dir"
     );
 }
 
@@ -110,10 +114,11 @@ fn hook_generation_writes_files_to_output_dir() {
     let config = make_config(vec!["output"]);
     let hooks = gen.generate(&config, "cc", Some(dir.path())).unwrap();
 
-    assert_eq!(hooks.len(), 3);
+    assert_eq!(hooks.len(), 4);
 
-    assert!(dir.path().join("write_guard.py").exists());
-    assert!(dir.path().join("bash_guard.py").exists());
+    assert!(dir.path().join("pre_tool_hook.py").exists());
+    assert!(dir.path().join("post_tool_hook.py").exists());
+    assert!(dir.path().join("stop_hook.py").exists());
     assert!(dir.path().join("_sahjhan_bootstrap.py").exists());
 
     // Verify file contents match returned content
@@ -137,17 +142,23 @@ fn hook_types_are_correct() {
     let config = make_config(vec!["output"]);
     let hooks = gen.generate(&config, "cc", None).unwrap();
 
-    let wg = hooks
+    let pre = hooks
         .iter()
-        .find(|h| h.filename == "write_guard.py")
+        .find(|h| h.filename == "pre_tool_hook.py")
         .unwrap();
-    assert_eq!(wg.hook_type, "PreToolUse");
+    assert_eq!(pre.hook_type, "PreToolUse");
 
-    let bg = hooks
+    let post = hooks
         .iter()
-        .find(|h| h.filename == "bash_guard.py")
+        .find(|h| h.filename == "post_tool_hook.py")
         .unwrap();
-    assert_eq!(bg.hook_type, "PostToolUse");
+    assert_eq!(post.hook_type, "PostToolUse");
+
+    let stop = hooks
+        .iter()
+        .find(|h| h.filename == "stop_hook.py")
+        .unwrap();
+    assert_eq!(stop.hook_type, "Stop");
 
     let bs = hooks
         .iter()
@@ -165,43 +176,123 @@ fn suggested_hooks_json_format() {
     let json = HookGenerator::suggested_hooks_json(&hooks, ".hooks");
     assert!(json.contains("\"PreToolUse\""));
     assert!(json.contains("\"PostToolUse\""));
-    assert!(json.contains("write_guard.py"));
-    assert!(json.contains("bash_guard.py"));
+    assert!(json.contains("\"Stop\""));
+    assert!(json.contains("pre_tool_hook.py"));
+    assert!(json.contains("post_tool_hook.py"));
+    assert!(json.contains("stop_hook.py"));
     assert!(json.contains("_sahjhan_bootstrap.py"));
 }
 
 #[test]
-fn write_guard_blocks_write_and_edit() {
+fn thin_wrappers_delegate_to_hook_eval() {
     let gen = HookGenerator::new().unwrap();
     let config = make_config(vec!["output"]);
     let hooks = gen.generate(&config, "cc", None).unwrap();
 
-    let wg = hooks
-        .iter()
-        .find(|h| h.filename == "write_guard.py")
-        .unwrap();
-    // Should check for Write and Edit tool names
-    assert!(wg.content.contains("\"Write\""));
-    assert!(wg.content.contains("\"Edit\""));
-    // Should have block decision logic
-    assert!(
-        wg.content.contains("\"decision\": \"block\"")
-            || wg.content.contains("\"decision\": \"block\"")
-    );
-    assert!(wg.content.contains("WRITE BLOCKED"));
+    // pre_tool_hook, post_tool_hook, stop_hook should all delegate to sahjhan hook eval
+    for hook in &hooks {
+        if hook.filename == "_sahjhan_bootstrap.py" {
+            continue;
+        }
+        assert!(
+            hook.content.contains("hook eval") || hook.content.contains("\"hook\", \"eval\""),
+            "{} should delegate to sahjhan hook eval",
+            hook.filename
+        );
+        assert!(
+            hook.content.contains("subprocess"),
+            "{} should use subprocess to call sahjhan",
+            hook.filename
+        );
+        assert!(
+            hook.content.contains("sahjhan_binary"),
+            "{} should use sahjhan_binary() helper",
+            hook.filename
+        );
+    }
 }
 
 #[test]
-fn bash_guard_runs_manifest_verify() {
+fn pre_tool_hook_passes_event_and_tool() {
     let gen = HookGenerator::new().unwrap();
     let config = make_config(vec!["output"]);
     let hooks = gen.generate(&config, "cc", None).unwrap();
 
-    let bg = hooks
+    let pre = hooks
         .iter()
-        .find(|h| h.filename == "bash_guard.py")
+        .find(|h| h.filename == "pre_tool_hook.py")
         .unwrap();
-    assert!(bg.content.contains("manifest"));
-    assert!(bg.content.contains("verify"));
-    assert!(bg.content.contains("UNAUTHORIZED MODIFICATION DETECTED"));
+    assert!(pre.content.contains("--event"));
+    assert!(pre.content.contains("PreToolUse"));
+    assert!(pre.content.contains("--tool"));
+}
+
+#[test]
+fn post_tool_hook_passes_event_and_tool() {
+    let gen = HookGenerator::new().unwrap();
+    let config = make_config(vec!["output"]);
+    let hooks = gen.generate(&config, "cc", None).unwrap();
+
+    let post = hooks
+        .iter()
+        .find(|h| h.filename == "post_tool_hook.py")
+        .unwrap();
+    assert!(post.content.contains("--event"));
+    assert!(post.content.contains("PostToolUse"));
+    assert!(post.content.contains("--tool"));
+}
+
+#[test]
+fn stop_hook_passes_output_text() {
+    let gen = HookGenerator::new().unwrap();
+    let config = make_config(vec!["output"]);
+    let hooks = gen.generate(&config, "cc", None).unwrap();
+
+    let stop = hooks
+        .iter()
+        .find(|h| h.filename == "stop_hook.py")
+        .unwrap();
+    assert!(stop.content.contains("--event"));
+    assert!(stop.content.contains("Stop"));
+    assert!(stop.content.contains("--output-text"));
+}
+
+#[test]
+fn four_hooks_generated() {
+    let gen = HookGenerator::new().unwrap();
+    let config = make_config(vec!["output"]);
+    let hooks = gen.generate(&config, "cc", None).unwrap();
+
+    assert_eq!(hooks.len(), 4);
+
+    let filenames: Vec<&str> = hooks.iter().map(|h| h.filename.as_str()).collect();
+    assert!(filenames.contains(&"pre_tool_hook.py"));
+    assert!(filenames.contains(&"post_tool_hook.py"));
+    assert!(filenames.contains(&"stop_hook.py"));
+    assert!(filenames.contains(&"_sahjhan_bootstrap.py"));
+}
+
+#[test]
+fn wrappers_fail_open_on_error() {
+    let gen = HookGenerator::new().unwrap();
+    let config = make_config(vec!["output"]);
+    let hooks = gen.generate(&config, "cc", None).unwrap();
+
+    // All thin wrappers should have fail-open exception handling
+    for hook in &hooks {
+        if hook.filename == "_sahjhan_bootstrap.py" {
+            continue;
+        }
+        assert!(
+            hook.content.contains("except Exception"),
+            "{} should catch exceptions for fail-open behavior",
+            hook.filename
+        );
+        // The except block should output allow
+        assert!(
+            hook.content.contains("\"decision\": \"allow\""),
+            "{} should default to allow on error",
+            hook.filename
+        );
+    }
 }

@@ -4,54 +4,21 @@
 //
 // ## Index
 // - GeneratedHook            — hook type + script content
-// - HookGenerator            — produces Python hook scripts for write protection
+// - HookGenerator            — produces Python hook scripts (thin wrappers + bootstrap)
 
 use std::path::Path;
 
 use crate::config::ProtocolConfig;
 
 // ---------------------------------------------------------------------------
-// Embedded templates — simple string-based injection rather than full Tera,
-// since the template logic is just inserting managed paths and config dir.
+// Embedded templates — thin wrappers that delegate to `sahjhan hook eval`.
+//
+// Python braces `{` / `}` are escaped as `{{` / `}}` in Rust raw strings.
+// Template variables like `{config_dir}` use single braces (Rust .replace()).
 // ---------------------------------------------------------------------------
 
-const WRITE_GUARD_TEMPLATE: &str = r##"# Generated hook: write_guard.py
-# Write protection for managed paths — PreToolUse hook
-import os, sys, json
-
-MANAGED = {managed_paths}  # Injected from protocol.toml at generation time
-
-def main():
-    event = json.loads(sys.stdin.read())
-    tool_name = event.get("tool_name", "")
-    if tool_name not in ("Write", "Edit"):
-        print(json.dumps({{"decision": "allow"}}))
-        return
-
-    tool_input = event.get("tool_input", {{}})
-    file_path = tool_input.get("file_path", "")
-    cwd = event.get("cwd", os.getcwd())
-    resolved = os.path.realpath(os.path.join(cwd, file_path))
-
-    for prefix in MANAGED:
-        managed_abs = os.path.realpath(os.path.join(cwd, prefix))
-        if resolved.startswith(managed_abs + os.sep) or resolved == managed_abs:
-            print(json.dumps({{
-                "decision": "block",
-                "reason": f"WRITE BLOCKED: {{file_path}} is managed by sahjhan. "
-                          f"Use CLI commands to modify protocol state. "
-                          f"Direct writes are not permitted."
-            }}))
-            return
-
-    print(json.dumps({{"decision": "allow"}}))
-
-if __name__ == "__main__":
-    main()
-"##;
-
-const BASH_GUARD_TEMPLATE: &str = r##"# Generated hook: bash_guard.py
-# Post-execution manifest verification — PostToolUse hook
+const PRE_TOOL_HOOK_TEMPLATE: &str = r##"# Generated hook: pre_tool_hook.py
+# PreToolUse hook — delegates to sahjhan hook eval
 import os, sys, json, subprocess, platform
 
 def sahjhan_binary():
@@ -70,35 +37,162 @@ def sahjhan_binary():
            os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     return os.path.join(root, "bin", f"sahjhan-{{triple}}")
 
-CONFIG_DIR = "{config_dir}"  # Injected from protocol config
+CONFIG_DIR = "{config_dir}"
 
 def main():
-    event = json.loads(sys.stdin.read())
-    tool_name = event.get("tool_name", "")
-    if tool_name != "Bash":
+    try:
+        event = json.loads(sys.stdin.read())
+    except Exception:
         print(json.dumps({{"decision": "allow"}}))
         return
 
-    cwd = event.get("cwd", os.getcwd())
-    result = subprocess.run(
-        [sahjhan_binary(), "--config-dir", CONFIG_DIR, "manifest", "verify"],
-        capture_output=True, text=True, cwd=cwd, timeout=30,
-    )
-    if result.returncode != 0:
-        # Record violation
-        subprocess.run(
-            [sahjhan_binary(), "--config-dir", CONFIG_DIR, "event",
-             "protocol_violation", "--field", f"detail={{result.stdout.strip()}}"],
-            cwd=cwd, timeout=10,
-        )
-        print(json.dumps({{
-            "decision": "allow",
-            "message": f"UNAUTHORIZED MODIFICATION DETECTED:\n{{result.stdout.strip()}}\n"
-                       f"This violation has been recorded in the ledger."
-        }}))
+    tool_name = event.get("tool_name", "")
+    tool_input = event.get("tool_input", {{}})
+    file_path = tool_input.get("file_path", tool_input.get("command", ""))
+
+    cmd = [sahjhan_binary(), "--config-dir", CONFIG_DIR, "--json",
+           "hook", "eval", "--event", "PreToolUse", "--tool", tool_name]
+    if file_path:
+        cmd.extend(["--file", file_path])
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True,
+                                cwd=event.get("cwd", os.getcwd()), timeout=30)
+        output = json.loads(result.stdout)
+        data = output.get("data", {{}})
+        decision = data.get("decision", "allow")
+        messages = data.get("messages", [])
+
+        if decision == "block":
+            reason = messages[0]["message"] if messages else "Blocked by protocol"
+            print(json.dumps({{"decision": "block", "reason": reason}}))
+        elif messages:
+            combined = "\n".join(m["message"] for m in messages)
+            print(json.dumps({{"decision": "allow", "message": combined}}))
+        else:
+            print(json.dumps({{"decision": "allow"}}))
+    except Exception:
+        print(json.dumps({{"decision": "allow"}}))
+
+if __name__ == "__main__":
+    main()
+"##;
+
+const POST_TOOL_HOOK_TEMPLATE: &str = r##"# Generated hook: post_tool_hook.py
+# PostToolUse hook — delegates to sahjhan hook eval
+import os, sys, json, subprocess, platform
+
+def sahjhan_binary():
+    env = os.environ.get("SAHJHAN_BIN")
+    if env:
+        return env
+    arch = platform.machine()
+    system = platform.system().lower()
+    if arch == "arm64":
+        arch = "aarch64"
+    if system == "darwin":
+        triple = f"{{arch}}-apple-darwin"
+    else:
+        triple = f"{{arch}}-unknown-linux-gnu"
+    root = os.environ.get("CLAUDE_PLUGIN_ROOT",
+           os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return os.path.join(root, "bin", f"sahjhan-{{triple}}")
+
+CONFIG_DIR = "{config_dir}"
+
+def main():
+    try:
+        event = json.loads(sys.stdin.read())
+    except Exception:
+        print(json.dumps({{"decision": "allow"}}))
         return
 
-    print(json.dumps({{"decision": "allow"}}))
+    tool_name = event.get("tool_name", "")
+    tool_input = event.get("tool_input", {{}})
+    file_path = tool_input.get("file_path", tool_input.get("command", ""))
+
+    cmd = [sahjhan_binary(), "--config-dir", CONFIG_DIR, "--json",
+           "hook", "eval", "--event", "PostToolUse", "--tool", tool_name]
+    if file_path:
+        cmd.extend(["--file", file_path])
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True,
+                                cwd=event.get("cwd", os.getcwd()), timeout=30)
+        output = json.loads(result.stdout)
+        data = output.get("data", {{}})
+        decision = data.get("decision", "allow")
+        messages = data.get("messages", [])
+
+        if decision == "block":
+            reason = messages[0]["message"] if messages else "Blocked by protocol"
+            print(json.dumps({{"decision": "block", "reason": reason}}))
+        elif messages:
+            combined = "\n".join(m["message"] for m in messages)
+            print(json.dumps({{"decision": "allow", "message": combined}}))
+        else:
+            print(json.dumps({{"decision": "allow"}}))
+    except Exception:
+        print(json.dumps({{"decision": "allow"}}))
+
+if __name__ == "__main__":
+    main()
+"##;
+
+const STOP_HOOK_TEMPLATE: &str = r##"# Generated hook: stop_hook.py
+# Stop hook — delegates to sahjhan hook eval
+import os, sys, json, subprocess, platform
+
+def sahjhan_binary():
+    env = os.environ.get("SAHJHAN_BIN")
+    if env:
+        return env
+    arch = platform.machine()
+    system = platform.system().lower()
+    if arch == "arm64":
+        arch = "aarch64"
+    if system == "darwin":
+        triple = f"{{arch}}-apple-darwin"
+    else:
+        triple = f"{{arch}}-unknown-linux-gnu"
+    root = os.environ.get("CLAUDE_PLUGIN_ROOT",
+           os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return os.path.join(root, "bin", f"sahjhan-{{triple}}")
+
+CONFIG_DIR = "{config_dir}"
+
+def main():
+    try:
+        event = json.loads(sys.stdin.read())
+    except Exception:
+        print(json.dumps({{"decision": "allow"}}))
+        return
+
+    stop_message = event.get("stop_hook_output", event.get("stop_message", ""))
+
+    cmd = [sahjhan_binary(), "--config-dir", CONFIG_DIR, "--json",
+           "hook", "eval", "--event", "Stop"]
+    if stop_message:
+        cmd.extend(["--output-text", stop_message])
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True,
+                                cwd=event.get("cwd", os.getcwd()), timeout=30)
+        output = json.loads(result.stdout)
+        data = output.get("data", {{}})
+        decision = data.get("decision", "allow")
+        messages = data.get("messages", [])
+
+        if decision == "block":
+            reason = messages[0]["message"] if messages else "Blocked by protocol"
+            print(json.dumps({{"decision": "block", "reason": reason}}))
+        elif messages:
+            combined = "\n".join(m["message"] for m in messages)
+            print(json.dumps({{"decision": "allow", "message": combined}}))
+        else:
+            print(json.dumps({{"decision": "allow"}}))
+    except Exception:
+        print(json.dumps({{"decision": "allow"}}))
 
 if __name__ == "__main__":
     main()
@@ -140,7 +234,7 @@ print(json.dumps({"decision": "allow"}))
 pub struct GeneratedHook {
     pub filename: String,
     pub content: String,
-    pub hook_type: String, // "PreToolUse" or "PostToolUse"
+    pub hook_type: String, // "PreToolUse", "PostToolUse", or "Stop"
 }
 
 /// Generates Python hook scripts for Claude Code integration.
@@ -161,7 +255,7 @@ impl HookGenerator {
     /// is responsible for handling the content (e.g. printing to stdout).
     pub fn generate(
         &self,
-        config: &ProtocolConfig,
+        _config: &ProtocolConfig,
         harness: &str,
         output_dir: Option<&Path>,
     ) -> Result<Vec<GeneratedHook>, String> {
@@ -172,39 +266,34 @@ impl HookGenerator {
             ));
         }
 
+        let config_dir_value = "enforcement";
         let mut hooks = Vec::new();
 
-        // --- Write guard (PreToolUse) ---
-        let managed_paths = format!(
-            "[{}]",
-            config
-                .paths
-                .managed
-                .iter()
-                .map(|p| format!("\"{}\"", p))
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-        let write_guard = WRITE_GUARD_TEMPLATE.replace("{managed_paths}", &managed_paths);
+        // --- Pre-tool hook (PreToolUse) — thin wrapper ---
+        let pre_tool = PRE_TOOL_HOOK_TEMPLATE.replace("{config_dir}", config_dir_value);
         hooks.push(GeneratedHook {
-            filename: "write_guard.py".to_string(),
-            content: write_guard,
+            filename: "pre_tool_hook.py".to_string(),
+            content: pre_tool,
             hook_type: "PreToolUse".to_string(),
         });
 
-        // --- Bash guard (PostToolUse) ---
-        // The config_dir for the bash guard is the directory name the CLI
-        // uses (typically "enforcement"), extracted from wherever the config
-        // was loaded.  We use the protocol name's conventional directory.
-        let config_dir_value = "enforcement";
-        let bash_guard = BASH_GUARD_TEMPLATE.replace("{config_dir}", config_dir_value);
+        // --- Post-tool hook (PostToolUse) — thin wrapper ---
+        let post_tool = POST_TOOL_HOOK_TEMPLATE.replace("{config_dir}", config_dir_value);
         hooks.push(GeneratedHook {
-            filename: "bash_guard.py".to_string(),
-            content: bash_guard,
+            filename: "post_tool_hook.py".to_string(),
+            content: post_tool,
             hook_type: "PostToolUse".to_string(),
         });
 
-        // --- Bootstrap hook (PreToolUse) ---
+        // --- Stop hook (Stop) — thin wrapper ---
+        let stop = STOP_HOOK_TEMPLATE.replace("{config_dir}", config_dir_value);
+        hooks.push(GeneratedHook {
+            filename: "stop_hook.py".to_string(),
+            content: stop,
+            hook_type: "Stop".to_string(),
+        });
+
+        // --- Bootstrap hook (PreToolUse) — self-contained ---
         hooks.push(GeneratedHook {
             filename: "_sahjhan_bootstrap.py".to_string(),
             content: BOOTSTRAP_HOOK.to_string(),
@@ -230,12 +319,14 @@ impl HookGenerator {
     pub fn suggested_hooks_json(hooks: &[GeneratedHook], hooks_dir: &str) -> String {
         let mut pre_hooks = Vec::new();
         let mut post_hooks = Vec::new();
+        let mut stop_hooks = Vec::new();
 
         for hook in hooks {
             let entry = format!("\"python3 {}/{}\"", hooks_dir, hook.filename);
             match hook.hook_type.as_str() {
                 "PreToolUse" => pre_hooks.push(entry),
                 "PostToolUse" => post_hooks.push(entry),
+                "Stop" => stop_hooks.push(entry),
                 _ => {}
             }
         }
@@ -248,11 +339,15 @@ impl HookGenerator {
     ],
     "PostToolUse": [
       {}
+    ],
+    "Stop": [
+      {}
     ]
   }}
 }}"#,
             pre_hooks.join(",\n      "),
             post_hooks.join(",\n      "),
+            stop_hooks.join(",\n      "),
         )
     }
 }
@@ -315,22 +410,34 @@ mod tests {
     }
 
     #[test]
-    fn test_managed_paths_injected() {
+    fn test_config_dir_in_pre_tool_hook() {
         let gen = HookGenerator::new().unwrap();
         let config = test_config();
         let hooks = gen.generate(&config, "cc", None).unwrap();
 
-        let write_guard = hooks
+        let pre_tool = hooks
             .iter()
-            .find(|h| h.filename == "write_guard.py")
+            .find(|h| h.filename == "pre_tool_hook.py")
             .unwrap();
         assert!(
-            write_guard.content.contains("\"output\""),
-            "write_guard should contain managed path 'output'"
+            pre_tool.content.contains("CONFIG_DIR = \"enforcement\""),
+            "pre_tool_hook should reference config dir 'enforcement'"
         );
+    }
+
+    #[test]
+    fn test_config_dir_in_post_tool_hook() {
+        let gen = HookGenerator::new().unwrap();
+        let config = test_config();
+        let hooks = gen.generate(&config, "cc", None).unwrap();
+
+        let post_tool = hooks
+            .iter()
+            .find(|h| h.filename == "post_tool_hook.py")
+            .unwrap();
         assert!(
-            write_guard.content.contains("\"docs/generated\""),
-            "write_guard should contain managed path 'docs/generated'"
+            post_tool.content.contains("CONFIG_DIR = \"enforcement\""),
+            "post_tool_hook should reference config dir 'enforcement'"
         );
     }
 
@@ -350,38 +457,34 @@ mod tests {
     }
 
     #[test]
-    fn test_config_dir_in_bash_guard() {
-        let gen = HookGenerator::new().unwrap();
-        let config = test_config();
-        let hooks = gen.generate(&config, "cc", None).unwrap();
-
-        let bash_guard = hooks
-            .iter()
-            .find(|h| h.filename == "bash_guard.py")
-            .unwrap();
-        assert!(
-            bash_guard.content.contains("CONFIG_DIR = \"enforcement\""),
-            "bash_guard should reference config dir 'enforcement'"
-        );
-    }
-
-    #[test]
     fn test_hook_types_correct() {
         let gen = HookGenerator::new().unwrap();
         let config = test_config();
         let hooks = gen.generate(&config, "cc", None).unwrap();
 
-        let write_guard = hooks
+        let pre_tool = hooks
             .iter()
-            .find(|h| h.filename == "write_guard.py")
+            .find(|h| h.filename == "pre_tool_hook.py")
             .unwrap();
-        assert_eq!(write_guard.hook_type, "PreToolUse");
+        assert_eq!(pre_tool.hook_type, "PreToolUse");
 
-        let bash_guard = hooks
+        let post_tool = hooks
             .iter()
-            .find(|h| h.filename == "bash_guard.py")
+            .find(|h| h.filename == "post_tool_hook.py")
             .unwrap();
-        assert_eq!(bash_guard.hook_type, "PostToolUse");
+        assert_eq!(post_tool.hook_type, "PostToolUse");
+
+        let stop = hooks
+            .iter()
+            .find(|h| h.filename == "stop_hook.py")
+            .unwrap();
+        assert_eq!(stop.hook_type, "Stop");
+
+        let bootstrap = hooks
+            .iter()
+            .find(|h| h.filename == "_sahjhan_bootstrap.py")
+            .unwrap();
+        assert_eq!(bootstrap.hook_type, "PreToolUse");
     }
 
     #[test]
@@ -400,7 +503,7 @@ mod tests {
         let config = test_config();
         let hooks = gen.generate(&config, "cc", Some(dir.path())).unwrap();
 
-        assert_eq!(hooks.len(), 3);
+        assert_eq!(hooks.len(), 4);
         for hook in &hooks {
             let path = dir.path().join(&hook.filename);
             assert!(path.exists(), "Hook file {} should exist", hook.filename);
@@ -418,22 +521,48 @@ mod tests {
         let json = HookGenerator::suggested_hooks_json(&hooks, ".hooks");
         assert!(json.contains("PreToolUse"));
         assert!(json.contains("PostToolUse"));
-        assert!(json.contains("write_guard.py"));
-        assert!(json.contains("bash_guard.py"));
+        assert!(json.contains("Stop"));
+        assert!(json.contains("pre_tool_hook.py"));
+        assert!(json.contains("post_tool_hook.py"));
+        assert!(json.contains("stop_hook.py"));
         assert!(json.contains("_sahjhan_bootstrap.py"));
     }
 
     #[test]
-    fn test_three_hooks_generated() {
+    fn test_four_hooks_generated() {
         let gen = HookGenerator::new().unwrap();
         let config = test_config();
         let hooks = gen.generate(&config, "cc", None).unwrap();
 
-        assert_eq!(hooks.len(), 3);
+        assert_eq!(hooks.len(), 4);
 
         let filenames: Vec<&str> = hooks.iter().map(|h| h.filename.as_str()).collect();
-        assert!(filenames.contains(&"write_guard.py"));
-        assert!(filenames.contains(&"bash_guard.py"));
+        assert!(filenames.contains(&"pre_tool_hook.py"));
+        assert!(filenames.contains(&"post_tool_hook.py"));
+        assert!(filenames.contains(&"stop_hook.py"));
         assert!(filenames.contains(&"_sahjhan_bootstrap.py"));
+    }
+
+    #[test]
+    fn test_thin_wrappers_delegate_to_hook_eval() {
+        let gen = HookGenerator::new().unwrap();
+        let config = test_config();
+        let hooks = gen.generate(&config, "cc", None).unwrap();
+
+        for hook in &hooks {
+            if hook.filename == "_sahjhan_bootstrap.py" {
+                continue; // bootstrap is self-contained
+            }
+            assert!(
+                hook.content.contains("hook eval") || hook.content.contains("\"hook\", \"eval\""),
+                "{} should delegate to sahjhan hook eval",
+                hook.filename
+            );
+            assert!(
+                hook.content.contains("subprocess"),
+                "{} should use subprocess to call sahjhan",
+                hook.filename
+            );
+        }
     }
 }

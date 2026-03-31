@@ -21,13 +21,13 @@ When you modify any source file in this repository, you MUST update documentatio
 
 ```
 cargo build                    # Build
-cargo test                     # Run all tests (377 tests)
+cargo test                     # Run all tests (380 tests)
 cargo test <test_name>         # Run one test
 cargo clippy -- -D warnings    # Lint
 cargo fmt                      # Format
 ```
 
-**Config dir:** Protocol TOML files (protocol.toml, states.toml, transitions.toml, events.toml, renders.toml)
+**Config dir:** Protocol TOML files (protocol.toml, states.toml, transitions.toml, events.toml, renders.toml, hooks.toml)
 **Data dir:** Runtime state (ledger.jsonl, manifest.json, ledgers.toml registry)
 **Example config:** `examples/minimal/`
 
@@ -55,13 +55,22 @@ Sahjhan is a protocol enforcement engine. It has:
 
 | Concept | File | Anchor/Item | Purpose |
 |---------|------|-------------|---------|
-| Unified config | `config/mod.rs` | `ProtocolConfig` | Loads all TOML, holds full config |
+| Unified config | `config/mod.rs` | `ProtocolConfig` | Loads all TOML, holds full config (includes hooks, monitors) |
 | Config validation | `config/mod.rs` | `[validate]` | Basic structural validation |
 | Deep validation | `config/mod.rs` | `[validate-deep]` | File existence, gate types, aliases, ledger template checks |
 | Recursive gate validator | `config/mod.rs` | `[validate-gate]` | Validates composite (any_of, all_of, not, k_of_n) and leaf gates recursively |
 | Protocol metadata | `config/protocol.rs` | `ProtocolMeta`, `PathsConfig`, `SetConfig` | protocol.toml structures |
 | Ledger template | `config/protocol.rs` | `LedgerTemplateConfig` | `[ledgers]` section; path or path_template for template-based ledger creation |
-| Guards config | `config/protocol.rs` | `GuardsConfig` | `[guards]` section; `read_blocked` lists paths enforcement hooks should block agents from reading |
+| Guards config | `config/protocol.rs` | `GuardsConfig` | `[guards]` section; `read_blocked` lists paths enforcement hooks should block agents from reading; `write_gated` lists state-gated writable paths |
+| Write-gated config | `config/protocol.rs` | `WriteGatedConfig` | A path whose writability is gated by protocol state (path, writable_in, message) |
+| Hooks file | `config/hooks.rs` | `HooksFile` | Top-level hooks.toml wrapper (hooks + monitors) |
+| Hook config | `config/hooks.rs` | `HookConfig` | Single hook rule (event, tools, states, gate, check, auto_record, filter) |
+| Hook event | `config/hooks.rs` | `HookEvent` | PreToolUse, PostToolUse, Stop |
+| Hook filter | `config/hooks.rs` | `HookFilter` | Path glob filters for tool arguments |
+| Hook check | `config/hooks.rs` | `HookCheck` | Threshold/pattern check config (type, sql, compare, threshold, patterns) |
+| Auto-record config | `config/hooks.rs` | `AutoRecordConfig` | Auto-record event config (event_type, fields) |
+| Monitor config | `config/hooks.rs` | `MonitorConfig` | Monitor rule (name, states, action, message, trigger) |
+| Monitor trigger | `config/hooks.rs` | `MonitorTrigger` | Monitor trigger condition (type, threshold) |
 | State definitions | `config/states.rs` | `StateConfig`, `StateParam` | states.toml; `StateParam.source` controls set derivation |
 | Transition defs | `config/transitions.rs` | `TransitionConfig`, `GateConfig` | transitions.toml; `args` declares positional params; `intent` is optional per-gate "why"; `gates` holds nested child gates for composite types (any_of, all_of, not, k_of_n); remaining fields are `#[serde(flatten)]` into params |
 | Event definitions | `config/events.rs` | `EventConfig`, `EventFieldConfig` | events.toml; field patterns for validation; `restricted` marks HMAC-only events; `optional` marks non-required fields |
@@ -320,6 +329,7 @@ cli/commands.rs [load-config]
     → reads transitions.toml → config/transitions.rs TransitionsFile
     → reads events.toml (optional) → config/events.rs EventsFile
     → reads renders.toml (optional) → config/renders.rs RendersFile
+    → reads hooks.toml (optional)   → config/hooks.rs HooksFile
   → config/mod.rs [validate] — structural checks
   → config/mod.rs [validate-deep] (via cmd_validate) — file/alias/gate/ledger checks
 ```

@@ -657,3 +657,158 @@ fn test_validate_branching_no_fallback_warning() {
         warnings
     );
 }
+
+#[test]
+fn test_hooks_toml_deserialization() {
+    let toml_str = r#"
+[[hooks]]
+event = "PreToolUse"
+tools = ["Write", "Edit"]
+states = ["coding"]
+action = "block"
+message = "Cannot write in this state"
+
+[hooks.filter]
+path_matches = "src/**/*.rs"
+
+[hooks.check]
+type = "query"
+sql = "SELECT COUNT(*) as cnt FROM ledger WHERE event_type = 'violation'"
+compare = "lt"
+threshold = 3
+
+[hooks.auto_record]
+event_type = "tool_usage"
+
+[hooks.auto_record.fields]
+tool = "write"
+
+[[hooks]]
+event = "PostToolUse"
+tools = ["Bash"]
+action = "warn"
+message = "Bash command executed"
+
+[[hooks]]
+event = "Stop"
+action = "block"
+message = "Cannot stop yet"
+
+[hooks.gate]
+type = "no_violations"
+
+[[monitors]]
+name = "violation_count"
+states = ["active"]
+action = "block"
+message = "Too many violations"
+
+[monitors.trigger]
+type = "threshold"
+threshold = 5
+"#;
+
+    let hf: sahjhan::config::hooks::HooksFile = toml::from_str(toml_str).unwrap();
+
+    assert_eq!(hf.hooks.len(), 3, "should have 3 hooks");
+    assert_eq!(hf.monitors.len(), 1, "should have 1 monitor");
+
+    // First hook — PreToolUse with all optional fields
+    let h0 = &hf.hooks[0];
+    assert_eq!(h0.event, sahjhan::config::HookEvent::PreToolUse);
+    assert_eq!(h0.tools.as_ref().unwrap(), &["Write", "Edit"]);
+    assert_eq!(h0.states.as_ref().unwrap(), &["coding"]);
+    assert_eq!(h0.action.as_deref(), Some("block"));
+    assert_eq!(h0.message.as_deref(), Some("Cannot write in this state"));
+
+    let filter = h0.filter.as_ref().unwrap();
+    assert_eq!(filter.path_matches.as_deref(), Some("src/**/*.rs"));
+    assert!(filter.path_not_matches.is_none());
+
+    let check = h0.check.as_ref().unwrap();
+    assert_eq!(check.check_type, "query");
+    assert!(check.sql.is_some());
+    assert_eq!(check.compare.as_deref(), Some("lt"));
+    assert_eq!(check.threshold, Some(3));
+
+    let auto = h0.auto_record.as_ref().unwrap();
+    assert_eq!(auto.event_type, "tool_usage");
+    assert_eq!(auto.fields.get("tool").map(|s| s.as_str()), Some("write"));
+
+    // Second hook — PostToolUse, minimal
+    let h1 = &hf.hooks[1];
+    assert_eq!(h1.event, sahjhan::config::HookEvent::PostToolUse);
+    assert!(h1.gate.is_none());
+
+    // Third hook — Stop with a gate
+    let h2 = &hf.hooks[2];
+    assert_eq!(h2.event, sahjhan::config::HookEvent::Stop);
+    let gate = h2.gate.as_ref().unwrap();
+    assert_eq!(gate.gate_type, "no_violations");
+
+    // Monitor
+    let m0 = &hf.monitors[0];
+    assert_eq!(m0.name, "violation_count");
+    assert_eq!(m0.states.as_ref().unwrap(), &["active"]);
+    assert_eq!(m0.action, "block");
+    assert_eq!(m0.trigger.trigger_type, "threshold");
+    assert_eq!(m0.trigger.threshold, 5);
+}
+
+#[test]
+fn test_write_gated_guards_deserialization() {
+    let toml_str = r#"
+[protocol]
+name = "test"
+version = "1.0.0"
+description = "test"
+
+[paths]
+managed = []
+data_dir = ".data"
+render_dir = "."
+
+[guards]
+read_blocked = [".sahjhan/session.key"]
+
+[[guards.write_gated]]
+path = "src/main.rs"
+writable_in = ["coding", "review"]
+message = "Source files are only writable during coding and review states"
+
+[[guards.write_gated]]
+path = "docs/**/*.md"
+writable_in = ["documentation"]
+message = "Docs only writable in documentation state"
+"#;
+
+    let proto_file: sahjhan::config::protocol::ProtocolFile = toml::from_str(toml_str).unwrap();
+    let guards = proto_file.guards.unwrap();
+
+    assert_eq!(guards.read_blocked.len(), 1);
+    assert_eq!(guards.write_gated.len(), 2);
+
+    assert_eq!(guards.write_gated[0].path, "src/main.rs");
+    assert_eq!(guards.write_gated[0].writable_in, vec!["coding", "review"]);
+    assert_eq!(
+        guards.write_gated[0].message,
+        "Source files are only writable during coding and review states"
+    );
+
+    assert_eq!(guards.write_gated[1].path, "docs/**/*.md");
+    assert_eq!(guards.write_gated[1].writable_in, vec!["documentation"]);
+}
+
+#[test]
+fn test_protocol_config_loads_hooks_toml() {
+    // Load from minimal example which has no hooks.toml — should succeed with empty hooks
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    assert!(
+        config.hooks.is_empty(),
+        "hooks should be empty when hooks.toml is absent"
+    );
+    assert!(
+        config.monitors.is_empty(),
+        "monitors should be empty when hooks.toml is absent"
+    );
+}

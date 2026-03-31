@@ -20,6 +20,10 @@
 // - CandidateData               — single transition candidate
 // - ManifestVerifyData          — manifest verify output
 // - MismatchData                — single manifest mismatch
+// - HookEvalData                — hook evaluation result
+// - HookEvalMessage             — single hook eval message
+// - HookAutoRecord              — auto-recorded event
+// - HookMonitorWarning          — monitor warning
 
 use std::collections::BTreeMap;
 use std::fmt::Display;
@@ -279,10 +283,7 @@ impl Display for StatusData {
                     if g.passed {
                         writeln!(f, "    \u{2713} {}", g.description)?;
                     } else {
-                        let intent = g
-                            .intent
-                            .as_deref()
-                            .unwrap_or("gate condition must be met");
+                        let intent = g.intent.as_deref().unwrap_or("gate condition must be met");
                         writeln!(
                             f,
                             "    \u{2717} {}: {} \u{2014} {}",
@@ -649,4 +650,58 @@ impl Display for MismatchData {
             actual_str
         )
     }
+}
+
+// ---------------------------------------------------------------------------
+// HookEvalData
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize, Clone)]
+pub struct HookEvalData {
+    pub decision: String,
+    pub messages: Vec<HookEvalMessage>,
+    pub auto_records: Vec<HookAutoRecord>,
+    pub monitor_warnings: Vec<HookMonitorWarning>,
+}
+
+impl Display for HookEvalData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            serde_json::to_string_pretty(self).unwrap_or_default()
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// HookEvalMessage
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize, Clone)]
+pub struct HookEvalMessage {
+    pub source: String,
+    pub rule_index: usize,
+    pub action: String,
+    pub message: String,
+}
+
+// ---------------------------------------------------------------------------
+// HookAutoRecord
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize, Clone)]
+pub struct HookAutoRecord {
+    pub event_type: String,
+    pub fields: std::collections::HashMap<String, String>,
+}
+
+// ---------------------------------------------------------------------------
+// HookMonitorWarning
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize, Clone)]
+pub struct HookMonitorWarning {
+    pub name: String,
+    pub message: String,
 }

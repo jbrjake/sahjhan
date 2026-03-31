@@ -181,8 +181,8 @@ fn test_status_data_text_matches_current_format() {
 
 #[test]
 fn test_log_data_json_has_full_hashes() {
-    use std::collections::BTreeMap;
     use sahjhan::cli::output::*;
+    use std::collections::BTreeMap;
     let mut fields = BTreeMap::new();
     fields.insert("from".to_string(), "idle".to_string());
     let data = LogData {
@@ -190,30 +190,25 @@ fn test_log_data_json_has_full_hashes() {
             seq: 0,
             timestamp: "2026-03-30T00:00:00.000Z".to_string(),
             event_type: "genesis".to_string(),
-            hash: "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
-                .to_string(),
+            hash: "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890".to_string(),
             fields,
         }],
     };
     let result = CommandResult::ok("log_dump", data);
     let v = parse_envelope(&result.to_json());
-    assert_eq!(
-        v["data"]["entries"][0]["hash"].as_str().unwrap().len(),
-        64
-    );
+    assert_eq!(v["data"]["entries"][0]["hash"].as_str().unwrap().len(), 64);
 }
 
 #[test]
 fn test_log_data_text_truncates_hashes() {
-    use std::collections::BTreeMap;
     use sahjhan::cli::output::*;
+    use std::collections::BTreeMap;
     let data = LogData {
         entries: vec![EntryData {
             seq: 0,
             timestamp: "2026-03-30T00:00:00.000Z".to_string(),
             event_type: "genesis".to_string(),
-            hash: "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
-                .to_string(),
+            hash: "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890".to_string(),
             fields: BTreeMap::new(),
         }],
     };
@@ -265,7 +260,10 @@ fn test_manifest_verify_data_json() {
     assert_eq!(v["data"]["tracked_count"], 3);
     assert_eq!(v["data"]["mismatches"][0]["path"], "output/STATUS.md");
     assert_eq!(
-        v["data"]["mismatches"][0]["expected"].as_str().unwrap().len(),
+        v["data"]["mismatches"][0]["expected"]
+            .as_str()
+            .unwrap()
+            .len(),
         64
     );
 }
@@ -302,11 +300,7 @@ fn setup_minimal() -> tempfile::TempDir {
         "events.toml",
         "renders.toml",
     ] {
-        std::fs::copy(
-            format!("examples/minimal/{}", file),
-            config_dir.join(file),
-        )
-        .unwrap();
+        std::fs::copy(format!("examples/minimal/{}", file), config_dir.join(file)).unwrap();
     }
     let templates_dir = config_dir.join("templates");
     std::fs::create_dir_all(&templates_dir).unwrap();
@@ -366,7 +360,14 @@ fn test_cli_set_status_json() {
     let dir = setup_minimal();
     let output = Command::cargo_bin("sahjhan")
         .unwrap()
-        .args(["--config-dir", "enforcement", "--json", "set", "status", "check"])
+        .args([
+            "--config-dir",
+            "enforcement",
+            "--json",
+            "set",
+            "status",
+            "check",
+        ])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -423,7 +424,14 @@ fn test_cli_gate_check_json_ready() {
     let dir = setup_minimal();
     let output = Command::cargo_bin("sahjhan")
         .unwrap()
-        .args(["--config-dir", "enforcement", "--json", "gate", "check", "begin"])
+        .args([
+            "--config-dir",
+            "enforcement",
+            "--json",
+            "gate",
+            "check",
+            "begin",
+        ])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -469,7 +477,13 @@ fn test_cli_manifest_verify_json_clean() {
     let dir = setup_minimal();
     let output = Command::cargo_bin("sahjhan")
         .unwrap()
-        .args(["--config-dir", "enforcement", "--json", "manifest", "verify"])
+        .args([
+            "--config-dir",
+            "enforcement",
+            "--json",
+            "manifest",
+            "verify",
+        ])
         .current_dir(dir.path())
         .output()
         .unwrap();

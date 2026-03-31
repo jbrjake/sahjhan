@@ -129,10 +129,7 @@ pub(super) fn eval_ledger_has_event_since(gate: &GateConfig, ctx: &GateContext) 
         reason: if found {
             None
         } else {
-            Some(format!(
-                "no '{}' event found after {}",
-                event, since_desc
-            ))
+            Some(format!("no '{}' event found after {}", event, since_desc))
         },
         intent: None,
         attestation: None,

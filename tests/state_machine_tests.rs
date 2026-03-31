@@ -236,5 +236,8 @@ fn test_transition_returns_outcome_with_states() {
     let outcome = sm.transition("begin", &[]).unwrap();
     assert_eq!(outcome.from, "idle");
     assert_eq!(outcome.to, "working");
-    assert!(outcome.attestations.is_empty(), "no command gates, no attestations");
+    assert!(
+        outcome.attestations.is_empty(),
+        "no command gates, no attestations"
+    );
 }

@@ -21,7 +21,7 @@ When you modify any source file in this repository, you MUST update documentatio
 
 ```
 cargo build                    # Build
-cargo test                     # Run all tests (380 tests)
+cargo test                     # Run all tests (408 tests)
 cargo test <test_name>         # Run one test
 cargo clippy -- -D warnings    # Lint
 cargo fmt                      # Format
@@ -200,6 +200,19 @@ Sahjhan is a protocol enforcement engine. It has:
 |---------|------|-------------|---------|
 | Hook generator | `hooks/generate.rs` | `HookGenerator` | Produces Python hook scripts |
 | Generated hook | `hooks/generate.rs` | `GeneratedHook` | Hook type + content |
+| Hook eval request | `hooks/eval.rs` | `HookEvalRequest` | Incoming evaluation request (event, tool, file, output_text) |
+| Hook eval result | `hooks/eval.rs` | `HookEvalResult` | Aggregate result (decision, messages, auto_records, monitor_warnings) |
+| Hook message | `hooks/eval.rs` | `HookMessage` | Single enforcement message (source, rule_index, action, message) |
+| Auto-record result | `hooks/eval.rs` | `AutoRecordResult` | Event to auto-record in ledger |
+| Monitor warning | `hooks/eval.rs` | `MonitorWarning` | Monitor that fired (name, message) |
+| Evaluate hooks | `hooks/eval.rs` | `evaluate_hooks` | Main entry: managed paths, write-gated, hooks, monitors |
+| Derive current state | `hooks/eval.rs` | `derive_current_state` | Find current state from last state_transition |
+| Hook matching | `hooks/eval.rs` | `hook_matches` | Check event/tool/states/filter |
+| Glob matching | `hooks/eval.rs` | `glob_match` | Simple glob: `*`, `**`, `*.ext` |
+| Hook condition eval | `hooks/eval.rs` | `eval_hook_condition` | Gate (fails=fire), check (matches=fire) |
+| Managed path check | `hooks/eval.rs` | `eval_managed_paths` | Block writes to paths.managed |
+| Write-gated check | `hooks/eval.rs` | `eval_write_gated` | Block writes outside writable_in states |
+| Monitor eval | `hooks/eval.rs` | `eval_monitors` | Evaluate monitor triggers |
 
 ### cli/ — Command Implementations
 
@@ -219,7 +232,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | Manifest | `cli/manifest_cmd.rs` | `[cmd-manifest-verify]`, `[cmd-manifest-list]` | File integrity |
 | Authed event | `cli/authed_event.rs` | `[cmd-authed-event]`, `resolve_session_key_path`, `build_canonical_payload` | HMAC-verified restricted event recording |
 | Guards | `cli/guards.rs` | `[cmd-guards]` | Output JSON manifest of read-blocked paths for enforcement hooks |
-| Hooks | `cli/hooks_cmd.rs` | `[cmd-hook-generate]` | Hook script generation |
+| Hooks | `cli/hooks_cmd.rs` | `[cmd-hook-generate]`, `[cmd-hook-eval]` | Hook script generation + runtime evaluation |
 | Config queries | `cli/config_cmd.rs` | `[cmd-session-key-path]` | Print resolved session key path |
 | Mermaid | `cli/mermaid.rs` | `[cmd-mermaid]` | Diagram generation command (stateDiagram-v2 or ASCII) |
 | Reseal | `cli/authed_event.rs` | `[cmd-reseal]` | HMAC-authenticated config reseal |
@@ -356,6 +369,31 @@ cli/authed_event.rs [cmd-reseal]
   → ledger/chain.rs [ledger-append]             ← config_reseal event
 ```
 
+### Flow: Hook Evaluation
+
+How `sahjhan hook eval --event PreToolUse --tool Edit --file src/main.rs` executes:
+
+```
+main.rs [cli-main]
+  → cli/hooks_cmd.rs [cmd-hook-eval]
+    → cli/commands.rs [load-config]              ← on failure, return allow
+    → cli/commands.rs [open-targeted]            ← on failure, return allow
+    → parse event string → HookEvent enum
+    → hooks/eval.rs evaluate_hooks()
+      → hooks/eval.rs derive_current_state()     ← last state_transition "to" field
+      → hooks/eval.rs eval_managed_paths()       ← PreToolUse Edit/Write only
+      → hooks/eval.rs eval_write_gated()         ← PreToolUse Edit/Write only; glob match + state check
+      → for each hook:
+        → hooks/eval.rs hook_matches()           ← event/tool/states/filter
+        → if auto_record: resolve templates, add to auto_records
+        → if gate: gates/evaluator.rs evaluate_gate() — fire if gate FAILS
+        → if check: eval check condition (output_contains_any, event_count_since_last_transition)
+      → hooks/eval.rs eval_monitors()            ← event_count_since_last_transition triggers
+    → for auto_records: ledger.append()           ← record auto events
+    → decision: block > warn > allow
+    → CommandResult with exit_code 1 (block) or 0 (allow/warn)
+```
+
 ---
 
 ## Test Files
@@ -382,3 +420,4 @@ cli/authed_event.rs [cmd-reseal]
 | `tests/render_filter_tests.rs` | Custom Tera filters (where_eq, unique_by) |
 | `tests/json_output_tests.rs` | JSON envelope serialization, per-command data structs, CLI --json integration |
 | `tests/horizons1_tests.rs` | HORIZONS-1 mission protocol: status, transitions, gates, sets with --json |
+| `tests/hook_eval_tests.rs` | Hook evaluation engine: gate/check/filter/state/monitor/write-gated/managed-path/CLI eval |

@@ -132,7 +132,11 @@ impl StateMachine {
     /// If a single candidate is blocked, the backward-compatible `GateBlocked`
     /// error is returned.  If multiple candidates all fail,
     /// `AllCandidatesBlocked` is returned with per-candidate failure details.
-    pub fn transition(&mut self, command: &str, args: &[String]) -> Result<TransitionOutcome, StateError> {
+    pub fn transition(
+        &mut self,
+        command: &str,
+        args: &[String],
+    ) -> Result<TransitionOutcome, StateError> {
         let from_state = self.current_state.clone();
 
         // Collect ALL matching candidates (preserving TOML order).
@@ -216,10 +220,8 @@ impl StateMachine {
             self.current_state = candidate.to.clone();
 
             // Collect attestation from passing gates.
-            let attestations: Vec<GateAttestation> = results
-                .into_iter()
-                .filter_map(|r| r.attestation)
-                .collect();
+            let attestations: Vec<GateAttestation> =
+                results.into_iter().filter_map(|r| r.attestation).collect();
 
             // Emit gate_attestation events for each attestation.
             for att in &attestations {

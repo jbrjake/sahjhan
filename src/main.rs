@@ -285,6 +285,21 @@ enum HookAction {
         #[arg(long)]
         output_dir: Option<String>,
     },
+    /// Evaluate hook rules against current state
+    Eval {
+        /// Hook event type (PreToolUse, PostToolUse, Stop)
+        #[arg(long)]
+        event: String,
+        /// Tool name
+        #[arg(long)]
+        tool: Option<String>,
+        /// File path being operated on
+        #[arg(long)]
+        file: Option<String>,
+        /// Agent output text (for Stop hooks)
+        #[arg(long)]
+        output_text: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -481,6 +496,19 @@ fn main() {
                 let code = hooks_cmd::cmd_hook_generate(&cli.config_dir, &harness, &output_dir);
                 Box::new(LegacyResult::new("hook_generate", code))
             }
+            HookAction::Eval {
+                event,
+                tool,
+                file,
+                output_text,
+            } => hooks_cmd::cmd_hook_eval(
+                &cli.config_dir,
+                &event,
+                &tool,
+                &file,
+                &output_text,
+                &targeting,
+            ),
         },
         Commands::Ledger { action } => match action {
             LedgerAction::Create {
@@ -509,11 +537,8 @@ fn main() {
                 Box::new(LegacyResult::new("ledger_remove", code))
             }
             LedgerAction::Verify { name, path } => {
-                let code = ledger::cmd_ledger_verify(
-                    &cli.config_dir,
-                    name.as_deref(),
-                    path.as_deref(),
-                );
+                let code =
+                    ledger::cmd_ledger_verify(&cli.config_dir, name.as_deref(), path.as_deref());
                 Box::new(LegacyResult::new("ledger_verify", code))
             }
             LedgerAction::Checkpoint {
@@ -521,8 +546,7 @@ fn main() {
                 scope,
                 snapshot,
             } => {
-                let code =
-                    ledger::cmd_ledger_checkpoint(&cli.config_dir, &name, &scope, &snapshot);
+                let code = ledger::cmd_ledger_checkpoint(&cli.config_dir, &name, &scope, &snapshot);
                 Box::new(LegacyResult::new("ledger_checkpoint", code))
             }
             LedgerAction::Import { name, path } => {

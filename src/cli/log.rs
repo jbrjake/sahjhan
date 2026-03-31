@@ -41,10 +41,7 @@ pub fn cmd_log_dump(config_dir: &str, targeting: &LedgerTargeting) -> Box<dyn Co
                 "config_error"
             };
             return Box::new(CommandResult::<LogData>::err(
-                "log_dump",
-                code,
-                error_code,
-                msg,
+                "log_dump", code, error_code, msg,
             ));
         }
     };
@@ -122,10 +119,7 @@ pub fn cmd_log_tail(
                 "config_error"
             };
             return Box::new(CommandResult::<LogData>::err(
-                "log_tail",
-                code,
-                error_code,
-                msg,
+                "log_tail", code, error_code, msg,
             ));
         }
     };

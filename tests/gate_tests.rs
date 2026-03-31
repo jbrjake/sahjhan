@@ -2644,7 +2644,9 @@ fn test_command_succeeds_produces_attestation() {
     };
     let result = evaluate_gate(&gate, &ctx);
     assert!(result.passed);
-    let att = result.attestation.expect("command_succeeds should produce attestation");
+    let att = result
+        .attestation
+        .expect("command_succeeds should produce attestation");
     assert_eq!(att.gate_type, "command_succeeds");
     assert_eq!(att.exit_code, 0);
     assert!(!att.stdout_hash.is_empty());
@@ -2676,7 +2678,9 @@ fn test_command_output_produces_attestation() {
     };
     let result = evaluate_gate(&gate, &ctx);
     assert!(result.passed);
-    let att = result.attestation.expect("command_output should produce attestation");
+    let att = result
+        .attestation
+        .expect("command_output should produce attestation");
     assert_eq!(att.gate_type, "command_output");
     assert_eq!(att.exit_code, 0);
 
@@ -2699,7 +2703,10 @@ fn test_snapshot_compare_produces_attestation() {
     let gate = make_gate(
         "snapshot_compare",
         vec![
-            ("cmd", toml::Value::String(r#"echo '{"count": 42}'"#.to_string())),
+            (
+                "cmd",
+                toml::Value::String(r#"echo '{"count": 42}'"#.to_string()),
+            ),
             ("extract", toml::Value::String("count".to_string())),
             ("compare", toml::Value::String("eq".to_string())),
             ("reference", toml::Value::String("42".to_string())),
@@ -2715,7 +2722,9 @@ fn test_snapshot_compare_produces_attestation() {
     };
     let result = evaluate_gate(&gate, &ctx);
     assert!(result.passed);
-    let att = result.attestation.expect("snapshot_compare should produce attestation");
+    let att = result
+        .attestation
+        .expect("snapshot_compare should produce attestation");
     assert_eq!(att.gate_type, "snapshot_compare");
     assert_eq!(att.exit_code, 0);
     assert!(!att.stdout_hash.is_empty());

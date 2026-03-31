@@ -837,7 +837,9 @@ fn test_validate_hook_states_reference_existing() {
     });
     let (errors, _) = config.validate_deep(Path::new("examples/minimal"));
     assert!(
-        errors.iter().any(|e| e.contains("nonexistent_state") && e.contains("unknown state")),
+        errors
+            .iter()
+            .any(|e| e.contains("nonexistent_state") && e.contains("unknown state")),
         "Expected error about unknown state: {:?}",
         errors
     );
@@ -864,7 +866,9 @@ fn test_validate_auto_record_requires_post_tool_use() {
     });
     let (errors, _) = config.validate_deep(Path::new("examples/minimal"));
     assert!(
-        errors.iter().any(|e| e.contains("auto_record") && e.contains("PostToolUse")),
+        errors
+            .iter()
+            .any(|e| e.contains("auto_record") && e.contains("PostToolUse")),
         "Expected error about auto_record requiring PostToolUse: {:?}",
         errors
     );
@@ -888,7 +892,9 @@ fn test_validate_monitor_names_unique() {
     config.monitors.push(monitor);
     let (errors, _) = config.validate_deep(Path::new("examples/minimal"));
     assert!(
-        errors.iter().any(|e| e.contains("dup_monitor") && e.contains("duplicate")),
+        errors
+            .iter()
+            .any(|e| e.contains("dup_monitor") && e.contains("duplicate")),
         "Expected error about duplicate monitor name: {:?}",
         errors
     );
@@ -908,7 +914,9 @@ fn test_validate_write_gated_states_exist() {
     });
     let (errors, _) = config.validate_deep(Path::new("examples/minimal"));
     assert!(
-        errors.iter().any(|e| e.contains("nonexistent_state") && e.contains("unknown state")),
+        errors
+            .iter()
+            .any(|e| e.contains("nonexistent_state") && e.contains("unknown state")),
         "Expected error about write_gated referencing unknown state: {:?}",
         errors
     );

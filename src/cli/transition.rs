@@ -124,9 +124,7 @@ pub fn cmd_transition(
             if render_count > 0 {
                 println!(
                     "{} \u{2192} {} ({} rendered)",
-                    outcome.from,
-                    outcome.to,
-                    render_count
+                    outcome.from, outcome.to, render_count
                 );
             } else {
                 println!("{} \u{2192} {}", outcome.from, outcome.to);

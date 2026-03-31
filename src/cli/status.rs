@@ -56,10 +56,7 @@ pub fn cmd_status(config_dir: &str, targeting: &LedgerTargeting) -> Box<dyn Comm
                 "usage_error"
             };
             return Box::new(CommandResult::<StatusData>::err(
-                "status",
-                code,
-                error_code,
-                msg,
+                "status", code, error_code, msg,
             ));
         }
     };

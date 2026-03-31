@@ -467,11 +467,14 @@ impl ProtocolConfig {
         }
 
         // 14. Hook validation.
-        let known_check_types: HashSet<&str> =
-            ["query", "output_contains_any", "event_count_since_last_transition"]
-                .iter()
-                .copied()
-                .collect();
+        let known_check_types: HashSet<&str> = [
+            "query",
+            "output_contains_any",
+            "event_count_since_last_transition",
+        ]
+        .iter()
+        .copied()
+        .collect();
         let state_names: HashSet<&str> = self.states.keys().map(|s| s.as_str()).collect();
 
         for (idx, hook) in self.hooks.iter().enumerate() {
@@ -530,10 +533,7 @@ impl ProtocolConfig {
             if let Some(ref states) = hook.states {
                 for s in states {
                     if !state_names.contains(s.as_str()) {
-                        errors.push(format!(
-                            "{}: references unknown state '{}'",
-                            label, s
-                        ));
+                        errors.push(format!("{}: references unknown state '{}'", label, s));
                     }
                 }
             }
@@ -562,7 +562,11 @@ impl ProtocolConfig {
                         "{}: unknown check type '{}' (known: {})",
                         label,
                         check.check_type,
-                        known_check_types.iter().copied().collect::<Vec<_>>().join(", ")
+                        known_check_types
+                            .iter()
+                            .copied()
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     ));
                 }
             }
@@ -570,8 +574,10 @@ impl ProtocolConfig {
 
         // 15. Monitor validation.
         {
-            let known_monitor_trigger_types: HashSet<&str> =
-                ["event_count_since_last_transition"].iter().copied().collect();
+            let known_monitor_trigger_types: HashSet<&str> = ["event_count_since_last_transition"]
+                .iter()
+                .copied()
+                .collect();
             let mut monitor_names: HashSet<String> = HashSet::new();
 
             for (idx, monitor) in self.monitors.iter().enumerate() {
@@ -579,10 +585,7 @@ impl ProtocolConfig {
 
                 // Names must be unique.
                 if !monitor_names.insert(monitor.name.clone()) {
-                    errors.push(format!(
-                        "{}: duplicate monitor name",
-                        label
-                    ));
+                    errors.push(format!("{}: duplicate monitor name", label));
                 }
 
                 // action must be "warn".
@@ -597,10 +600,7 @@ impl ProtocolConfig {
                 if let Some(ref states) = monitor.states {
                     for s in states {
                         if !state_names.contains(s.as_str()) {
-                            errors.push(format!(
-                                "{}: references unknown state '{}'",
-                                label, s
-                            ));
+                            errors.push(format!("{}: references unknown state '{}'", label, s));
                         }
                     }
                 }
@@ -611,7 +611,11 @@ impl ProtocolConfig {
                         "{}: unknown trigger type '{}' (known: {})",
                         label,
                         monitor.trigger.trigger_type,
-                        known_monitor_trigger_types.iter().copied().collect::<Vec<_>>().join(", ")
+                        known_monitor_trigger_types
+                            .iter()
+                            .copied()
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     ));
                 }
             }

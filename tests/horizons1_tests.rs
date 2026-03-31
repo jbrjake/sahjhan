@@ -18,7 +18,11 @@ fn setup_horizons1() -> tempfile::TempDir {
         "events.toml",
         "renders.toml",
     ] {
-        std::fs::copy(format!("examples/horizons1/{}", file), config_dir.join(file)).unwrap();
+        std::fs::copy(
+            format!("examples/horizons1/{}", file),
+            config_dir.join(file),
+        )
+        .unwrap();
     }
     std::fs::create_dir_all(dir.path().join("output")).unwrap();
 
@@ -59,7 +63,12 @@ fn test_horizons1_transition_through_phases() {
     // pre_launch → assembly_complete
     Command::cargo_bin("sahjhan")
         .unwrap()
-        .args(["--config-dir", "enforcement", "transition", "complete_assembly"])
+        .args([
+            "--config-dir",
+            "enforcement",
+            "transition",
+            "complete_assembly",
+        ])
         .current_dir(dir.path())
         .assert()
         .success();
@@ -97,7 +106,12 @@ fn test_horizons1_gate_blocks_launch_without_subsystems() {
 
     Command::cargo_bin("sahjhan")
         .unwrap()
-        .args(["--config-dir", "enforcement", "transition", "complete_assembly"])
+        .args([
+            "--config-dir",
+            "enforcement",
+            "transition",
+            "complete_assembly",
+        ])
         .current_dir(dir.path())
         .assert()
         .success();
@@ -110,7 +124,14 @@ fn test_horizons1_gate_blocks_launch_without_subsystems() {
 
     let output = Command::cargo_bin("sahjhan")
         .unwrap()
-        .args(["--config-dir", "enforcement", "--json", "gate", "check", "clear_for_launch"])
+        .args([
+            "--config-dir",
+            "enforcement",
+            "--json",
+            "gate",
+            "check",
+            "clear_for_launch",
+        ])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -128,7 +149,12 @@ fn test_horizons1_subsystem_completion_unblocks_launch() {
 
     Command::cargo_bin("sahjhan")
         .unwrap()
-        .args(["--config-dir", "enforcement", "transition", "complete_assembly"])
+        .args([
+            "--config-dir",
+            "enforcement",
+            "transition",
+            "complete_assembly",
+        ])
         .current_dir(dir.path())
         .assert()
         .success();
@@ -142,7 +168,14 @@ fn test_horizons1_subsystem_completion_unblocks_launch() {
     for subsystem in &["eps", "adcs", "telecom", "propulsion", "payload"] {
         Command::cargo_bin("sahjhan")
             .unwrap()
-            .args(["--config-dir", "enforcement", "set", "complete", "subsystems", subsystem])
+            .args([
+                "--config-dir",
+                "enforcement",
+                "set",
+                "complete",
+                "subsystems",
+                subsystem,
+            ])
             .current_dir(dir.path())
             .assert()
             .success();
@@ -150,7 +183,14 @@ fn test_horizons1_subsystem_completion_unblocks_launch() {
 
     let output = Command::cargo_bin("sahjhan")
         .unwrap()
-        .args(["--config-dir", "enforcement", "--json", "gate", "check", "clear_for_launch"])
+        .args([
+            "--config-dir",
+            "enforcement",
+            "--json",
+            "gate",
+            "check",
+            "clear_for_launch",
+        ])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -165,7 +205,12 @@ fn test_horizons1_anomaly_from_any_state() {
 
     Command::cargo_bin("sahjhan")
         .unwrap()
-        .args(["--config-dir", "enforcement", "transition", "declare_anomaly"])
+        .args([
+            "--config-dir",
+            "enforcement",
+            "transition",
+            "declare_anomaly",
+        ])
         .current_dir(dir.path())
         .assert()
         .success();
@@ -186,7 +231,12 @@ fn test_horizons1_log_json_after_transitions() {
 
     Command::cargo_bin("sahjhan")
         .unwrap()
-        .args(["--config-dir", "enforcement", "transition", "complete_assembly"])
+        .args([
+            "--config-dir",
+            "enforcement",
+            "transition",
+            "complete_assembly",
+        ])
         .current_dir(dir.path())
         .assert()
         .success();
@@ -210,7 +260,12 @@ fn test_horizons1_set_status_json() {
 
     Command::cargo_bin("sahjhan")
         .unwrap()
-        .args(["--config-dir", "enforcement", "transition", "complete_assembly"])
+        .args([
+            "--config-dir",
+            "enforcement",
+            "transition",
+            "complete_assembly",
+        ])
         .current_dir(dir.path())
         .assert()
         .success();
@@ -223,20 +278,41 @@ fn test_horizons1_set_status_json() {
 
     Command::cargo_bin("sahjhan")
         .unwrap()
-        .args(["--config-dir", "enforcement", "set", "complete", "subsystems", "eps"])
+        .args([
+            "--config-dir",
+            "enforcement",
+            "set",
+            "complete",
+            "subsystems",
+            "eps",
+        ])
         .current_dir(dir.path())
         .assert()
         .success();
     Command::cargo_bin("sahjhan")
         .unwrap()
-        .args(["--config-dir", "enforcement", "set", "complete", "subsystems", "adcs"])
+        .args([
+            "--config-dir",
+            "enforcement",
+            "set",
+            "complete",
+            "subsystems",
+            "adcs",
+        ])
         .current_dir(dir.path())
         .assert()
         .success();
 
     let output = Command::cargo_bin("sahjhan")
         .unwrap()
-        .args(["--config-dir", "enforcement", "--json", "set", "status", "subsystems"])
+        .args([
+            "--config-dir",
+            "enforcement",
+            "--json",
+            "set",
+            "status",
+            "subsystems",
+        ])
         .current_dir(dir.path())
         .output()
         .unwrap();

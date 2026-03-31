@@ -89,6 +89,10 @@ impl<T: Serialize + Display> CommandResult<T> {
         }
     }
 
+    pub fn set_exit_code(&mut self, code: i32) {
+        self.exit_code = code;
+    }
+
     pub fn err_with_details(
         command: &str,
         exit_code: i32,

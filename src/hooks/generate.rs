@@ -474,10 +474,7 @@ mod tests {
             .unwrap();
         assert_eq!(post_tool.hook_type, "PostToolUse");
 
-        let stop = hooks
-            .iter()
-            .find(|h| h.filename == "stop_hook.py")
-            .unwrap();
+        let stop = hooks.iter().find(|h| h.filename == "stop_hook.py").unwrap();
         assert_eq!(stop.hook_type, "Stop");
 
         let bootstrap = hooks

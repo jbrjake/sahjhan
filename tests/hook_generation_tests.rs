@@ -154,10 +154,7 @@ fn hook_types_are_correct() {
         .unwrap();
     assert_eq!(post.hook_type, "PostToolUse");
 
-    let stop = hooks
-        .iter()
-        .find(|h| h.filename == "stop_hook.py")
-        .unwrap();
+    let stop = hooks.iter().find(|h| h.filename == "stop_hook.py").unwrap();
     assert_eq!(stop.hook_type, "Stop");
 
     let bs = hooks
@@ -248,10 +245,7 @@ fn stop_hook_passes_output_text() {
     let config = make_config(vec!["output"]);
     let hooks = gen.generate(&config, "cc", None).unwrap();
 
-    let stop = hooks
-        .iter()
-        .find(|h| h.filename == "stop_hook.py")
-        .unwrap();
+    let stop = hooks.iter().find(|h| h.filename == "stop_hook.py").unwrap();
     assert!(stop.content.contains("--event"));
     assert!(stop.content.contains("Stop"));
     assert!(stop.content.contains("--output-text"));

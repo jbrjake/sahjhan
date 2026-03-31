@@ -212,9 +212,9 @@ pub fn cmd_hook_eval(
             .collect(),
     };
 
-    Box::new(CommandResult::ok_with_exit_code(
-        "hook_eval",
-        data,
-        exit_code,
-    ))
+    // Always ok=true so to_text() renders data (JSON), not an error message.
+    // The exit code still signals block (1) vs allow/warn (0) to the harness.
+    let mut result = CommandResult::ok("hook_eval", data);
+    result.set_exit_code(exit_code);
+    Box::new(result)
 }

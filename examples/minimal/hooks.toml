@@ -1,0 +1,35 @@
+# Example hooks.toml for the minimal protocol.
+#
+# Demonstrates: gate-based pre-tool hook, stop hook, and monitor.
+
+[[hooks]]
+event = "PreToolUse"
+tools = ["Edit", "Write"]
+states = ["working"]
+action = "block"
+message = "Cannot edit source files in working state without a check_done event. Record one first."
+
+[hooks.gate]
+type = "ledger_has_event_since"
+event = "check_done"
+since = "last_transition"
+
+[[hooks]]
+event = "Stop"
+states_not = ["done"]
+action = "block"
+message = "Cannot claim completion in state {current_state}. Transition to done first."
+
+[hooks.check]
+type = "output_contains_any"
+patterns = ["task complete", "all done", "finished"]
+
+[[monitors]]
+name = "idle_stall"
+states = ["working"]
+action = "warn"
+message = "{count} events since last state transition without advancing."
+
+[monitors.trigger]
+type = "event_count_since_last_transition"
+threshold = 10

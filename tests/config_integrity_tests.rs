@@ -456,9 +456,15 @@ fn test_config_seals_include_hooks_toml() {
     let dir = std::path::Path::new("examples/minimal");
     let seals = sahjhan::config::compute_config_seals(dir);
     assert!(seals.contains_key("config_seal_hooks"));
-    // minimal has no hooks.toml — empty bytes hash
+    // minimal now has a hooks.toml — seal should be a non-empty-file hash
+    let empty_hash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    assert_ne!(
+        seals["config_seal_hooks"], empty_hash,
+        "hooks.toml seal should not be the empty-file hash now that hooks.toml exists"
+    );
     assert_eq!(
-        seals["config_seal_hooks"],
-        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        seals["config_seal_hooks"].len(),
+        64,
+        "hooks seal should be a 64-char hex SHA-256"
     );
 }

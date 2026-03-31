@@ -801,15 +801,15 @@ message = "Docs only writable in documentation state"
 
 #[test]
 fn test_protocol_config_loads_hooks_toml() {
-    // Load from minimal example which has no hooks.toml — should succeed with empty hooks
+    // Load from minimal example which now has hooks.toml
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     assert!(
-        config.hooks.is_empty(),
-        "hooks should be empty when hooks.toml is absent"
+        !config.hooks.is_empty(),
+        "hooks should be loaded from hooks.toml"
     );
     assert!(
-        config.monitors.is_empty(),
-        "monitors should be empty when hooks.toml is absent"
+        !config.monitors.is_empty(),
+        "monitors should be loaded from hooks.toml"
     );
 }
 
@@ -897,6 +897,27 @@ fn test_validate_monitor_names_unique() {
             .any(|e| e.contains("dup_monitor") && e.contains("duplicate")),
         "Expected error about duplicate monitor name: {:?}",
         errors
+    );
+}
+
+#[test]
+fn test_minimal_example_loads_with_hooks() {
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    assert!(
+        !config.hooks.is_empty(),
+        "minimal example should have hooks"
+    );
+    assert!(
+        !config.monitors.is_empty(),
+        "minimal example should have monitors"
+    );
+
+    let (errors, _warnings) = config.validate_deep(Path::new("examples/minimal"));
+    let hook_errors: Vec<_> = errors.iter().filter(|e| e.contains("hooks.toml")).collect();
+    assert!(
+        hook_errors.is_empty(),
+        "hooks should validate. Errors: {:?}",
+        hook_errors
     );
 }
 

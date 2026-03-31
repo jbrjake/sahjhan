@@ -537,8 +537,9 @@ fn test_hook_generate() {
         .current_dir(dir.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("write_guard.py"))
-        .stdout(predicate::str::contains("bash_guard.py"))
+        .stdout(predicate::str::contains("pre_tool_hook.py"))
+        .stdout(predicate::str::contains("post_tool_hook.py"))
+        .stdout(predicate::str::contains("stop_hook.py"))
         .stdout(predicate::str::contains("_sahjhan_bootstrap.py"))
         .stdout(predicate::str::contains("hooks.json"));
 }
@@ -560,11 +561,12 @@ fn test_hook_generate_with_output_dir() {
         .current_dir(dir.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("Generated 3 hook scripts"));
+        .stdout(predicate::str::contains("Generated 4 hook scripts"));
 
     // Verify files were created
-    assert!(hooks_dir.join("write_guard.py").exists());
-    assert!(hooks_dir.join("bash_guard.py").exists());
+    assert!(hooks_dir.join("pre_tool_hook.py").exists());
+    assert!(hooks_dir.join("post_tool_hook.py").exists());
+    assert!(hooks_dir.join("stop_hook.py").exists());
     assert!(hooks_dir.join("_sahjhan_bootstrap.py").exists());
 }
 

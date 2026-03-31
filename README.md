@@ -646,7 +646,7 @@ The ledger is the hash chain. Every entry is a JSON line with eight envelope fie
 
 The manifest tracks SHA-256 hashes of every managed file. Touch one through Bash, the hash won't match, violation gets written to the ledger. Permanently. The manifest hash is also in the ledger, so tampering with the manifest means tampering with the ledger, which means defeating the hash chain. Turtles all the way down, but SHA-256 turtles.
 
-Hooks handle the perimeter. PreToolUse blocks writes to managed files. PostToolUse checks integrity after every Bash command.
+Hooks handle the perimeter. PreToolUse evaluates gate conditions, write guards, and managed path checks before every tool use. PostToolUse auto-records events and runs checks after. Stop hooks catch premature completion claims. All three delegate to `sahjhan hook eval`, which evaluates rules from `hooks.toml` against live ledger state.
 
 ## Gate types
 
@@ -658,7 +658,7 @@ Hooks handle the perimeter. PreToolUse blocks writes to managed files. PostToolU
 | `command_output` | `cmd`, `expect` | Sahjhan runs the command. Stdout must match. |
 | `ledger_has_event` | `event`, `min_count`, `filter` | N+ events of this type in the ledger. |
 | `ledger_lacks_event` | `event`, `filter` | Zero events of this type. The inverse of `ledger_has_event`. Use for "must not have done X" constraints — e.g., no audit findings before recon is complete. |
-| `ledger_has_event_since` | `event`, `since` | Event recorded since last transition. |
+| `ledger_has_event_since` | `event`, `since` | Event recorded since a reference point. `since = "last_transition"` for last state change, or an event type name like `"fix_commit"` to check since the last occurrence of that event (falls back to last transition if none exists). |
 | `set_covered` | `set`, `event`, `field` | Every set member has a matching event. |
 | `min_elapsed` | `event`, `seconds` | N seconds since last event. By itself this only proves the agent owns a clock. Ask me how I know. Pair with evidence gates. |
 | `no_violations` | (none) | Clean record. No tampering. |
@@ -782,11 +782,13 @@ Both event types are permanent. The violations don't disappear — they stay in 
 sahjhan hook generate --harness cc --output-dir .claude/hooks
 ```
 
-Generates `write_guard.py` (blocks Write/Edit to managed paths), `bash_guard.py` (checks integrity after every Bash command), and `_common.py` (shared utilities). A `bootstrap.py` template protects the enforcement infrastructure itself. Install it as the first PreToolUse hook.
+Generates `pre_tool_hook.py` (PreToolUse), `post_tool_hook.py` (PostToolUse), `stop_hook.py` (Stop), and `_sahjhan_bootstrap.py` (infrastructure protection). The first three are thin wrappers that delegate to `sahjhan hook eval`. The bootstrap hook is self-contained — it can't delegate to the system it protects.
 
 | What the agent tries | What happens |
 |----------------|----------|
 | Write/Edit to managed file | Blocked before execution |
+| Edit source without a failing test | Runtime hook checks gate, blocks the edit |
+| Claim "audit complete" in non-terminal state | Stop hook pattern-matches output, blocks |
 | Shell tricks (`echo >`, `sed -i`, `python -c`) | Detected, violation recorded permanently |
 | Delete or reset the ledger | Hash chain. There is no reset. |
 | Fabricate history entries | Every entry is hash-linked. Fabricate one, the chain breaks. |
@@ -796,6 +798,110 @@ Generates `write_guard.py` (blocks Write/Edit to managed paths), `bash_guard.py`
 | `sleep 65 && check_convergence` | Been there. Use evidence gates. |
 | `cat` the binary to find loopholes | Compiled Rust. Let me know how it goes. |
 | Query the ledger to find exploits | Go ahead. It's your permanent record. |
+
+### Runtime hooks
+
+The generated hook scripts used to contain the enforcement logic themselves — managed path lists baked in at generation time, manifest verification hardcoded in Python. Which meant every time you changed the protocol, you had to regenerate them. And the scripts were readable. The agent could study the conditions and route around them.
+
+Now the scripts are three-line wrappers. They parse the harness event, call `sahjhan hook eval`, and forward the decision. All the intelligence lives in the Rust binary, evaluated against live ledger state. Change your `hooks.toml`, and the next tool use picks it up. No regeneration needed.
+
+```bash
+sahjhan hook eval --event PreToolUse --tool Edit --file src/main.rs
+# {"decision":"block","messages":[{"source":"hook","rule_index":0,
+#   "action":"block","message":"TDD violation: write a failing test first."}],
+#   "auto_records":[],"monitor_warnings":[]}
+```
+
+Hooks are defined in `hooks.toml`, a sixth optional config file alongside the existing five. They fire on three events: `PreToolUse` (before the agent uses a tool), `PostToolUse` (after), and `Stop` (when the agent tries to end its turn). Each hook can be gated to specific tools, states, and file paths.
+
+Three kinds of conditions:
+
+**Gate hooks** reuse the existing gate system. Any gate type that works in a transition works in a hook. If the gate fails, the hook blocks:
+
+```toml
+[[hooks]]
+event = "PreToolUse"
+tools = ["Edit"]
+states = ["fix_loop"]
+action = "block"
+message = "Write a failing test before editing source files."
+
+[hooks.gate]
+type = "ledger_has_event_since"
+event = "failing_test"
+since = "fix_commit"
+
+[hooks.filter]
+path_not_matches = "tests/*"
+```
+
+That filter means the hook only applies to source files. Edit `tests/test_thing.py` and the hook steps aside. Edit `src/main.py` without a `failing_test` event since the last `fix_commit`, and you're blocked. TDD, mechanically enforced. The agent doesn't get to decide whether its test was good enough. It doesn't even get to decide whether it *wrote* a test. The ledger knows.
+
+**Check hooks** evaluate conditions the gate system doesn't cover — pattern matching on agent output, event count thresholds:
+
+```toml
+[[hooks]]
+event = "Stop"
+states_not = ["converged", "finalized"]
+action = "block"
+message = "You're claiming completion but state is {current_state}."
+
+[hooks.check]
+type = "output_contains_any"
+patterns = ["audit complete", "all fixes applied", "CONVERGED"]
+```
+
+This catches premature victory laps. The agent writes "AUDIT COMPLETE" while still in `fix_loop`. The stop hook sees the completion language, checks the state, blocks the output. Write all the summaries you want — but until the protocol says you're done, you're not done.
+
+**Auto-record hooks** observe without enforcing. They automatically append events to the ledger when tools are used, giving the ledger ground truth about what actually changed:
+
+```toml
+[[hooks]]
+event = "PostToolUse"
+tools = ["Edit", "Write"]
+
+[hooks.auto_record]
+event_type = "source_edit"
+fields = { file_path = "{tool.file_path}" }
+```
+
+Now the ledger knows which files were modified, independent of what the agent claims. The stall detector and edit accumulation checks can work off these auto-recorded events instead of the agent's self-reporting. Trust but verify, except skip the trust part.
+
+### State-gated write guards
+
+The existing `paths.managed` blocks all writes to managed directories. But some files should be writable — just not yet. A summary document that should only exist after convergence. A punchlist that should only update in the finalized state.
+
+`write_gated` guards in `protocol.toml` enforce this:
+
+```toml
+[guards]
+read_blocked = [".sahjhan/session.key"]
+
+[[guards.write_gated]]
+path = "docs/SUMMARY.md"
+writable_in = ["finalized"]
+message = "SUMMARY.md can only be written after convergence. Current state: {current_state}."
+```
+
+The guard is checked during `hook eval` for Edit and Write tools. In the `finalized` state, the write goes through. In any other state, it's blocked. The path field supports globs. This is distinct from `paths.managed`, which blocks writes *always* — `write_gated` blocks them *conditionally*.
+
+### Monitors
+
+Monitors catch drift. They don't block — they warn. A monitor fires when a threshold condition is met and the warning surfaces in every `hook eval` response until the agent does something about it.
+
+```toml
+[[monitors]]
+name = "fix_loop_stall"
+states = ["fix_loop"]
+action = "warn"
+message = "{count} events since last state transition. Commit your fixes."
+
+[monitors.trigger]
+type = "event_count_since_last_transition"
+threshold = 20
+```
+
+Twenty events in `fix_loop` without advancing state. That's a lot of activity with nothing to show for it. The monitor doesn't stop the agent — it just makes sure the agent (and anyone watching) knows something might be wrong. Monitors piggyback on `hook eval` calls, so they're checked on every tool use. No separate timer, no polling. Just a question asked on every action: are you still making progress?
 
 ## CLI reference
 
@@ -824,6 +930,8 @@ sahjhan render                            Regenerate markdown views from ledger
 sahjhan gate check <transition> [args...]  Dry-run gate evaluation (✓/✗/?)
 sahjhan reset --confirm --token <TOKEN>   Archive current run and restart
 sahjhan hook generate [--harness cc]      Generate integration hooks
+sahjhan hook eval --event <E> [--tool <T>] [--file <F>] [--output-text <text>]
+                                          Evaluate hooks against current state (JSON)
 
 sahjhan query "<SQL>"                     SQL query against the ledger
 sahjhan query --type <type> [--count]     Convenience: filter by event type
@@ -865,17 +973,18 @@ Exclusive file locks for writes, shared for reads. 5 second lock timeout.
 |             Protocol Definition                   |
 |          (TOML config files, per-project)         |
 |   states, transitions, gates, events, sets,       |
-|   ledger templates                                |
+|   hooks, monitors, ledger templates               |
 +--------------------------------------------------+
 |              Sahjhan Engine                        |
 |           (Rust binary, reusable core)             |
 |   state machine, JSONL hash-chain ledger,         |
 |   DataFusion query engine, gate evaluator,        |
-|   manifest, template renderer, ledger registry    |
+|   manifest, template renderer, ledger registry,   |
+|   hook evaluator                                  |
 +--------------------------------------------------+
 |               Hook Bridge                         |
 |        (generated scripts, per-harness)           |
-|   PreToolUse / PostToolUse for Claude Code        |
+|   PreToolUse / PostToolUse / Stop for Claude Code |
 +--------------------------------------------------+
 |               Filesystem                          |
 |   ledger.jsonl, ledgers.toml, manifest.json,      |
@@ -895,9 +1004,9 @@ src/
   gates/               Gate evaluation, file/command/ledger/snapshot/query gates
   query/               DataFusion query engine, Arrow table builder
   manifest/            File hash tracking, integrity verification
-  config/              TOML parsing (protocol, states, transitions, events, renders)
+  config/              TOML parsing (protocol, states, transitions, events, renders, hooks)
   render/              Tera template rendering (where_eq, unique_by filters)
-  hooks/               Hook script generation
+  hooks/               Hook script generation and runtime evaluation
 ```
 
 ## License

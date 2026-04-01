@@ -143,14 +143,23 @@ impl Ledger {
     /// Append a new entry to the ledger.
     ///
     /// The entry's `seq` is `last_seq + 1` and its `prev` is the
-    /// `hash` of the current tail.
+    /// `hash` of the current tail **as read from disk under an exclusive
+    /// lock**. This prevents TOCTOU races when multiple processes append
+    /// concurrently (see issue #21).
     pub fn append(
         &mut self,
         event_type: &str,
         fields: BTreeMap<String, String>,
     ) -> Result<(), LedgerError> {
-        let prev = self
-            .entries
+        // Acquire exclusive lock BEFORE reading state — this is the critical
+        // section that prevents the TOCTOU race (issue #21).
+        let file = OpenOptions::new().read(true).append(true).open(&self.path)?;
+        lock_exclusive_with_timeout(&file, &self.path)?;
+
+        // Re-read file under the lock to get the true on-disk tail.
+        // Another process may have appended entries since we last read.
+        let on_disk_entries = parse_file_inner(&file)?;
+        let prev = on_disk_entries
             .last()
             .expect("ledger must have at least one entry (genesis)");
         let seq = prev.seq + 1;
@@ -165,29 +174,32 @@ impl Ledger {
             fields,
         );
 
-        // Append to file under exclusive lock.
-        let file = OpenOptions::new().append(true).open(&self.path)?;
-        lock_exclusive_with_timeout(&file, &self.path)?;
-        // Use a BufWriter-like approach: write line then unlock
+        // Write — O_APPEND guarantees this goes to the end of file.
         let mut file = file;
         writeln!(file, "{}", entry.to_jsonl())?;
         file.unlock()?;
 
+        // Sync in-memory state with on-disk reality + our new entry.
+        self.entries = on_disk_entries;
         self.entries.push(entry);
         Ok(())
     }
 
     /// Append a new entry with an explicit timestamp.
     ///
-    /// Useful for imports and migration tooling.
+    /// Useful for imports and migration tooling. Same lock-first discipline
+    /// as `append()` to prevent concurrent-write races (issue #21).
     pub fn append_with_ts(
         &mut self,
         event_type: &str,
         fields: BTreeMap<String, String>,
         ts: String,
     ) -> Result<(), LedgerError> {
-        let prev = self
-            .entries
+        let file = OpenOptions::new().read(true).append(true).open(&self.path)?;
+        lock_exclusive_with_timeout(&file, &self.path)?;
+
+        let on_disk_entries = parse_file_inner(&file)?;
+        let prev = on_disk_entries
             .last()
             .expect("ledger must have at least one entry (genesis)");
         let seq = prev.seq + 1;
@@ -203,12 +215,11 @@ impl Ledger {
             ts,
         );
 
-        let file = OpenOptions::new().append(true).open(&self.path)?;
-        lock_exclusive_with_timeout(&file, &self.path)?;
         let mut file = file;
         writeln!(file, "{}", entry.to_jsonl())?;
         file.unlock()?;
 
+        self.entries = on_disk_entries;
         self.entries.push(entry);
         Ok(())
     }

@@ -296,7 +296,7 @@ fn test_reload_fixes_external_append() {
 // ---- 10. External append causes stale chain ----
 
 #[test]
-fn test_external_append_causes_stale_chain() {
+fn test_external_append_handled_by_lock_and_reread() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("test.jsonl");
 
@@ -320,19 +320,17 @@ fn test_external_append_causes_stale_chain() {
     writeln!(file, "{}", external_entry.to_jsonl()).unwrap();
     drop(file);
 
-    // Ledger doesn't know about external entry — its in-memory last_hash is genesis hash.
-    // Appending should create entry with prev=genesis_hash, but the file now has
-    // an entry with seq=1. So our append creates seq=1 (duplicate) or the chain diverges.
-    // After reload, verify should catch it.
+    // Ledger's in-memory state is stale (doesn't know about external entry).
+    // append() re-reads the file under the lock, so it correctly discovers
+    // the external entry and chains after it (issue #21 fix).
     ledger.append("our_event", BTreeMap::new()).unwrap();
 
-    // Reload to see the full file
-    ledger.reload().unwrap();
+    // In-memory state should now reflect all 3 entries
+    assert_eq!(ledger.len(), 3, "genesis + external + our_event");
+    assert_eq!(ledger.entries()[1].event_type, "external_event");
+    assert_eq!(ledger.entries()[2].event_type, "our_event");
+    assert_eq!(ledger.entries()[2].seq, 2);
 
-    // Verify should fail — either sequence gap or chain break
-    let result = ledger.verify();
-    assert!(
-        result.is_err(),
-        "stale append should cause chain verification failure"
-    );
+    // Chain should verify cleanly
+    ledger.verify().unwrap();
 }

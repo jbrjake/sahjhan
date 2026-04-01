@@ -153,7 +153,10 @@ impl Ledger {
     ) -> Result<(), LedgerError> {
         // Acquire exclusive lock BEFORE reading state — this is the critical
         // section that prevents the TOCTOU race (issue #21).
-        let file = OpenOptions::new().read(true).append(true).open(&self.path)?;
+        let file = OpenOptions::new()
+            .read(true)
+            .append(true)
+            .open(&self.path)?;
         lock_exclusive_with_timeout(&file, &self.path)?;
 
         // Re-read file under the lock to get the true on-disk tail.
@@ -195,7 +198,10 @@ impl Ledger {
         fields: BTreeMap<String, String>,
         ts: String,
     ) -> Result<(), LedgerError> {
-        let file = OpenOptions::new().read(true).append(true).open(&self.path)?;
+        let file = OpenOptions::new()
+            .read(true)
+            .append(true)
+            .open(&self.path)?;
         lock_exclusive_with_timeout(&file, &self.path)?;
 
         let on_disk_entries = parse_file_inner(&file)?;

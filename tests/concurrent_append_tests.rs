@@ -21,10 +21,7 @@ fn fields(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
 fn open_and_append(path: &std::path::Path, event_type: &str, id: usize) -> Result<(), String> {
     let mut ledger = Ledger::open(path).map_err(|e| format!("open failed ({}): {}", id, e))?;
     ledger
-        .append(
-            event_type,
-            fields(&[("worker", &id.to_string())]),
-        )
+        .append(event_type, fields(&[("worker", &id.to_string())]))
         .map_err(|e| format!("append failed ({}): {}", id, e))?;
     Ok(())
 }
@@ -80,11 +77,9 @@ fn test_concurrent_two_thread_append() {
             // Verify contiguous sequence numbers
             for (i, entry) in ledger.entries().iter().enumerate() {
                 assert_eq!(
-                    entry.seq,
-                    i as u64,
+                    entry.seq, i as u64,
                     "Sequence gap: expected {}, got {}",
-                    i,
-                    entry.seq
+                    i, entry.seq
                 );
             }
         }

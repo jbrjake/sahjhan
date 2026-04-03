@@ -1,6 +1,6 @@
 [package]
 name = "sahjhan"
-version = "0.7.1"
+version = "0.8.0"
 edition = "2021"
 description = "Protocol enforcement engine for AI agents"
 license = "MIT"

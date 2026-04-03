@@ -477,6 +477,155 @@ fn test_ledger_has_event_with_filter_fail() {
 }
 
 // ---------------------------------------------------------------------------
+// ledger_has_event max_count
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_ledger_has_event_max_count_pass() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+    ledger.append("fix_commit", BTreeMap::new()).unwrap();
+    ledger.append("fix_commit", BTreeMap::new()).unwrap();
+
+    let gate = make_gate(
+        "ledger_has_event",
+        vec![
+            ("event", toml::Value::String("fix_commit".to_string())),
+            ("max_count", toml::Value::Integer(5)),
+        ],
+    );
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(result.passed);
+    assert!(result.description.contains("< 5"));
+}
+
+#[test]
+fn test_ledger_has_event_max_count_exceeded() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+    for _ in 0..5 {
+        ledger.append("fix_commit", BTreeMap::new()).unwrap();
+    }
+
+    let gate = make_gate(
+        "ledger_has_event",
+        vec![
+            ("event", toml::Value::String("fix_commit".to_string())),
+            ("max_count", toml::Value::Integer(5)),
+        ],
+    );
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(!result.passed);
+    assert!(result.reason.unwrap().contains("budget exhausted"));
+}
+
+#[test]
+fn test_ledger_has_event_max_count_with_min_count() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+    ledger.append("fix_commit", BTreeMap::new()).unwrap();
+    ledger.append("fix_commit", BTreeMap::new()).unwrap();
+    ledger.append("fix_commit", BTreeMap::new()).unwrap();
+
+    // 3 events, min_count=2, max_count=5 → passes (2 <= 3 < 5)
+    let gate = make_gate(
+        "ledger_has_event",
+        vec![
+            ("event", toml::Value::String("fix_commit".to_string())),
+            ("min_count", toml::Value::Integer(2)),
+            ("max_count", toml::Value::Integer(5)),
+        ],
+    );
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    assert!(evaluate_gate(&gate, &ctx).passed);
+}
+
+#[test]
+fn test_ledger_has_event_max_count_with_filter() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    // 3 events for perspective "security", 2 for "performance"
+    for _ in 0..3 {
+        let mut fields = BTreeMap::new();
+        fields.insert("perspective".to_string(), "security".to_string());
+        ledger.append("fix_commit", fields).unwrap();
+    }
+    for _ in 0..2 {
+        let mut fields = BTreeMap::new();
+        fields.insert("perspective".to_string(), "performance".to_string());
+        ledger.append("fix_commit", fields).unwrap();
+    }
+
+    let mut filter = toml::value::Table::new();
+    filter.insert(
+        "perspective".to_string(),
+        toml::Value::String("security".to_string()),
+    );
+
+    // max_count=3 for "security" → fails (3 not < 3)
+    let gate = make_gate(
+        "ledger_has_event",
+        vec![
+            ("event", toml::Value::String("fix_commit".to_string())),
+            ("max_count", toml::Value::Integer(3)),
+            ("filter", toml::Value::Table(filter.clone())),
+        ],
+    );
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    assert!(!evaluate_gate(&gate, &ctx).passed);
+
+    // max_count=4 for "security" → passes (3 < 4)
+    let gate2 = make_gate(
+        "ledger_has_event",
+        vec![
+            ("event", toml::Value::String("fix_commit".to_string())),
+            ("max_count", toml::Value::Integer(4)),
+            ("filter", toml::Value::Table(filter)),
+        ],
+    );
+    assert!(evaluate_gate(&gate2, &ctx).passed);
+}
+
+// ---------------------------------------------------------------------------
 // ledger_has_event_since
 // ---------------------------------------------------------------------------
 

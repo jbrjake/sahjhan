@@ -95,7 +95,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | Command output gate | `gates/command.rs` | `[eval-command-output]` | Run command, pass if stdout matches |
 | File exists gate | `gates/file.rs` | `[eval-file-exists]` | Single file check |
 | Files exist gate | `gates/file.rs` | `[eval-files-exist]` | Multiple files check |
-| Ledger event gate | `gates/ledger.rs` | `[eval-ledger-has-event]` | N+ events of type |
+| Ledger event gate | `gates/ledger.rs` | `[eval-ledger-has-event]` | N+ events of type; optional `max_count` for budget enforcement |
 | Event since gate | `gates/ledger.rs` | `[eval-ledger-has-event-since]` | Event since reference point (last_transition or custom event type) |
 | Ledger lacks event gate | `gates/ledger.rs` | `[eval-ledger-lacks-event]` | Pass if NO matching events exist (negation gate) |
 | Set covered gate | `gates/ledger.rs` | `[eval-set-covered]` | All set members in ledger |
@@ -221,10 +221,10 @@ Sahjhan is a protocol enforcement engine. It has:
 | CLI entry point | `main.rs` | `[cli-main]` | clap arg parsing, alias resolution, dispatch; `--json` global flag |
 | Alias resolution | `cli/aliases.rs` | `[resolve-alias]` | Rewrite CLI args via protocol aliases |
 | JSON output types | `cli/output.rs` | `CommandOutput`, `CommandResult<T>`, data structs | Structured output with JSON envelope (`schema_version: 1`) |
-| Shared helpers | `cli/commands.rs` | (see file index) | Exit codes, ledger targeting, config loading, `[compute-registry-path]` |
-| Init/validate/reset | `cli/init.rs` | `[cmd-init]`, `[cmd-validate]`, `[cmd-reset]` | Lifecycle commands |
-| Transition/gate/event | `cli/transition.rs` | `[cmd-transition]`, `[cmd-gate-check]`, `[record-and-render]`, `validate_event_fields`, `[cmd-event]` | State machine commands |
-| Status/sets | `cli/status.rs` | `[cmd-status]`, `[cmd-set-status]`, `[cmd-set-complete]` | Status display + set management |
+| Shared helpers | `cli/commands.rs` | (see file index) | Exit codes, ledger targeting, config loading, `[compute-registry-path]`, `[status-cache-path]`, `[write-status-cache]` |
+| Init/validate/reset | `cli/init.rs` | `[cmd-init]`, `[cmd-validate]`, `[cmd-reset]` | Lifecycle commands; init writes status-cache.json |
+| Transition/gate/event | `cli/transition.rs` | `[cmd-transition]`, `[cmd-gate-check]`, `[record-and-render]`, `validate_event_fields`, `[cmd-event]` | State machine commands; transition updates status-cache.json |
+| Status/sets | `cli/status.rs` | `[cmd-status]`, `[cmd-set-status]`, `[cmd-set-complete]` | Status display + set management; status warns on missing cache |
 | Log inspection | `cli/log.rs` | `[cmd-log-dump]`, `[cmd-log-verify]`, `[cmd-log-tail]` | Ledger viewing |
 | Ledger management | `cli/ledger.rs` | `[cmd-ledger-create]`, `[cmd-ledger-list]`, etc. | Multi-ledger CRUD; create supports `--from` template mode |
 | Query | `cli/query.rs` | `[cmd-query]` | SQL queries over events |

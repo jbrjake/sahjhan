@@ -18,8 +18,8 @@ use crate::state::machine::StateMachine;
 use super::commands::{
     build_state_params, load_config, load_manifest, open_targeted_ledger,
     registry_path_from_config, resolve_config_dir, resolve_data_dir, save_manifest,
-    track_ledger_in_manifest, LedgerTargeting, EXIT_CONFIG_ERROR, EXIT_INTEGRITY_ERROR,
-    EXIT_SUCCESS, EXIT_USAGE_ERROR,
+    status_cache_path, track_ledger_in_manifest, LedgerTargeting, EXIT_CONFIG_ERROR,
+    EXIT_INTEGRITY_ERROR, EXIT_SUCCESS, EXIT_USAGE_ERROR,
 };
 use super::output::{
     CommandOutput, CommandResult, EventOnlyStatusData, GateResultData, MemberData, SetSummaryData,
@@ -173,6 +173,14 @@ pub fn cmd_status(config_dir: &str, targeting: &LedgerTargeting) -> Box<dyn Comm
         })
         .collect();
 
+    // Self-diagnostics: check for status cache
+    let mut warnings: Vec<String> = Vec::new();
+    if !status_cache_path(&_data_dir).exists() {
+        warnings.push(
+            "status-cache.json not found \u{2014} enforcement hooks may be inactive".to_string(),
+        );
+    }
+
     Box::new(CommandResult::ok(
         "status",
         StatusData {
@@ -180,6 +188,7 @@ pub fn cmd_status(config_dir: &str, targeting: &LedgerTargeting) -> Box<dyn Comm
             event_count,
             chain_valid,
             chain_error,
+            warnings,
             sets,
             transitions,
         },

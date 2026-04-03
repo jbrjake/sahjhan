@@ -19,8 +19,9 @@ use crate::state::machine::StateMachine;
 
 use super::commands::{
     build_state_params, guard_event_only, load_config, load_manifest, open_targeted_ledger,
-    resolve_config_dir, resolve_data_dir, save_manifest, track_ledger_in_manifest, LedgerTargeting,
-    EXIT_GATE_FAILED, EXIT_INTEGRITY_ERROR, EXIT_SUCCESS, EXIT_USAGE_ERROR,
+    resolve_config_dir, resolve_data_dir, save_manifest, track_ledger_in_manifest,
+    write_status_cache, LedgerTargeting, EXIT_GATE_FAILED, EXIT_INTEGRITY_ERROR, EXIT_SUCCESS,
+    EXIT_USAGE_ERROR,
 };
 use super::output::{CandidateData, CommandOutput, CommandResult, GateCheckData, GateResultData};
 
@@ -120,6 +121,9 @@ pub fn cmd_transition(
                     }
                 }
             }
+
+            // Update status cache with new state
+            write_status_cache(&data_dir, &config, &config_path, &outcome.to);
 
             if render_count > 0 {
                 println!(

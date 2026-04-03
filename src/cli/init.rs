@@ -14,8 +14,8 @@ use crate::manifest::tracker::Manifest;
 
 use super::commands::{
     atty_check, hex_encode_short, ledger_path, load_config, manifest_path, open_ledger, pathdiff,
-    resolve_config_dir, resolve_data_dir, save_manifest, EXIT_CONFIG_ERROR, EXIT_INTEGRITY_ERROR,
-    EXIT_SUCCESS, EXIT_USAGE_ERROR,
+    resolve_config_dir, resolve_data_dir, save_manifest, write_status_cache, EXIT_CONFIG_ERROR,
+    EXIT_INTEGRITY_ERROR, EXIT_SUCCESS, EXIT_USAGE_ERROR,
 };
 
 // ---------------------------------------------------------------------------
@@ -164,6 +164,10 @@ pub fn cmd_init(config_dir: &str) -> i32 {
         eprintln!("{}", msg);
         return code;
     }
+
+    // Write status cache for fast hook discovery
+    let initial_state = config.initial_state().unwrap_or("unknown").to_string();
+    write_status_cache(&data_dir, &config, &config_path, &initial_state);
 
     println!("initialized. good luck.");
     EXIT_SUCCESS

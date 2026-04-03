@@ -8,7 +8,7 @@
 // - CommandResult<T>            — typed command result with envelope
 // - ErrorData                   — structured error info
 // - LegacyResult                — shim for unconverted commands
-// - StatusData                  — status command output
+// - StatusData                  — status command output (includes warnings for missing cache, etc.)
 // - EventOnlyStatusData         — event-only ledger status
 // - SetSummaryData              — set summary (status + set-status)
 // - MemberData                  — individual set member
@@ -233,6 +233,8 @@ pub struct StatusData {
     pub event_count: usize,
     pub chain_valid: bool,
     pub chain_error: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
     pub sets: Vec<SetSummaryData>,
     pub transitions: Vec<TransitionSummaryData>,
 }
@@ -252,6 +254,10 @@ impl Display for StatusData {
             "state: {} ({} events, {})",
             self.state, self.event_count, chain_str
         )?;
+
+        for warning in &self.warnings {
+            writeln!(f, "\u{26A0} {}", warning)?;
+        }
 
         if !self.sets.is_empty() {
             writeln!(f, "sets:")?;

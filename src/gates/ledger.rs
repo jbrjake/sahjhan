@@ -1,7 +1,7 @@
 // src/gates/ledger.rs
 //
 // ## Index
-// - [eval-ledger-has-event]        eval_ledger_has_event()        — pass if ledger contains N+ events of a type
+// - [eval-ledger-has-event]        eval_ledger_has_event()        — pass if ledger contains N+ events of a type (optional max_count ceiling)
 // - [eval-ledger-has-event-since]  eval_ledger_has_event_since()  — pass if event exists since reference point (last_transition or custom event type)
 // - [eval-ledger-lacks-event]      eval_ledger_lacks_event()      — pass if ledger contains NO matching events (negation of ledger_has_event)
 // - [eval-set-covered]             eval_set_covered()             — pass if all set members appear in ledger
@@ -32,6 +32,12 @@ pub(super) fn eval_ledger_has_event(gate: &GateConfig, ctx: &GateContext) -> Gat
         .map(|n| n as u32)
         .unwrap_or(1);
 
+    let max_count = gate
+        .params
+        .get("max_count")
+        .and_then(|v| v.as_integer())
+        .map(|n| n as u32);
+
     // Optional filter map: each key/value must match the deserialized payload.
     let filter: HashMap<String, String> = gate
         .params
@@ -51,21 +57,41 @@ pub(super) fn eval_ledger_has_event(gate: &GateConfig, ctx: &GateContext) -> Gat
         .filter(|e| entry_matches_filter(e, &filter))
         .count();
 
-    let passed = matching >= min_count as usize;
+    let meets_min = matching >= min_count as usize;
+    let under_max = max_count.map(|m| matching < m as usize).unwrap_or(true);
+    let passed = meets_min && under_max;
+
+    let description = match max_count {
+        Some(max) => format!(
+            "ledger has >= {} and < {} '{}' event(s)",
+            min_count, max, event
+        ),
+        None => format!("ledger has >= {} '{}' event(s)", min_count, event),
+    };
+
+    let reason = if passed {
+        None
+    } else if !meets_min {
+        Some(format!(
+            "found {} '{}' event(s), need >= {}",
+            matching, event, min_count
+        ))
+    } else {
+        // !under_max
+        Some(format!(
+            "found {} '{}' event(s), budget exhausted (max {})",
+            matching,
+            event,
+            max_count.unwrap()
+        ))
+    };
 
     GateResult {
         passed,
         evaluable: true,
         gate_type: "ledger_has_event".to_string(),
-        description: format!("ledger has >= {} '{}' event(s)", min_count, event),
-        reason: if passed {
-            None
-        } else {
-            Some(format!(
-                "found {} '{}' event(s), need >= {}",
-                matching, event, min_count
-            ))
-        },
+        description,
+        reason,
         intent: None,
         attestation: None,
     }

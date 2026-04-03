@@ -53,6 +53,45 @@ fn test_init_creates_ledger() {
 }
 
 #[test]
+fn test_init_creates_status_cache() {
+    let dir = setup_initialized_dir();
+    let cache_path = dir.path().join("output/.sahjhan/status-cache.json");
+    assert!(
+        cache_path.exists(),
+        "status-cache.json should exist after init"
+    );
+
+    let content = std::fs::read_to_string(&cache_path).unwrap();
+    let cache: serde_json::Value = serde_json::from_str(&content).unwrap();
+    assert_eq!(cache["current_state"], "idle");
+    assert_eq!(cache["protocol_name"], "minimal");
+    assert!(cache["last_updated"].as_str().is_some());
+}
+
+#[test]
+fn test_transition_updates_status_cache() {
+    let dir = setup_initialized_dir();
+    let cache_path = dir.path().join("output/.sahjhan/status-cache.json");
+
+    // After init: idle
+    let content = std::fs::read_to_string(&cache_path).unwrap();
+    let cache: serde_json::Value = serde_json::from_str(&content).unwrap();
+    assert_eq!(cache["current_state"], "idle");
+
+    // Transition to working
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "transition", "begin"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    let content = std::fs::read_to_string(&cache_path).unwrap();
+    let cache: serde_json::Value = serde_json::from_str(&content).unwrap();
+    assert_eq!(cache["current_state"], "working");
+}
+
+#[test]
 fn test_status_shows_current_state() {
     let dir = setup_initialized_dir();
     Command::cargo_bin("sahjhan")
@@ -63,6 +102,60 @@ fn test_status_shows_current_state() {
         .success()
         .stdout(predicate::str::contains("state:"))
         .stdout(predicate::str::contains("idle"));
+}
+
+#[test]
+fn test_status_warns_when_cache_missing() {
+    let dir = setup_initialized_dir();
+    let cache_path = dir.path().join("output/.sahjhan/status-cache.json");
+
+    // Remove the cache
+    std::fs::remove_file(&cache_path).unwrap();
+
+    // Status should warn about missing cache
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "status"])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("status-cache.json not found"));
+}
+
+#[test]
+fn test_status_no_warning_when_cache_present() {
+    let dir = setup_initialized_dir();
+
+    // Status should NOT warn (cache was created by init)
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "status"])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("status-cache.json").not());
+}
+
+#[test]
+fn test_status_json_includes_warnings() {
+    let dir = setup_initialized_dir();
+    let cache_path = dir.path().join("output/.sahjhan/status-cache.json");
+    std::fs::remove_file(&cache_path).unwrap();
+
+    let output = Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "--json", "status"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(v["data"]["warnings"].is_array());
+    assert!(v["data"]["warnings"][0]
+        .as_str()
+        .unwrap()
+        .contains("status-cache.json not found"));
 }
 
 #[test]

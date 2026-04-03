@@ -24,6 +24,8 @@
 // - [compute-registry-path] compute_registry_path() — compute registry-storable path for a ledger file
 // - [hex-encode-short] hex_encode_short() — short hex encoding of hash bytes
 // - [atty-check] atty_check() — check if stdin is a TTY
+// - [status-cache-path] status_cache_path() — canonical status cache file path
+// - [write-status-cache] write_status_cache() — write protocol state cache to data_dir
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -399,6 +401,40 @@ unsafe fn libc_isatty() -> bool {
 #[cfg(not(unix))]
 unsafe fn libc_isatty() -> bool {
     true
+}
+
+// [status-cache-path]
+/// Canonical path to the status cache file within data_dir.
+pub(crate) fn status_cache_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("status-cache.json")
+}
+
+// [write-status-cache]
+/// Write a lightweight state cache to data_dir for fast hook lookups.
+///
+/// The cache contains the current protocol state plus directory paths,
+/// allowing downstream hooks to read state without re-deriving from the ledger.
+pub(crate) fn write_status_cache(
+    data_dir: &Path,
+    config: &ProtocolConfig,
+    config_dir: &Path,
+    current_state: &str,
+) {
+    let cache = serde_json::json!({
+        "protocol_name": config.protocol.name,
+        "protocol_version": config.protocol.version,
+        "current_state": current_state,
+        "data_dir": data_dir.canonicalize().unwrap_or_else(|_| data_dir.to_path_buf()),
+        "config_dir": config_dir.canonicalize().unwrap_or_else(|_| config_dir.to_path_buf()),
+        "last_updated": chrono::Utc::now().to_rfc3339(),
+    });
+    let cache_path = status_cache_path(data_dir);
+    if let Err(e) = std::fs::write(
+        &cache_path,
+        serde_json::to_string_pretty(&cache).unwrap_or_default(),
+    ) {
+        eprintln!("warning: cannot write status cache: {}", e);
+    }
 }
 
 #[cfg(test)]

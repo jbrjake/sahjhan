@@ -105,6 +105,7 @@ fn test_status_data_json_fields() {
         event_count: 1,
         chain_valid: true,
         chain_error: None,
+        warnings: vec![],
         sets: vec![SetSummaryData {
             name: "check".to_string(),
             completed: 1,
@@ -148,6 +149,7 @@ fn test_status_data_text_matches_current_format() {
         event_count: 1,
         chain_valid: true,
         chain_error: None,
+        warnings: vec![],
         sets: vec![SetSummaryData {
             name: "check".to_string(),
             completed: 1,

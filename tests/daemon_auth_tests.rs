@@ -98,14 +98,20 @@ fn test_extract_script_path_from_cmdline() {
         "--flag".to_string(),
         "value".to_string(),
     ];
-    assert_eq!(extract_script_path(&args), Some("/path/to/script.py".to_string()));
+    assert_eq!(
+        extract_script_path(&args),
+        Some("/path/to/script.py".to_string())
+    );
 
     let args = vec![
         "/usr/bin/python3".to_string(),
         "-u".to_string(),
         "/path/to/script.py".to_string(),
     ];
-    assert_eq!(extract_script_path(&args), Some("/path/to/script.py".to_string()));
+    assert_eq!(
+        extract_script_path(&args),
+        Some("/path/to/script.py".to_string())
+    );
 
     let args = vec!["/bin/bash".to_string()];
     assert_eq!(extract_script_path(&args), None);

@@ -50,12 +50,12 @@ impl TrustedCallersManifest {
     }
 
     pub fn verify_caller(&self, plugin_root: &Path, relative_path: &str) -> Result<(), AuthError> {
-        let expected_hash = self
-            .callers
-            .get(relative_path)
-            .ok_or_else(|| AuthError::NotInManifest {
-                path: relative_path.to_string(),
-            })?;
+        let expected_hash =
+            self.callers
+                .get(relative_path)
+                .ok_or_else(|| AuthError::NotInManifest {
+                    path: relative_path.to_string(),
+                })?;
 
         let full_path = plugin_root.join(relative_path);
         if !full_path.exists() {

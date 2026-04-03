@@ -11,4 +11,5 @@
 // - mod auth                  -- caller authentication
 
 pub mod platform;
+pub mod protocol;
 pub mod vault;

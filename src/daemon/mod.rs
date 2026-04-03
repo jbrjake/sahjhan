@@ -11,3 +11,4 @@
 // - mod auth                  -- caller authentication
 
 pub mod platform;
+pub mod vault;

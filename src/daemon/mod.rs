@@ -10,6 +10,7 @@
 // - mod protocol              -- wire protocol types
 // - mod auth                  -- caller authentication
 
+pub mod auth;
 pub mod platform;
 pub mod protocol;
 pub mod vault;

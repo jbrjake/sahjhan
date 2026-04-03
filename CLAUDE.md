@@ -262,6 +262,16 @@ Sahjhan is a protocol enforcement engine. It has:
 | Config queries | `cli/config_cmd.rs` | `[cmd-session-key-path]` | Print resolved session key path |
 | Mermaid | `cli/mermaid.rs` | `[cmd-mermaid]` | Diagram generation command (stateDiagram-v2 or ASCII) |
 | Reseal | `cli/authed_event.rs` | `[cmd-reseal]` | HMAC-authenticated config reseal |
+| Daemon start | `cli/daemon_cmd.rs` | `[cmd-daemon-start]` | Start daemon in foreground |
+| Daemon stop | `cli/daemon_cmd.rs` | `[cmd-daemon-stop]` | Stop running daemon (SIGTERM, then SIGKILL) |
+| Daemon status | `cli/daemon_cmd.rs` | `[cmd-daemon-status]` | Query daemon status via socket |
+| Socket path resolver | `cli/daemon_cmd.rs` | `[resolve-socket-path]` | Resolve daemon socket path from config |
+| Socket request helper | `cli/daemon_cmd.rs` | `[connect-and-request]` | Send JSON request to daemon socket, read response |
+| Sign via daemon | `cli/sign_cmd.rs` | `[cmd-sign]` | Request HMAC-SHA256 proof from daemon |
+| Vault store | `cli/vault_cmd.rs` | `[cmd-vault-store]` | Store file contents in daemon vault |
+| Vault read | `cli/vault_cmd.rs` | `[cmd-vault-read]` | Read vault entry to stdout |
+| Vault delete | `cli/vault_cmd.rs` | `[cmd-vault-delete]` | Delete vault entry |
+| Vault list | `cli/vault_cmd.rs` | `[cmd-vault-list]` | List vault entry names |
 
 ---
 
@@ -452,3 +462,5 @@ main.rs [cli-main]
 | `tests/daemon_protocol_tests.rs` | Wire protocol types: Request deserialization (all ops + unknowns), Response serialization (all constructors) |
 | `tests/daemon_auth_tests.rs` | Trusted-callers manifest load/parse, hash match/mismatch, not-in-manifest, extract_script_path |
 | `tests/daemon_vault_tests.rs` | Vault CRUD: store/read, overwrite, delete, list, read-not-found, delete-noop |
+| `tests/daemon_signing_tests.rs` | E2E daemon signing (deterministic proofs, sign-without-daemon), lifecycle (socket/PID creation, stop cleanup, status, preload rejection) |
+| `tests/daemon_vault_e2e_tests.rs` | E2E vault via CLI: store+read, list, delete, read-nonexistent (all require live daemon) |

@@ -239,6 +239,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | Deny debug | `daemon/platform.rs` | `[deny-debug-attach]` | Prevent debugger attachment (macOS: PT_DENY_ATTACH, Linux: PR_SET_DUMPABLE) |
 | Memory lock | `daemon/platform.rs` | `[try-mlock]` | Best-effort memory page locking (both: libc::mlock) |
 | Preload check | `daemon/platform.rs` | `[check-preload-env]` | Detect LD_PRELOAD / DYLD_INSERT_LIBRARIES |
+| Vault | `daemon/vault.rs` | `Vault` | In-memory Zeroizing key-value store (store, read, delete, list) |
 
 ### cli/ — Command Implementations
 

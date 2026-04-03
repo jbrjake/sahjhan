@@ -214,6 +214,19 @@ Sahjhan is a protocol enforcement engine. It has:
 | Write-gated check | `hooks/eval.rs` | `eval_write_gated` | Block writes outside writable_in states |
 | Monitor eval | `hooks/eval.rs` | `eval_monitors` | Evaluate monitor triggers |
 
+### daemon/ — Daemon Mode (Secret Holding + Unix Socket Server)
+
+| Concept | File | Anchor/Item | Purpose |
+|---------|------|-------------|---------|
+| Daemon module | `daemon/mod.rs` | (module root) | Module skeleton; re-exports platform |
+| Peer PID | `daemon/platform.rs` | `[get-peer-pid]` | Extract connecting PID from Unix socket (macOS: LOCAL_PEERPID, Linux: SO_PEERCRED) |
+| Exe path | `daemon/platform.rs` | `[get-exe-path]` | Resolve PID to executable path (macOS: proc_pidpath, Linux: /proc/pid/exe) |
+| Command line | `daemon/platform.rs` | `[get-cmdline]` | Read process command-line arguments (macOS: KERN_PROCARGS2, Linux: /proc/pid/cmdline) |
+| Parent PID | `daemon/platform.rs` | `[get-parent-pid]` | Look up parent PID (macOS: proc_pidinfo, Linux: /proc/pid/status) |
+| Deny debug | `daemon/platform.rs` | `[deny-debug-attach]` | Prevent debugger attachment (macOS: PT_DENY_ATTACH, Linux: PR_SET_DUMPABLE) |
+| Memory lock | `daemon/platform.rs` | `[try-mlock]` | Best-effort memory page locking (both: libc::mlock) |
+| Preload check | `daemon/platform.rs` | `[check-preload-env]` | Detect LD_PRELOAD / DYLD_INSERT_LIBRARIES |
+
 ### cli/ — Command Implementations
 
 | Concept | File | Anchor | Purpose |
@@ -422,3 +435,4 @@ main.rs [cli-main]
 | `tests/horizons1_tests.rs` | HORIZONS-1 mission protocol: status, transitions, gates, sets with --json |
 | `tests/hook_eval_tests.rs` | Hook evaluation engine: gate/check/filter/state/monitor/write-gated/managed-path/CLI eval |
 | `tests/concurrent_append_tests.rs` | Concurrent ledger append stress tests (issue #21 TOCTOU race) |
+| `tests/daemon_platform_tests.rs` | Platform API smoke tests: preload env, exe path, cmdline, parent PID, mlock |

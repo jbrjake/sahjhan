@@ -9,3 +9,5 @@ pub mod mermaid;
 pub mod query;
 pub mod render;
 pub mod state;
+
+pub mod daemon;

@@ -8,10 +8,13 @@
 // - TrustedCallersManifest::verify_caller — path lookup + SHA-256 verification
 // - extract_script_path       — extract script path from interpreter cmdline
 // - AuthError                 — authentication error type
+// - authenticate_peer         — PID-based caller authentication for Unix socket connections
 
+use crate::daemon::platform;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
@@ -84,4 +87,54 @@ pub fn extract_script_path(args: &[String]) -> Option<String> {
         }
     }
     None
+}
+
+/// Authenticate a connected peer via PID resolution + manifest check.
+///
+/// For CLI-mediated connections (peer exe matches our own binary):
+///   peer PID → parent PID → cmdline → script path → manifest lookup → hash check
+pub fn authenticate_peer(
+    stream: &UnixStream,
+    manifest: &TrustedCallersManifest,
+    plugin_root: &Path,
+) -> Result<(), AuthError> {
+    let peer_pid = platform::get_peer_pid(stream)
+        .map_err(|e| AuthError::Platform(format!("cannot get peer PID: {}", e)))?;
+
+    let peer_exe = platform::get_exe_path(peer_pid)
+        .map_err(|e| AuthError::Platform(format!("cannot get peer exe: {}", e)))?;
+    let our_exe = std::env::current_exe()
+        .map_err(|e| AuthError::Platform(format!("cannot get own exe: {}", e)))?;
+
+    // If peer is our own binary (CLI-mediated), walk up to parent.
+    let target_pid = if peer_exe == our_exe {
+        platform::get_parent_pid(peer_pid)
+            .map_err(|e| AuthError::Platform(format!("cannot get parent PID: {}", e)))?
+    } else {
+        peer_pid
+    };
+
+    let cmdline = platform::get_cmdline(target_pid)
+        .map_err(|e| {
+            AuthError::Platform(format!("cannot get cmdline for PID {}: {}", target_pid, e))
+        })?;
+
+    let script_path_str = extract_script_path(&cmdline).ok_or(AuthError::NoScriptPath)?;
+
+    let script_path = std::path::Path::new(&script_path_str);
+    let canonical = script_path.canonicalize().map_err(|e| {
+        AuthError::Platform(format!("cannot canonicalize {}: {}", script_path_str, e))
+    })?;
+    let plugin_root_canonical = plugin_root
+        .canonicalize()
+        .map_err(|e| AuthError::Platform(format!("cannot canonicalize plugin root: {}", e)))?;
+
+    let relative = canonical
+        .strip_prefix(&plugin_root_canonical)
+        .map_err(|_| AuthError::NotInManifest {
+            path: canonical.display().to_string(),
+        })?;
+
+    let relative_str = relative.to_string_lossy();
+    manifest.verify_caller(&plugin_root_canonical, &relative_str)
 }

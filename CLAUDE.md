@@ -232,6 +232,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | Caller verification | `daemon/auth.rs` | `TrustedCallersManifest::verify_caller` | Checks relative script path is in manifest and its SHA-256 matches |
 | Script path extractor | `daemon/auth.rs` | `extract_script_path` | Extracts first non-flag arg from interpreter cmdline (the script path) |
 | Auth error | `daemon/auth.rs` | `AuthError` | NotInManifest, HashMismatch, ScriptNotFound, NoScriptPath, ManifestLoad, ManifestParse, Platform |
+| Peer authentication | `daemon/auth.rs` | `authenticate_peer` | PID-based caller auth: peer PID → exe check → parent walk → cmdline → manifest verify |
 | Peer PID | `daemon/platform.rs` | `[get-peer-pid]` | Extract connecting PID from Unix socket (macOS: LOCAL_PEERPID, Linux: SO_PEERCRED) |
 | Exe path | `daemon/platform.rs` | `[get-exe-path]` | Resolve PID to executable path (macOS: proc_pidpath, Linux: /proc/pid/exe) |
 | Command line | `daemon/platform.rs` | `[get-cmdline]` | Read process command-line arguments (macOS: KERN_PROCARGS2, Linux: /proc/pid/cmdline) |

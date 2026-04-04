@@ -25,7 +25,7 @@ pub mod vault;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -203,7 +203,15 @@ impl DaemonServer {
                     let vault = Arc::clone(&self.vault);
                     let key = self.session_key.clone();
                     let start_time = self.start_time;
-                    handle_connection(stream, vault, key, start_time);
+                    let plugin_root = self.config_dir.parent().unwrap_or(&self.config_dir);
+                    handle_connection(
+                        stream,
+                        vault,
+                        key,
+                        start_time,
+                        &self.trusted_callers,
+                        plugin_root,
+                    );
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     // No pending connection — sleep briefly to avoid busy-wait
@@ -249,17 +257,26 @@ impl DaemonServer {
 /// Reads newline-delimited JSON requests, dispatches each to `handle_request`,
 /// and writes back JSON responses (one per line).
 ///
-/// NOTE on authentication: Caller authentication (peer PID -> parent PID ->
-/// script path -> manifest check) is implemented in daemon/auth.rs but is NOT
-/// wired into this connection handler in v1. The socket has 0600 permissions
-/// for baseline access control. Full PID-based auth will be wired in a
-/// follow-up.
+/// Authenticates the caller via PID-based manifest check before processing.
+/// Status requests are exempt (health checks). All other requests require
+/// successful authentication.
 fn handle_connection(
     stream: UnixStream,
     vault: Arc<Mutex<Vault>>,
     session_key: Zeroizing<Vec<u8>>,
     start_time: Instant,
+    trusted_callers: &auth::TrustedCallersManifest,
+    plugin_root: &Path,
 ) {
+    // Authenticate before setting up reader/writer.
+    let authenticated = match auth::authenticate_peer(&stream, trusted_callers, plugin_root) {
+        Ok(()) => true,
+        Err(e) => {
+            eprintln!("auth: {}", e);
+            false
+        }
+    };
+
     let reader_stream = match stream.try_clone() {
         Ok(s) => s,
         Err(e) => {
@@ -281,7 +298,17 @@ fn handle_connection(
         }
 
         let response = match serde_json::from_str::<Request>(&line) {
-            Ok(req) => handle_request(req, &vault, &session_key, start_time),
+            Ok(Request::Status) => {
+                // Status is always allowed (health check).
+                handle_request(Request::Status, &vault, &session_key, start_time)
+            }
+            Ok(req) => {
+                if authenticated {
+                    handle_request(req, &vault, &session_key, start_time)
+                } else {
+                    Response::err("auth_failed", "caller not authenticated")
+                }
+            }
             Err(e) => Response::err("parse_error", &format!("invalid request: {}", e)),
         };
 

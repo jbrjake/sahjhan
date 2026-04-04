@@ -24,12 +24,6 @@ pub fn cmd_guards(config_dir: &str) -> i32 {
         .map(|g| g.read_blocked.clone())
         .unwrap_or_default();
 
-    // Auto-include session key path (defense in depth)
-    let session_key_path = format!("{}/session.key", config.paths.data_dir);
-    if !read_blocked.contains(&session_key_path) {
-        read_blocked.push(session_key_path);
-    }
-
     // Deduplicate while preserving order
     let mut seen = std::collections::HashSet::new();
     read_blocked.retain(|p| seen.insert(p.clone()));

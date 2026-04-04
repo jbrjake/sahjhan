@@ -258,12 +258,12 @@ Sahjhan is a protocol enforcement engine. It has:
 | Query | `cli/query.rs` | `[cmd-query]` | SQL queries over events |
 | Render | `cli/render.rs` | `[cmd-render]`, `[cmd-render-dump-context]` | Template rendering |
 | Manifest | `cli/manifest_cmd.rs` | `[cmd-manifest-verify]`, `[cmd-manifest-list]` | File integrity |
-| Authed event | `cli/authed_event.rs` | `[cmd-authed-event]`, `resolve_session_key_path`, `build_canonical_payload` | HMAC-verified restricted event recording |
+| Authed event | `cli/authed_event.rs` | `[cmd-authed-event]` | HMAC-verified restricted event recording (proof verified via daemon) |
 | Guards | `cli/guards.rs` | `[cmd-guards]` | Output JSON manifest of read-blocked paths for enforcement hooks |
 | Hooks | `cli/hooks_cmd.rs` | `[cmd-hook-generate]`, `[cmd-hook-eval]` | Hook script generation + runtime evaluation |
-| Config queries | `cli/config_cmd.rs` | `[cmd-session-key-path]` | Print resolved session key path |
 | Mermaid | `cli/mermaid.rs` | `[cmd-mermaid]` | Diagram generation command (stateDiagram-v2 or ASCII) |
-| Reseal | `cli/authed_event.rs` | `[cmd-reseal]` | HMAC-authenticated config reseal |
+| Reseal | `cli/authed_event.rs` | `[cmd-reseal]` | HMAC-authenticated config reseal (proof verified via daemon) |
+| Verify proof | `cli/verify_cmd.rs` | `[cmd-verify]` | Verify HMAC-SHA256 proof via daemon socket |
 | Daemon start | `cli/daemon_cmd.rs` | `[cmd-daemon-start]` | Start daemon in foreground |
 | Daemon stop | `cli/daemon_cmd.rs` | `[cmd-daemon-stop]` | Stop running daemon (SIGTERM, then SIGKILL) |
 | Daemon status | `cli/daemon_cmd.rs` | `[cmd-daemon-status]` | Query daemon status via socket |

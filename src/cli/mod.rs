@@ -3,7 +3,7 @@
 pub mod aliases;
 pub mod authed_event;
 pub mod commands;
-pub mod config_cmd;
+pub mod daemon_cmd;
 pub mod guards;
 pub mod hooks_cmd;
 pub mod init;
@@ -14,5 +14,8 @@ pub mod mermaid;
 pub mod output;
 pub mod query;
 pub mod render;
+pub mod sign_cmd;
 pub mod status;
 pub mod transition;
+pub mod vault_cmd;
+pub mod verify_cmd;

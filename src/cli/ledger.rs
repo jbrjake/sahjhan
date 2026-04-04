@@ -177,22 +177,6 @@ pub fn cmd_ledger_create(
         return EXIT_CONFIG_ERROR;
     }
 
-    // Generate per-ledger session key
-    {
-        let ledger_key_dir = data_dir.join("ledgers").join(&ledger_name);
-        if let Err(e) = std::fs::create_dir_all(&ledger_key_dir) {
-            eprintln!("error: cannot create per-ledger key directory: {}", e);
-            return EXIT_CONFIG_ERROR;
-        }
-        let key_path = ledger_key_dir.join("session.key");
-        let mut key = [0u8; 32];
-        getrandom::getrandom(&mut key).expect("failed to generate random key");
-        if let Err(e) = std::fs::write(&key_path, key) {
-            eprintln!("error: cannot write per-ledger session key: {}", e);
-            return EXIT_CONFIG_ERROR;
-        }
-    }
-
     println!("created: {}", ledger_name);
     EXIT_SUCCESS
 }

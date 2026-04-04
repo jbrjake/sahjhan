@@ -11,14 +11,15 @@
 // - SetAction                — set subcommand enum
 // - GateAction               — gate subcommand enum
 // - LedgerAction             — ledger subcommand enum
-// - ConfigAction             — config subcommand enum
+// - DaemonAction             — daemon subcommand enum
+// - VaultAction              — vault subcommand enum
 
 use clap::{Parser, Subcommand};
 
 use sahjhan::cli::aliases;
 use sahjhan::cli::authed_event;
 use sahjhan::cli::commands;
-use sahjhan::cli::config_cmd;
+use sahjhan::cli::daemon_cmd;
 use sahjhan::cli::guards;
 use sahjhan::cli::hooks_cmd;
 use sahjhan::cli::init;
@@ -28,8 +29,11 @@ use sahjhan::cli::manifest_cmd;
 use sahjhan::cli::mermaid as mermaid_cmd;
 use sahjhan::cli::query;
 use sahjhan::cli::render;
+use sahjhan::cli::sign_cmd;
 use sahjhan::cli::status;
 use sahjhan::cli::transition;
+use sahjhan::cli::vault_cmd;
+use sahjhan::cli::verify_cmd;
 
 #[derive(Parser)]
 #[command(
@@ -166,12 +170,6 @@ enum Commands {
         action: LedgerAction,
     },
 
-    /// Configuration queries
-    Config {
-        #[command(subcommand)]
-        action: ConfigAction,
-    },
-
     /// Show read-guard manifest for enforcement hooks
     Guards,
 
@@ -214,6 +212,44 @@ enum Commands {
         /// Shortcut for --format json
         #[arg(long)]
         json: bool,
+    },
+
+    /// Daemon process management
+    Daemon {
+        #[command(subcommand)]
+        action: DaemonAction,
+    },
+
+    /// Request HMAC-SHA256 proof from daemon
+    Sign {
+        /// Event type
+        #[arg(long = "event-type")]
+        event_type: String,
+
+        /// Field values (key=value)
+        #[arg(long = "field", value_name = "KEY=VALUE")]
+        fields: Vec<String>,
+    },
+
+    /// Vault operations (in-memory secret store)
+    Vault {
+        #[command(subcommand)]
+        action: VaultAction,
+    },
+
+    /// Verify an HMAC-SHA256 proof via daemon
+    Verify {
+        /// Event type
+        #[arg(long = "event-type")]
+        event_type: String,
+
+        /// Field values (key=value)
+        #[arg(long = "field", value_name = "KEY=VALUE")]
+        fields: Vec<String>,
+
+        /// HMAC-SHA256 proof to verify
+        #[arg(long)]
+        proof: String,
     },
 }
 
@@ -371,9 +407,40 @@ enum LedgerAction {
 }
 
 #[derive(Subcommand)]
-enum ConfigAction {
-    /// Print the resolved session key path
-    SessionKeyPath,
+enum DaemonAction {
+    /// Start daemon in foreground
+    Start,
+    /// Stop running daemon
+    Stop,
+    /// Query daemon status
+    Status,
+}
+
+#[derive(Subcommand)]
+enum VaultAction {
+    /// Store data in daemon vault
+    Store {
+        /// Entry name
+        #[arg(long)]
+        name: String,
+        /// File to read data from
+        #[arg(long)]
+        file: String,
+    },
+    /// Read data from daemon vault
+    Read {
+        /// Entry name
+        #[arg(long)]
+        name: String,
+    },
+    /// Delete vault entry
+    Delete {
+        /// Entry name
+        #[arg(long)]
+        name: String,
+    },
+    /// List vault entry names
+    List,
 }
 
 // [cli-main]
@@ -554,12 +621,6 @@ fn main() {
                 Box::new(LegacyResult::new("ledger_import", code))
             }
         },
-        Commands::Config { action } => match action {
-            ConfigAction::SessionKeyPath => {
-                let code = config_cmd::cmd_session_key_path(&cli.config_dir, &targeting);
-                Box::new(LegacyResult::new("config_session_key_path", code))
-            }
-        },
         Commands::Guards => {
             let code = guards::cmd_guards(&cli.config_dir);
             Box::new(LegacyResult::new("guards", code))
@@ -600,6 +661,50 @@ fn main() {
                 &effective_format,
             );
             Box::new(LegacyResult::new("query", code))
+        }
+        Commands::Daemon { action } => match action {
+            DaemonAction::Start => {
+                let code = daemon_cmd::cmd_daemon_start(&cli.config_dir);
+                Box::new(LegacyResult::new("daemon_start", code))
+            }
+            DaemonAction::Stop => {
+                let code = daemon_cmd::cmd_daemon_stop(&cli.config_dir);
+                Box::new(LegacyResult::new("daemon_stop", code))
+            }
+            DaemonAction::Status => {
+                let code = daemon_cmd::cmd_daemon_status(&cli.config_dir);
+                Box::new(LegacyResult::new("daemon_status", code))
+            }
+        },
+        Commands::Sign { event_type, fields } => {
+            let code = sign_cmd::cmd_sign(&cli.config_dir, &event_type, &fields);
+            Box::new(LegacyResult::new("sign", code))
+        }
+        Commands::Vault { action } => match action {
+            VaultAction::Store { name, file } => {
+                let code = vault_cmd::cmd_vault_store(&cli.config_dir, &name, &file);
+                Box::new(LegacyResult::new("vault_store", code))
+            }
+            VaultAction::Read { name } => {
+                let code = vault_cmd::cmd_vault_read(&cli.config_dir, &name);
+                Box::new(LegacyResult::new("vault_read", code))
+            }
+            VaultAction::Delete { name } => {
+                let code = vault_cmd::cmd_vault_delete(&cli.config_dir, &name);
+                Box::new(LegacyResult::new("vault_delete", code))
+            }
+            VaultAction::List => {
+                let code = vault_cmd::cmd_vault_list(&cli.config_dir);
+                Box::new(LegacyResult::new("vault_list", code))
+            }
+        },
+        Commands::Verify {
+            event_type,
+            fields,
+            proof,
+        } => {
+            let code = verify_cmd::cmd_verify(&cli.config_dir, &event_type, &fields, &proof);
+            Box::new(LegacyResult::new("verify", code))
         }
     };
 

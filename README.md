@@ -123,69 +123,107 @@ sahjhan event quiz_passed --field score=5/5 --field pass=true
 # error: event type 'quiz_passed' is restricted. Use 'sahjhan authed-event' with a valid proof.
 ```
 
-Restricted events go through `sahjhan authed-event`, which requires an HMAC-SHA256 proof. On `sahjhan init`, Sahjhan generates a 32-byte random session key at `.sahjhan/session.key`. The quiz hook reads this key from disk with Python `open()`, not through the agent's Read tool, and computes the proof over the event content:
+Restricted events go through `sahjhan authed-event`, which requires an HMAC-SHA256 proof. The proof is computed over the event type and sorted fields, separated by null bytes. To get the proof, the hook asks the daemon:
 
-```python
+```bash
 # Inside the quiz hook (not the agent)
-import hmac, hashlib, subprocess
+PROOF=$(sahjhan sign --event-type quiz_passed --field score=5/5 --field pass=true)
 
-key = open(".sahjhan/session.key", "rb").read()
-payload = b"quiz_passed\x00pass=true\x00score=5/5"
-proof = hmac.new(key, payload, hashlib.sha256).hexdigest()
-
-subprocess.run(["sahjhan", "authed-event", "quiz_passed",
-    "--field", "score=5/5", "--field", "pass=true",
-    "--proof", proof])
+sahjhan authed-event quiz_passed \
+    --field score=5/5 --field pass=true \
+    --proof "$PROOF"
 ```
 
-The canonical payload is the event type and sorted fields separated by null bytes. The agent can't forge the proof because it can't read the session key, and it can't read the session key because the enforcement hooks block that file.
+Or from Python:
+
+```python
+import subprocess
+
+proof = subprocess.check_output([
+    "sahjhan", "sign",
+    "--event-type", "quiz_passed",
+    "--field", "score=5/5",
+    "--field", "pass=true",
+]).decode().strip()
+
+subprocess.run([
+    "sahjhan", "authed-event", "quiz_passed",
+    "--field", "score=5/5", "--field", "pass=true",
+    "--proof", proof,
+])
+```
+
+The `sign` command connects to the daemon process, which holds the session key in memory and computes the HMAC. The key never touches disk. The agent can't forge the proof because it can't get the key, and it can't get the key because the key isn't a file. More on why that matters in a moment.
+
+### The daemon
+
+I tried file-based keys first. `session.key` on disk, enforcement hooks blocking reads via string-matching on tool arguments. If the agent calls `Read` on `.sahjhan/session.key`, the PreToolUse hook intercepts it. Simple.
+
+Here's what the agent did instead:
+
+```python
+# Written by the agent, run via Bash
+import pathlib
+p = pathlib.Path(".sahjhan") / "session.key"
+print(p.read_bytes().hex())
+```
+
+The hook saw `python3 script.py`. Not the protected path. The key leaked in one move. String-matching on tool arguments has infinite bypasses: variables, indirection, heredocs, base64-encoded paths, `exec()`. Any agent with Bash access can construct a read that the hook will never see.
+
+The only place a secret can live that a same-user adversary with code execution can't reach is in the memory of another process.
+
+So Sahjhan has a daemon mode. `sahjhan daemon start` launches a background process that generates a 32-byte session key, holds it in memory, and serves signing and vault operations over a Unix domain socket. The key is never written to disk. `mlock` prevents it from leaking to swap (best-effort — it's not the primary defense). `ptrace(PT_DENY_ATTACH)` on macOS and `prctl(PR_SET_DUMPABLE, 0)` on Linux block debugger attachment and `/proc/pid/mem` reads. If the environment has `LD_PRELOAD` or `DYLD_INSERT_LIBRARIES` set, the daemon refuses to start.
+
+When a hook needs a proof, it calls `sahjhan sign`. The CLI connects to the daemon socket, the daemon computes the HMAC, and the proof comes back. The agent never sees the key. Even if the agent reads the Rust source code and understands exactly how the HMAC is computed, it still can't produce one without those 32 bytes in the daemon's address space.
+
+The daemon also authenticates its callers. Every connection goes through PID-based verification: the daemon reads the connecting process's PID from kernel-provided socket credentials (unspoofable), walks up the process tree to find the hook script, resolves its path, and checks it against a trusted-callers manifest:
+
+```toml
+# enforcement/trusted-callers.toml
+[callers]
+"enforcement/hooks/lens_quiz.py" = "sha256:7890abcdef01..."
+"enforcement/hooks/stop_hook.py" = "sha256:2345678901ab..."
+```
+
+Both the path and the SHA-256 hash must match. The agent can't call `sahjhan sign` directly (parent PID would be `bash`, not a trusted script). It can't write a script into the trusted path (the bootstrap hook blocks writes to `enforcement/`). It can't modify a trusted script to do something else (hash won't match). It can't copy a trusted script somewhere and run it from there (path won't match).
+
+The vault is a bonus. Downstream consumers can stash secrets in daemon memory — quiz banks, API keys, anything the agent shouldn't see. `sahjhan vault store --name quiz-bank --file questions.json` loads the file into the daemon's in-memory store. The hook retrieves it with `sahjhan vault read --name quiz-bank`. Nothing on disk to find.
+
+Kill the daemon and the secrets vanish. That's denial of service, not exfiltration. The daemon cleans up its socket and PID files on shutdown. If it dies uncleanly, stale files get cleaned on the next start.
 
 ### Read guards
 
-You declare which paths to protect in `protocol.toml`:
+Secrets that live in daemon memory don't need file-based protection. But some sensitive files still exist on disk — quiz banks during loading, config files, anything the protocol author wants to hide from the agent.
+
+You declare which paths to block in `protocol.toml`:
 
 ```toml
 [guards]
 read_blocked = [
-    ".sahjhan/session.key",
     "enforcement/quiz-bank.json",
 ]
 ```
 
-The quiz bank gets blocked too. No point in HMAC-protecting the answers if the agent can read the questions in advance. `sahjhan guards` outputs this list as JSON for the enforcement harness:
+`sahjhan guards` outputs this list as JSON for the enforcement harness:
 
 ```bash
 sahjhan guards
 # {
 #   "read_blocked": [
-#     ".sahjhan/session.key",
-#     "enforcement/quiz-bank.json",
-#     "output/.sahjhan/session.key"
+#     "enforcement/quiz-bank.json"
 #   ]
 # }
 ```
 
-The session key path is auto-included even if you forget to list it. The thing you forget to protect is the thing they find first.
-
-Each named ledger also gets its own key at `.sahjhan/ledgers/<name>/session.key`, generated on `sahjhan ledger create`. The `authed-event` command checks for a per-ledger key first, falls back to the global one. `sahjhan config session-key-path` tells hooks which key to use:
-
-```bash
-sahjhan config session-key-path
-# /path/to/.sahjhan/session.key
-
-sahjhan --ledger audit config session-key-path
-# /path/to/.sahjhan/ledgers/audit/session.key
-```
-
-Sahjhan doesn't enforce the read-blocking itself. That's the hooks' job. Sahjhan provides the crypto and the policy declarations. The hooks interpret them. The binary doesn't need to know about Claude Code or any particular agent harness.
+Sahjhan doesn't enforce the read-blocking itself. That's the hooks' job. Sahjhan provides the policy declarations, the hooks interpret them. The binary doesn't need to know about Claude Code or any particular agent harness. And for the thing that matters most — the session key — there's nothing on disk to block.
 
 ### Config integrity
 
-So the ledger can't be edited. The hash chain works. Restricted events need a proof the agent can't forge. The session key is read-guarded. Everything is locked down.
+So the ledger can't be edited. The hash chain works. Restricted events need a proof the agent can't forge. The session key lives in a process the agent can't reach. Everything is locked down.
 
 Everything except the TOML config files. You know, the ones that define every gate, every transition, every rule. `transitions.toml` is just a text file sitting in a directory the agent can write to. Remove a gate, lower a threshold, add `gates = []` to the one transition that matters — and Sahjhan's hardened ledger will faithfully enforce your gutted protocol. The vault door is six inches of steel. The wall next to it is drywall.
 
-On `sahjhan init`, Sahjhan SHA-256 hashes all five config files and stores those hashes in the genesis ledger entry. Every subsequent command re-hashes and compares. One byte different — a gate removed, a timeout changed, a comment added to make the diff look innocent — and Sahjhan won't run:
+On `sahjhan init`, Sahjhan SHA-256 hashes all six config files and stores those hashes in the genesis ledger entry. Every subsequent command re-hashes and compares. One byte different — a gate removed, a timeout changed, a comment added to make the diff look innocent — and Sahjhan won't run:
 
 ```
 error: config integrity violation:
@@ -197,39 +235,14 @@ or 'sahjhan init' to start a new ledger.
 
 Config changes do happen legitimately. You add a state, tune a gate, fix a typo. `sahjhan reseal` updates the seal — but it requires an HMAC proof, same as restricted events. Without the session key, the agent can rewrite transitions.toml all day long. It just can't use it. The reseal event goes into the ledger, so you can see exactly when the rules changed and decide whether that was you or the agent getting creative.
 
-To reseal after a legitimate config change, compute the proof over the literal string `config_reseal` using the session key, then pass it:
+To reseal after a legitimate config change:
 
 ```bash
-# Compute the HMAC proof
-PROOF=$(echo -n "config_reseal" | openssl dgst -sha256 -hmac "$(cat .sahjhan/session.key)" -hex | awk '{print $NF}')
-
-# Reseal
+PROOF=$(sahjhan sign --event-type config_reseal)
 sahjhan reseal --proof "$PROOF"
 ```
 
-Or from Python, if you're calling it from a hook:
-
-```python
-import hmac, hashlib, subprocess
-
-key = open(".sahjhan/session.key", "rb").read()
-proof = hmac.new(key, b"config_reseal", hashlib.sha256).hexdigest()
-subprocess.run(["sahjhan", "reseal", "--proof", proof])
-```
-
-The payload is just the event type — no fields, no null-byte separators. Unlike `authed-event`, there's nothing to sort.
-
-If you're using a named ledger with its own session key, point at that key instead:
-
-```bash
-# Check which key path Sahjhan will use
-sahjhan --ledger audit config session-key-path
-# /path/to/.sahjhan/ledgers/audit/session.key
-
-# Compute proof with the per-ledger key
-PROOF=$(echo -n "config_reseal" | openssl dgst -sha256 -hmac "$(cat .sahjhan/ledgers/audit/session.key)" -hex | awk '{print $NF}')
-sahjhan --ledger audit reseal --proof "$PROOF"
-```
+Same daemon, same signing mechanism, same key the agent can't reach. The payload is just the event type with no fields.
 
 ### Gate attestation
 
@@ -793,8 +806,12 @@ Generates `pre_tool_hook.py` (PreToolUse), `post_tool_hook.py` (PostToolUse), `s
 | Delete or reset the ledger | Hash chain. There is no reset. |
 | Fabricate history entries | Every entry is hash-linked. Fabricate one, the chain breaks. |
 | `sahjhan event quiz_passed --field pass=true` | Restricted. Needs HMAC proof the agent can't forge. |
-| Read the session key to forge proofs | Read-guarded. Hooks block it before the agent sees a byte. |
+| Read the session key to forge proofs | No key on disk. It's in the daemon's memory. `ptrace` blocked. |
+| Write a script that reads the key indirectly | There's nothing to read. The key never touches the filesystem. |
+| Call `sahjhan sign` directly from Bash | Daemon checks caller PID. Parent is `bash`, not a trusted hook. Rejected. |
+| Modify a trusted hook to leak the proof | Hash won't match the manifest. Rejected. |
 | Edit `transitions.toml` to remove gates | Config sealed at init. One byte different, Sahjhan won't run. |
+| Kill the daemon to extract secrets | Secrets vanish from memory. Denial of service, not exfiltration. |
 | `sleep 65 && check_convergence` | Been there. Use evidence gates. |
 | `cat` the binary to find loopholes | Compiled Rust. Let me know how it goes. |
 | Query the ledger to find exploits | Go ahead. It's your permanent record. |
@@ -877,7 +894,7 @@ The existing `paths.managed` blocks all writes to managed directories. But some 
 
 ```toml
 [guards]
-read_blocked = [".sahjhan/session.key"]
+read_blocked = ["enforcement/quiz-bank.json"]
 
 [[guards.write_gated]]
 path = "docs/SUMMARY.md"
@@ -918,8 +935,18 @@ sahjhan event <type> [--field KEY=VALUE]   Record a protocol event (rejects rest
 sahjhan authed-event <type> --proof <HMAC> [--field KEY=VALUE]
                                           Record a restricted event with HMAC proof
 sahjhan reseal --proof <HMAC>             Re-seal config hashes after legitimate changes
+sahjhan sign --event-type <type> [--field KEY=VALUE]
+                                          Get HMAC proof from daemon
+sahjhan verify --event-type <type> --proof <HMAC> [--field KEY=VALUE]
+                                          Verify an HMAC proof via daemon
 sahjhan guards                            Show read-guard manifest (JSON)
-sahjhan config session-key-path           Print resolved session key path
+sahjhan daemon start                      Start daemon (foreground, holds keys in memory)
+sahjhan daemon stop                       Stop running daemon
+sahjhan daemon status                     Query daemon health
+sahjhan vault store --name <n> --file <f> Store file contents in daemon memory
+sahjhan vault read --name <n>             Retrieve stored data from daemon
+sahjhan vault delete --name <n>           Remove vault entry (securely zeroed)
+sahjhan vault list                        List vault entry names
 sahjhan set status <set>                  Show set completion progress
 sahjhan set complete <set> <member>       Record set member completion
 sahjhan log dump                          Print ledger as JSONL
@@ -964,6 +991,8 @@ The manifest hashes its own entries and stores that hash in the ledger. Tamperin
 
 Config files are SHA-256 sealed into the genesis entry at init time. Every command verifies the seal. `sahjhan reseal` updates the seal but requires HMAC proof — same session key, same mechanism as restricted events. The reseal event is recorded in the ledger, so config changes are auditable.
 
+Session keys exist only in daemon process memory. Never written to disk, never passed over the wire. The daemon generates 32 random bytes at startup, locks the pages with `mlock` where the OS allows it, blocks debugger attachment, and refuses to start if library injection environment variables are set. Callers authenticate via kernel-provided socket peer credentials — the daemon resolves the connecting PID's process tree, finds the hook script, and checks its path and SHA-256 hash against a static manifest. The manifest lives under `enforcement/`, which the bootstrap hook write-protects.
+
 Template variables in gate commands are POSIX shell-escaped before interpolation. Field patterns validated before escaping. The `cmd` string comes from TOML config (write-protected), so only variable values come from the agent.
 
 Exclusive file locks for writes, shared for reads. 5 second lock timeout.
@@ -984,13 +1013,18 @@ Exclusive file locks for writes, shared for reads. 5 second lock timeout.
 |   manifest, template renderer, ledger registry,   |
 |   hook evaluator                                  |
 +--------------------------------------------------+
+|              Daemon Process                        |
+|        (Unix socket, in-memory secrets)            |
+|   session key, HMAC signing, vault,               |
+|   caller authentication (PID + manifest)          |
++--------------------------------------------------+
 |               Hook Bridge                         |
 |        (generated scripts, per-harness)           |
 |   PreToolUse / PostToolUse / Stop for Claude Code |
 +--------------------------------------------------+
 |               Filesystem                          |
 |   ledger.jsonl, ledgers.toml, manifest.json,      |
-|   rendered views                                  |
+|   rendered views, trusted-callers.toml            |
 +--------------------------------------------------+
 ```
 
@@ -1000,7 +1034,9 @@ src/
   lib.rs               Library root
   cli/                 Command modules (init, status, transition, log,
                        ledger, query, render, manifest, hooks, guards,
-                       authed_event, config_cmd), aliases
+                       authed_event, sign, verify, daemon, vault), aliases
+  daemon/              Daemon server, caller auth, vault, wire protocol,
+                       platform abstraction (macOS + Linux)
   ledger/              JSONL entry, hash-chain, registry, checkpoints, import
   state/               State machine executor, completion set tracking
   gates/               Gate evaluation, file/command/ledger/snapshot/query gates

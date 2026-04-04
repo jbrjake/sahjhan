@@ -5,7 +5,7 @@
 //
 // ## Index
 // - Request                   — tagged enum for incoming operations
-// - Response                  — output envelope with constructors
+// - Response                  — output envelope with constructors (ok_verified for verify op)
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -29,6 +29,12 @@ pub enum Request {
     VaultList,
     #[serde(rename = "status")]
     Status,
+    #[serde(rename = "verify")]
+    Verify {
+        event_type: String,
+        fields: HashMap<String, String>,
+        proof: String,
+    },
 }
 
 // [response]
@@ -48,6 +54,8 @@ pub struct Response {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vault_entries: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub verified: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
@@ -63,6 +71,7 @@ impl Response {
             pid: None,
             uptime_seconds: None,
             vault_entries: None,
+            verified: None,
             error: None,
             message: None,
         }
@@ -77,6 +86,7 @@ impl Response {
             pid: None,
             uptime_seconds: None,
             vault_entries: None,
+            verified: None,
             error: None,
             message: None,
         }
@@ -91,6 +101,7 @@ impl Response {
             pid: None,
             uptime_seconds: None,
             vault_entries: None,
+            verified: None,
             error: None,
             message: None,
         }
@@ -105,6 +116,7 @@ impl Response {
             pid: Some(pid),
             uptime_seconds: Some(uptime_seconds),
             vault_entries: Some(vault_entries),
+            verified: None,
             error: None,
             message: None,
         }
@@ -119,6 +131,7 @@ impl Response {
             pid: None,
             uptime_seconds: None,
             vault_entries: None,
+            verified: None,
             error: None,
             message: None,
         }
@@ -133,8 +146,24 @@ impl Response {
             pid: None,
             uptime_seconds: None,
             vault_entries: None,
+            verified: None,
             error: Some(error.to_string()),
             message: Some(message.to_string()),
+        }
+    }
+
+    pub fn ok_verified() -> Self {
+        Self {
+            ok: true,
+            proof: None,
+            data: None,
+            names: None,
+            pid: None,
+            uptime_seconds: None,
+            vault_entries: None,
+            verified: Some(true),
+            error: None,
+            message: None,
         }
     }
 }

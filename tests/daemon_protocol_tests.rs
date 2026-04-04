@@ -131,3 +131,26 @@ fn test_serialize_error_response() {
     assert_eq!(v["error"], "auth_failed");
     assert_eq!(v["message"], "caller not in manifest");
 }
+
+#[test]
+fn test_parse_verify_request() {
+    let json = r#"{"op": "verify", "event_type": "quiz_answered", "fields": {"score": "5"}, "proof": "abcdef"}"#;
+    let req: Request = serde_json::from_str(json).unwrap();
+    match req {
+        Request::Verify { event_type, fields, proof } => {
+            assert_eq!(event_type, "quiz_answered");
+            assert_eq!(fields.get("score").unwrap(), "5");
+            assert_eq!(proof, "abcdef");
+        }
+        _ => panic!("Expected Verify request"),
+    }
+}
+
+#[test]
+fn test_serialize_ok_verified_response() {
+    let resp = Response::ok_verified();
+    let json = serde_json::to_string(&resp).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(v["ok"], true);
+    assert_eq!(v["verified"], true);
+}

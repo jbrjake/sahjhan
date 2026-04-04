@@ -359,6 +359,18 @@ fn handle_request(
             };
             Response::ok_status(pid, uptime, vault_entries)
         }
+        Request::Verify {
+            event_type,
+            fields,
+            proof,
+        } => {
+            let expected = compute_sign(session_key, &event_type, &fields);
+            if proof == expected {
+                Response::ok_verified()
+            } else {
+                Response::err("invalid_proof", "proof does not match")
+            }
+        }
     }
 }
 

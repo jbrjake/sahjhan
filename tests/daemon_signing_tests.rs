@@ -5,6 +5,7 @@
 //! because they spawn background processes and use real sockets.
 
 use assert_cmd::Command;
+use predicates::prelude::*;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use tempfile::tempdir;
@@ -329,4 +330,122 @@ fn test_daemon_rejects_preload_env() {
         "stderr should mention preload rejection, got: {}",
         stderr
     );
+}
+
+// ---------------------------------------------------------------------------
+// Sign → authed-event end-to-end test
+// ---------------------------------------------------------------------------
+
+/// Setup dir with events.toml containing a restricted event type.
+fn setup_signing_dir() -> tempfile::TempDir {
+    let dir = tempdir().unwrap();
+    let config_dir = dir.path().join("enforcement");
+    std::fs::create_dir_all(&config_dir).unwrap();
+
+    std::fs::write(
+        config_dir.join("protocol.toml"),
+        r#"[protocol]
+name = "test-signing"
+version = "1.0.0"
+description = "Signing test protocol"
+
+[paths]
+managed = ["output"]
+data_dir = "output/.sahjhan"
+render_dir = "output"
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        config_dir.join("states.toml"),
+        "[states.idle]\nlabel = \"Idle\"\ninitial = true\n",
+    )
+    .unwrap();
+
+    std::fs::write(
+        config_dir.join("transitions.toml"),
+        "[[transitions]]\nfrom = \"idle\"\nto = \"idle\"\ncommand = \"noop\"\ngates = []\n",
+    )
+    .unwrap();
+
+    std::fs::write(
+        config_dir.join("events.toml"),
+        r#"
+[events.quiz_answered]
+description = "Quiz result"
+restricted = true
+fields = [
+    { name = "score", type = "string" },
+    { name = "pass", type = "string" },
+]
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(config_dir.join("trusted-callers.toml"), "[callers]\n").unwrap();
+
+    std::fs::create_dir_all(dir.path().join("output")).unwrap();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "init"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    dir
+}
+
+#[test]
+#[ignore]
+fn test_sign_then_authed_event_full_flow() {
+    let dir = setup_signing_dir();
+    let mut daemon = start_daemon(dir.path());
+    wait_for_socket(dir.path());
+
+    // Sign
+    let sign_output = Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "sign",
+            "--event-type",
+            "quiz_answered",
+            "--field",
+            "score=5",
+            "--field",
+            "pass=true",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .expect("sign command failed");
+    assert!(sign_output.status.success(), "sign should succeed");
+    let proof = String::from_utf8_lossy(&sign_output.stdout)
+        .trim()
+        .to_string();
+    assert!(!proof.is_empty(), "proof should not be empty");
+
+    // Authed-event with that proof
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "authed-event",
+            "quiz_answered",
+            "--field",
+            "score=5",
+            "--field",
+            "pass=true",
+            "--proof",
+            &proof,
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("recorded: quiz_answered"));
+
+    stop_daemon(&mut daemon);
 }

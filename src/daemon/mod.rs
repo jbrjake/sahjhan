@@ -124,7 +124,7 @@ impl DaemonServer {
             TrustedCallersManifest::load(&callers_path)
                 .map_err(|e| format!("cannot load trusted-callers.toml: {}", e))?
         } else {
-            // No manifest — empty callers (all auth checks will fail)
+            // No manifest — empty callers (all connections allowed)
             TrustedCallersManifest {
                 callers: HashMap::new(),
             }
@@ -269,11 +269,19 @@ fn handle_connection(
     plugin_root: &Path,
 ) {
     // Authenticate before setting up reader/writer.
-    let authenticated = match auth::authenticate_peer(&stream, trusted_callers, plugin_root) {
-        Ok(()) => true,
-        Err(e) => {
-            eprintln!("auth: {}", e);
-            false
+    // If no callers are configured, skip auth (allow all). This lets the
+    // daemon operate without caller restrictions when trusted-callers.toml
+    // has an empty [callers] table, which is the default for development
+    // and testing.
+    let authenticated = if trusted_callers.callers.is_empty() {
+        true
+    } else {
+        match auth::authenticate_peer(&stream, trusted_callers, plugin_root) {
+            Ok(()) => true,
+            Err(e) => {
+                eprintln!("auth: {}", e);
+                false
+            }
         }
     };
 

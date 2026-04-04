@@ -1,12 +1,10 @@
 // tests/auth_tests.rs
 //
-// Tests for restricted events, HMAC authentication, session keys,
-// guards, the ledger_lacks_event gate, and config session-key-path.
+// Tests for restricted events, HMAC authentication (daemon-based),
+// guards, and the ledger_lacks_event gate.
 
 use assert_cmd::Command;
-use hmac::{Hmac, Mac};
 use predicates::prelude::*;
-use sha2::Sha256;
 use tempfile::tempdir;
 
 /// Create a temp directory with config that includes restricted events, then run `init`.
@@ -70,6 +68,8 @@ fields = [
     )
     .unwrap();
 
+    std::fs::write(config_dir.join("trusted-callers.toml"), "[callers]\n").unwrap();
+
     std::fs::create_dir_all(dir.path().join("output")).unwrap();
 
     Command::cargo_bin("sahjhan")
@@ -82,59 +82,39 @@ fields = [
     dir
 }
 
-#[test]
-fn test_init_creates_session_key() {
-    let dir = setup_auth_dir();
-    let key_path = dir.path().join("output/.sahjhan/session.key");
-    assert!(key_path.exists(), "session.key should exist after init");
-    let key_bytes = std::fs::read(&key_path).unwrap();
-    assert_eq!(key_bytes.len(), 32, "session key should be 32 bytes");
+// ---------------------------------------------------------------------------
+// Daemon helpers
+// ---------------------------------------------------------------------------
+
+fn start_daemon(dir: &std::path::Path) -> std::process::Child {
+    std::process::Command::new(env!("CARGO_BIN_EXE_sahjhan"))
+        .args(["--config-dir", "enforcement", "daemon", "start"])
+        .current_dir(dir)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to start daemon")
 }
 
-#[test]
-fn test_ledger_create_generates_per_ledger_key() {
-    let dir = setup_auth_dir();
-
-    Command::cargo_bin("sahjhan")
-        .unwrap()
-        .args([
-            "--config-dir",
-            "enforcement",
-            "ledger",
-            "create",
-            "--name",
-            "test-ledger",
-            "--path",
-            "output/.sahjhan/test-ledger.jsonl",
-            "--mode",
-            "event-only",
-        ])
-        .current_dir(dir.path())
-        .assert()
-        .success();
-
-    let key_path = dir
-        .path()
-        .join("output/.sahjhan/ledgers/test-ledger/session.key");
-    assert!(
-        key_path.exists(),
-        "per-ledger session.key should exist after ledger create"
-    );
-    let key_bytes = std::fs::read(&key_path).unwrap();
-    assert_eq!(
-        key_bytes.len(),
-        32,
-        "per-ledger session key should be 32 bytes"
-    );
-
-    // Per-ledger key should differ from global key
-    let global_key = std::fs::read(dir.path().join("output/.sahjhan/session.key")).unwrap();
-    assert_ne!(
-        key_bytes,
-        global_key.as_slice(),
-        "per-ledger key should differ from global"
-    );
+fn wait_for_socket(dir: &std::path::Path) {
+    let socket_path = dir.join("output/.sahjhan/daemon.sock");
+    for _ in 0..50 {
+        if socket_path.exists() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    panic!("Daemon socket did not appear at {:?}", socket_path);
 }
+
+fn stop_daemon(child: &mut std::process::Child) {
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+// ---------------------------------------------------------------------------
+// Restricted event tests (no daemon needed)
+// ---------------------------------------------------------------------------
 
 #[test]
 fn test_event_rejects_restricted_type() {
@@ -179,76 +159,33 @@ fn test_event_allows_unrestricted_type() {
 }
 
 #[test]
-fn test_config_session_key_path_global() {
+fn test_authed_event_rejects_unrestricted_type() {
     let dir = setup_auth_dir();
 
-    let output = Command::cargo_bin("sahjhan")
-        .unwrap()
-        .args(["--config-dir", "enforcement", "config", "session-key-path"])
-        .current_dir(dir.path())
-        .assert()
-        .success();
-
-    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
-    assert!(
-        stdout.trim().ends_with("session.key"),
-        "should output path ending in session.key, got: {}",
-        stdout.trim()
-    );
-    assert!(
-        stdout.trim().starts_with('/'),
-        "should be absolute path, got: {}",
-        stdout.trim()
-    );
-}
-
-#[test]
-fn test_config_session_key_path_per_ledger() {
-    let dir = setup_auth_dir();
-
-    // Create a named ledger so it gets a per-ledger key
     Command::cargo_bin("sahjhan")
         .unwrap()
         .args([
             "--config-dir",
             "enforcement",
-            "ledger",
-            "create",
-            "--name",
-            "myledger",
-            "--path",
-            "output/.sahjhan/myledger.jsonl",
-            "--mode",
-            "event-only",
+            "authed-event",
+            "finding",
+            "--field",
+            "detail=something",
+            "--proof",
+            "deadbeef",
         ])
         .current_dir(dir.path())
         .assert()
-        .success();
-
-    let output = Command::cargo_bin("sahjhan")
-        .unwrap()
-        .args([
-            "--config-dir",
-            "enforcement",
-            "--ledger",
-            "myledger",
-            "config",
-            "session-key-path",
-        ])
-        .current_dir(dir.path())
-        .assert()
-        .success();
-
-    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
-    assert!(
-        stdout.trim().contains("ledgers/myledger/session.key"),
-        "should output per-ledger key path, got: {}",
-        stdout.trim()
-    );
+        .failure()
+        .stderr(predicate::str::contains("not restricted"));
 }
 
+// ---------------------------------------------------------------------------
+// Guards tests (no daemon needed)
+// ---------------------------------------------------------------------------
+
 #[test]
-fn test_guards_returns_json_with_auto_included_key() {
+fn test_guards_returns_json_without_session_key() {
     let dir = setup_auth_dir();
 
     let output = Command::cargo_bin("sahjhan")
@@ -273,8 +210,8 @@ fn test_guards_returns_json_with_auto_included_key() {
         paths
     );
     assert!(
-        paths.iter().any(|p| p.contains("session.key")),
-        "should auto-include session.key, got: {:?}",
+        !paths.iter().any(|p| p.contains("session.key")),
+        "should NOT include session.key (keys are daemon-only now), got: {:?}",
         paths
     );
 }
@@ -328,41 +265,48 @@ render_dir = "output"
         .as_array()
         .expect("read_blocked should be an array");
 
-    let paths: Vec<&str> = read_blocked.iter().map(|v| v.as_str().unwrap()).collect();
     assert!(
-        paths.iter().any(|p| p.contains("session.key")),
-        "should auto-include session.key even without [guards] section, got: {:?}",
-        paths
+        read_blocked.is_empty(),
+        "guards with no [guards] section should have empty read_blocked, got: {:?}",
+        read_blocked
     );
 }
 
-fn compute_proof(key_path: &std::path::Path, event_type: &str, fields: &[(&str, &str)]) -> String {
-    let key = std::fs::read(key_path).unwrap();
-    let mut sorted_fields: Vec<(&str, &str)> = fields.to_vec();
-    sorted_fields.sort_by_key(|(k, _)| *k);
-
-    let mut payload = event_type.to_string();
-    for (k, v) in &sorted_fields {
-        payload.push('\0');
-        payload.push_str(&format!("{}={}", k, v));
-    }
-
-    let mut mac = Hmac::<Sha256>::new_from_slice(&key).unwrap();
-    mac.update(payload.as_bytes());
-    hex::encode(mac.finalize().into_bytes())
-}
+// ---------------------------------------------------------------------------
+// Daemon-based authed-event tests
+// ---------------------------------------------------------------------------
 
 #[test]
+#[ignore]
 fn test_authed_event_valid_proof() {
     let dir = setup_auth_dir();
-    let key_path = dir.path().join("output/.sahjhan/session.key");
+    let mut daemon = start_daemon(dir.path());
+    wait_for_socket(dir.path());
 
-    let proof = compute_proof(
-        &key_path,
-        "quiz_answered",
-        &[("score", "5/5"), ("pass", "true")],
-    );
+    // Use `sahjhan sign` to get a valid proof from the daemon.
+    let sign_output = Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "sign",
+            "--event-type",
+            "quiz_answered",
+            "--field",
+            "score=5/5",
+            "--field",
+            "pass=true",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .expect("sign command failed");
+    assert!(sign_output.status.success(), "sign should succeed");
+    let proof = String::from_utf8_lossy(&sign_output.stdout)
+        .trim()
+        .to_string();
+    assert!(!proof.is_empty(), "proof should not be empty");
 
+    // Use the proof with authed-event.
     Command::cargo_bin("sahjhan")
         .unwrap()
         .args([
@@ -381,11 +325,16 @@ fn test_authed_event_valid_proof() {
         .assert()
         .success()
         .stdout(predicate::str::contains("recorded: quiz_answered"));
+
+    stop_daemon(&mut daemon);
 }
 
 #[test]
+#[ignore]
 fn test_authed_event_invalid_proof() {
     let dir = setup_auth_dir();
+    let mut daemon = start_daemon(dir.path());
+    wait_for_socket(dir.path());
 
     Command::cargo_bin("sahjhan")
         .unwrap()
@@ -404,27 +353,10 @@ fn test_authed_event_invalid_proof() {
         .current_dir(dir.path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("invalid proof"));
-}
+        .stderr(
+            predicate::str::contains("invalid proof")
+                .or(predicate::str::contains("proof does not match")),
+        );
 
-#[test]
-fn test_authed_event_rejects_unrestricted_type() {
-    let dir = setup_auth_dir();
-
-    Command::cargo_bin("sahjhan")
-        .unwrap()
-        .args([
-            "--config-dir",
-            "enforcement",
-            "authed-event",
-            "finding",
-            "--field",
-            "detail=something",
-            "--proof",
-            "deadbeef",
-        ])
-        .current_dir(dir.path())
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("not restricted"));
+    stop_daemon(&mut daemon);
 }

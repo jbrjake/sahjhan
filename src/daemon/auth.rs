@@ -114,10 +114,9 @@ pub fn authenticate_peer(
         peer_pid
     };
 
-    let cmdline = platform::get_cmdline(target_pid)
-        .map_err(|e| {
-            AuthError::Platform(format!("cannot get cmdline for PID {}: {}", target_pid, e))
-        })?;
+    let cmdline = platform::get_cmdline(target_pid).map_err(|e| {
+        AuthError::Platform(format!("cannot get cmdline for PID {}: {}", target_pid, e))
+    })?;
 
     let script_path_str = extract_script_path(&cmdline).ok_or(AuthError::NoScriptPath)?;
 

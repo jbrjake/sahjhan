@@ -137,7 +137,11 @@ fn test_parse_verify_request() {
     let json = r#"{"op": "verify", "event_type": "quiz_answered", "fields": {"score": "5"}, "proof": "abcdef"}"#;
     let req: Request = serde_json::from_str(json).unwrap();
     match req {
-        Request::Verify { event_type, fields, proof } => {
+        Request::Verify {
+            event_type,
+            fields,
+            proof,
+        } => {
             assert_eq!(event_type, "quiz_answered");
             assert_eq!(fields.get("score").unwrap(), "5");
             assert_eq!(proof, "abcdef");

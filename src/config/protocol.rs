@@ -9,7 +9,7 @@
 // - SetConfig               — description + ordered values
 // - CheckpointConfig        — checkpoint interval
 // - LedgerTemplateConfig     — ledger declaration (path or path_template)
-// - GuardsConfig            — read_blocked + write_gated paths
+// - GuardsConfig            — write_gated paths
 // - WriteGatedConfig        — path whose writability is gated by protocol state
 
 use serde::Deserialize;
@@ -33,13 +33,9 @@ pub struct ProtocolFile {
 
 /// Configuration for the `[guards]` section of protocol.toml.
 ///
-/// Lists paths that enforcement hooks should block agents from reading,
-/// and paths whose writability is gated by protocol state.
+/// Paths whose writability is gated by protocol state.
 ///
 /// ```toml
-/// [guards]
-/// read_blocked = [".sahjhan/session.key", "enforcement/quiz-bank.json"]
-///
 /// [[guards.write_gated]]
 /// path = "src/main.rs"
 /// writable_in = ["coding", "review"]
@@ -47,8 +43,6 @@ pub struct ProtocolFile {
 /// ```
 #[derive(Debug, Deserialize, Clone, Default)]
 pub struct GuardsConfig {
-    #[serde(default)]
-    pub read_blocked: Vec<String>,
     #[serde(default)]
     pub write_gated: Vec<WriteGatedConfig>,
 }

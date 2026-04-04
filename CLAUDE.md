@@ -61,7 +61,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | Recursive gate validator | `config/mod.rs` | `[validate-gate]` | Validates composite (any_of, all_of, not, k_of_n) and leaf gates recursively |
 | Protocol metadata | `config/protocol.rs` | `ProtocolMeta`, `PathsConfig`, `SetConfig` | protocol.toml structures |
 | Ledger template | `config/protocol.rs` | `LedgerTemplateConfig` | `[ledgers]` section; path or path_template for template-based ledger creation |
-| Guards config | `config/protocol.rs` | `GuardsConfig` | `[guards]` section; `read_blocked` lists paths enforcement hooks should block agents from reading; `write_gated` lists state-gated writable paths |
+| Guards config | `config/protocol.rs` | `GuardsConfig` | `[guards]` section; `write_gated` lists state-gated writable paths |
 | Write-gated config | `config/protocol.rs` | `WriteGatedConfig` | A path whose writability is gated by protocol state (path, writable_in, message) |
 | Hooks file | `config/hooks.rs` | `HooksFile` | Top-level hooks.toml wrapper (hooks + monitors) |
 | Hook config | `config/hooks.rs` | `HookConfig` | Single hook rule (event, tools, states, gate, check, auto_record, filter) |
@@ -259,7 +259,6 @@ Sahjhan is a protocol enforcement engine. It has:
 | Render | `cli/render.rs` | `[cmd-render]`, `[cmd-render-dump-context]` | Template rendering |
 | Manifest | `cli/manifest_cmd.rs` | `[cmd-manifest-verify]`, `[cmd-manifest-list]` | File integrity |
 | Authed event | `cli/authed_event.rs` | `[cmd-authed-event]` | HMAC-verified restricted event recording (proof verified via daemon) |
-| Guards | `cli/guards.rs` | `[cmd-guards]` | Output JSON manifest of read-blocked paths for enforcement hooks |
 | Hooks | `cli/hooks_cmd.rs` | `[cmd-hook-generate]`, `[cmd-hook-eval]` | Hook script generation + runtime evaluation |
 | Mermaid | `cli/mermaid.rs` | `[cmd-mermaid]` | Diagram generation command (stateDiagram-v2 or ASCII) |
 | Reseal | `cli/authed_event.rs` | `[cmd-reseal]` | HMAC-authenticated config reseal (proof verified via daemon) |

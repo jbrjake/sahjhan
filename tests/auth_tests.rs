@@ -1,7 +1,7 @@
 // tests/auth_tests.rs
 //
 // Tests for restricted events, HMAC authentication (daemon-based),
-// guards, and the ledger_lacks_event gate.
+// and the ledger_lacks_event gate.
 
 use assert_cmd::Command;
 use predicates::prelude::*;
@@ -26,8 +26,6 @@ managed = ["output"]
 data_dir = "output/.sahjhan"
 render_dir = "output"
 
-[guards]
-read_blocked = ["enforcement/quiz-bank.json"]
 "#,
     )
     .unwrap();
@@ -178,98 +176,6 @@ fn test_authed_event_rejects_unrestricted_type() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("not restricted"));
-}
-
-// ---------------------------------------------------------------------------
-// Guards tests (no daemon needed)
-// ---------------------------------------------------------------------------
-
-#[test]
-fn test_guards_returns_json_without_session_key() {
-    let dir = setup_auth_dir();
-
-    let output = Command::cargo_bin("sahjhan")
-        .unwrap()
-        .args(["--config-dir", "enforcement", "guards"])
-        .current_dir(dir.path())
-        .assert()
-        .success();
-
-    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
-    let parsed: serde_json::Value =
-        serde_json::from_str(stdout.trim()).expect("should be valid JSON");
-
-    let read_blocked = parsed["read_blocked"]
-        .as_array()
-        .expect("read_blocked should be an array");
-
-    let paths: Vec<&str> = read_blocked.iter().map(|v| v.as_str().unwrap()).collect();
-    assert!(
-        paths.contains(&"enforcement/quiz-bank.json"),
-        "should contain configured path, got: {:?}",
-        paths
-    );
-    assert!(
-        !paths.iter().any(|p| p.contains("session.key")),
-        "should NOT include session.key (keys are daemon-only now), got: {:?}",
-        paths
-    );
-}
-
-#[test]
-fn test_guards_without_config_section() {
-    let dir = tempdir().unwrap();
-    let config_dir = dir.path().join("enforcement");
-    std::fs::create_dir_all(&config_dir).unwrap();
-
-    std::fs::write(
-        config_dir.join("protocol.toml"),
-        r#"
-[protocol]
-name = "test"
-version = "1.0.0"
-description = "test"
-
-[paths]
-managed = ["output"]
-data_dir = "output/.sahjhan"
-render_dir = "output"
-"#,
-    )
-    .unwrap();
-
-    std::fs::write(
-        config_dir.join("states.toml"),
-        "[states.idle]\nlabel = \"Idle\"\ninitial = true\n",
-    )
-    .unwrap();
-
-    std::fs::write(
-        config_dir.join("transitions.toml"),
-        "[[transitions]]\nfrom = \"idle\"\nto = \"idle\"\ncommand = \"noop\"\ngates = []\n",
-    )
-    .unwrap();
-
-    let output = Command::cargo_bin("sahjhan")
-        .unwrap()
-        .args(["--config-dir", "enforcement", "guards"])
-        .current_dir(dir.path())
-        .assert()
-        .success();
-
-    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
-    let parsed: serde_json::Value =
-        serde_json::from_str(stdout.trim()).expect("should be valid JSON");
-
-    let read_blocked = parsed["read_blocked"]
-        .as_array()
-        .expect("read_blocked should be an array");
-
-    assert!(
-        read_blocked.is_empty(),
-        "guards with no [guards] section should have empty read_blocked, got: {:?}",
-        read_blocked
-    );
 }
 
 // ---------------------------------------------------------------------------

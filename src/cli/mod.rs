@@ -4,7 +4,6 @@ pub mod aliases;
 pub mod authed_event;
 pub mod commands;
 pub mod daemon_cmd;
-pub mod guards;
 pub mod hooks_cmd;
 pub mod init;
 pub mod ledger;

@@ -20,7 +20,6 @@ use sahjhan::cli::aliases;
 use sahjhan::cli::authed_event;
 use sahjhan::cli::commands;
 use sahjhan::cli::daemon_cmd;
-use sahjhan::cli::guards;
 use sahjhan::cli::hooks_cmd;
 use sahjhan::cli::init;
 use sahjhan::cli::ledger;
@@ -169,9 +168,6 @@ enum Commands {
         #[command(subcommand)]
         action: LedgerAction,
     },
-
-    /// Show read-guard manifest for enforcement hooks
-    Guards,
 
     /// Generate protocol diagram (Mermaid or ASCII)
     Mermaid {
@@ -621,10 +617,6 @@ fn main() {
                 Box::new(LegacyResult::new("ledger_import", code))
             }
         },
-        Commands::Guards => {
-            let code = guards::cmd_guards(&cli.config_dir);
-            Box::new(LegacyResult::new("guards", code))
-        }
         Commands::Mermaid { rendered } => {
             let code = mermaid_cmd::cmd_mermaid(&cli.config_dir, rendered);
             Box::new(LegacyResult::new("mermaid", code))

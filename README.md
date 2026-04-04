@@ -187,33 +187,9 @@ The daemon also authenticates its callers. Every connection goes through PID-bas
 
 Both the path and the SHA-256 hash must match. The agent can't call `sahjhan sign` directly (parent PID would be `bash`, not a trusted script). It can't write a script into the trusted path (the bootstrap hook blocks writes to `enforcement/`). It can't modify a trusted script to do something else (hash won't match). It can't copy a trusted script somewhere and run it from there (path won't match).
 
-The vault handles more than keys. The quiz bank — the questions the hook uses to verify the agent actually read the code — lives in daemon memory too. The hook loads it at startup with `sahjhan vault store --name quiz-bank --file questions.json`, then retrieves questions with `sahjhan vault read --name quiz-bank` during the quiz. The file gets deleted from disk after loading. No point in HMAC-protecting the answers if the agent can read the questions in advance, and no point in read-guarding a file that doesn't need to exist.
+The vault handles more than keys. The quiz bank — the questions the hook uses to verify the agent actually read the code — lives in daemon memory too. The hook loads it at startup with `sahjhan vault store --name quiz-bank --file questions.json`, then retrieves questions with `sahjhan vault read --name quiz-bank` during the quiz. The file gets deleted from disk after loading. No point in HMAC-protecting the answers if the agent can read the questions in advance, and no point in leaving a file on disk that doesn't need to exist.
 
 Kill the daemon and the secrets vanish. That's denial of service, not exfiltration. The daemon cleans up its socket and PID files on shutdown. If it dies uncleanly, stale files get cleaned on the next start.
-
-### Read guards
-
-Some files on disk still need protection from the agent — internal config, reference data, anything the protocol author doesn't want read. You declare which paths to block in `protocol.toml`:
-
-```toml
-[guards]
-read_blocked = [
-    "enforcement/internal-config.json",
-]
-```
-
-`sahjhan guards` outputs this list as JSON for the enforcement harness:
-
-```bash
-sahjhan guards
-# {
-#   "read_blocked": [
-#     "enforcement/internal-config.json"
-#   ]
-# }
-```
-
-Sahjhan doesn't enforce the read-blocking itself. That's the hooks' job. Sahjhan provides the policy declarations, the hooks interpret them. The binary doesn't need to know about Claude Code or any particular agent harness. For secrets that matter — session keys, quiz banks — the vault is the answer, not file guards.
 
 ### Config integrity
 
@@ -891,9 +867,6 @@ The existing `paths.managed` blocks all writes to managed directories. But some 
 `write_gated` guards in `protocol.toml` enforce this:
 
 ```toml
-[guards]
-read_blocked = ["enforcement/internal-config.json"]
-
 [[guards.write_gated]]
 path = "docs/SUMMARY.md"
 writable_in = ["finalized"]
@@ -937,7 +910,6 @@ sahjhan sign --event-type <type> [--field KEY=VALUE]
                                           Get HMAC proof from daemon
 sahjhan verify --event-type <type> --proof <HMAC> [--field KEY=VALUE]
                                           Verify an HMAC proof via daemon
-sahjhan guards                            Show read-guard manifest (JSON)
 sahjhan daemon start                      Start daemon (foreground, holds keys in memory)
 sahjhan daemon stop                       Stop running daemon
 sahjhan daemon status                     Query daemon health

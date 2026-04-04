@@ -378,7 +378,6 @@ fn test_hook_eval_write_gated_blocks() {
 
     // Add write-gated guard
     config.guards = Some(GuardsConfig {
-        read_blocked: vec![],
         write_gated: vec![WriteGatedConfig {
             path: "src/*.rs".to_string(),
             writable_in: vec!["working".to_string()],
@@ -642,7 +641,6 @@ fn test_hook_eval_write_gated_allows_in_correct_state() {
 
     // Add write-gated guard
     config.guards = Some(GuardsConfig {
-        read_blocked: vec![],
         write_gated: vec![WriteGatedConfig {
             path: "src/*.rs".to_string(),
             writable_in: vec!["working".to_string()],

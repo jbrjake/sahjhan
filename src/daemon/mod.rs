@@ -328,11 +328,25 @@ fn handle_connection(
         let response = match serde_json::from_str::<Request>(&line) {
             Ok(Request::Status) => {
                 // Status is always allowed (health check).
-                handle_request(Request::Status, &vault, &session_key, start_time, last_activity, idle_timeout)
+                handle_request(
+                    Request::Status,
+                    &vault,
+                    &session_key,
+                    start_time,
+                    last_activity,
+                    idle_timeout,
+                )
             }
             Ok(req) => {
                 if authenticated {
-                    handle_request(req, &vault, &session_key, start_time, last_activity, idle_timeout)
+                    handle_request(
+                        req,
+                        &vault,
+                        &session_key,
+                        start_time,
+                        last_activity,
+                        idle_timeout,
+                    )
                 } else {
                     Response::err("auth_failed", "caller not authenticated")
                 }

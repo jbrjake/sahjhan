@@ -529,7 +529,11 @@ fn test_daemon_status_includes_idle_fields() {
     let idle_secs = val["idle_seconds"]
         .as_u64()
         .expect("idle_seconds should be a number");
-    assert!(idle_secs < 5, "idle_seconds should be small, got {}", idle_secs);
+    assert!(
+        idle_secs < 5,
+        "idle_seconds should be small, got {}",
+        idle_secs
+    );
     // idle_timeout should be 0 (default — no timeout).
     assert_eq!(
         val["idle_timeout"].as_u64().unwrap(),

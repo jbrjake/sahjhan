@@ -117,7 +117,13 @@ impl Response {
         }
     }
 
-    pub fn ok_status(pid: u32, uptime_seconds: u64, vault_entries: usize, idle_seconds: u64, idle_timeout: u64) -> Self {
+    pub fn ok_status(
+        pid: u32,
+        uptime_seconds: u64,
+        vault_entries: usize,
+        idle_seconds: u64,
+        idle_timeout: u64,
+    ) -> Self {
         Self {
             ok: true,
             proof: None,

@@ -73,6 +73,19 @@ fn start_daemon(dir: &std::path::Path) -> std::process::Child {
         .expect("failed to start daemon")
 }
 
+/// Spawn the daemon with extra CLI args.
+fn start_daemon_with_args(dir: &std::path::Path, extra_args: &[&str]) -> std::process::Child {
+    let mut args = vec!["--config-dir", "enforcement", "daemon", "start"];
+    args.extend_from_slice(extra_args);
+    std::process::Command::new(env!("CARGO_BIN_EXE_sahjhan"))
+        .args(&args)
+        .current_dir(dir)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to start daemon")
+}
+
 /// Block until the daemon socket file appears (up to 5 seconds).
 fn wait_for_socket(dir: &std::path::Path) {
     let socket_path = dir.join("output/.sahjhan/daemon.sock");
@@ -446,6 +459,83 @@ fn test_sign_then_authed_event_full_flow() {
         .assert()
         .success()
         .stdout(predicate::str::contains("recorded: quiz_answered"));
+
+    stop_daemon(&mut daemon);
+}
+
+// ---------------------------------------------------------------------------
+// Idle timeout tests
+// ---------------------------------------------------------------------------
+
+#[test]
+#[ignore]
+fn test_daemon_idle_timeout_clean_shutdown() {
+    let dir = setup_dir();
+    let mut daemon = start_daemon_with_args(dir.path(), &["--idle-timeout", "1"]);
+    wait_for_socket(dir.path());
+
+    let socket_path = dir.path().join("output/.sahjhan/daemon.sock");
+    let pid_path = dir.path().join("output/.sahjhan/daemon.pid");
+
+    // Confirm daemon is running.
+    assert!(socket_path.exists());
+    assert!(pid_path.exists());
+
+    // Wait for idle timeout to fire (1s timeout + margin).
+    std::thread::sleep(std::time::Duration::from_secs(3));
+
+    // Daemon should have exited and cleaned up.
+    let status = daemon.try_wait().expect("failed to check daemon status");
+    assert!(
+        status.is_some(),
+        "daemon should have exited after idle timeout"
+    );
+
+    assert!(
+        !socket_path.exists(),
+        "socket file should be removed after idle timeout"
+    );
+    assert!(
+        !pid_path.exists(),
+        "PID file should be removed after idle timeout"
+    );
+}
+
+#[test]
+#[ignore]
+fn test_daemon_status_includes_idle_fields() {
+    let dir = setup_dir();
+    let mut daemon = start_daemon(dir.path());
+    wait_for_socket(dir.path());
+
+    let socket_path = dir.path().join("output/.sahjhan/daemon.sock");
+
+    // Connect and send status request.
+    let mut stream = UnixStream::connect(&socket_path).expect("connect to daemon socket");
+    writeln!(stream, r#"{{"op": "status"}}"#).expect("write status request");
+
+    let reader = BufReader::new(&stream);
+    let response_line = reader
+        .lines()
+        .next()
+        .expect("should get a response")
+        .expect("response should be readable");
+
+    let val: serde_json::Value =
+        serde_json::from_str(&response_line).expect("response should be valid JSON");
+
+    assert_eq!(val["ok"], true);
+    // idle_seconds should be present and small (we just connected).
+    let idle_secs = val["idle_seconds"]
+        .as_u64()
+        .expect("idle_seconds should be a number");
+    assert!(idle_secs < 5, "idle_seconds should be small, got {}", idle_secs);
+    // idle_timeout should be 0 (default — no timeout).
+    assert_eq!(
+        val["idle_timeout"].as_u64().unwrap(),
+        0,
+        "idle_timeout should be 0 (default)"
+    );
 
     stop_daemon(&mut daemon);
 }

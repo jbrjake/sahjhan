@@ -61,6 +61,7 @@ pub struct DaemonServer {
     #[allow(dead_code)]
     trusted_callers: TrustedCallersManifest,
     start_time: Instant,
+    idle_timeout: u64,
 }
 
 impl DaemonServer {
@@ -72,7 +73,7 @@ impl DaemonServer {
     /// 4. Best-effort mlock on key bytes
     /// 5. Deny debugger attachment
     /// 6. Load trusted-callers.toml
-    pub fn new(config_dir: PathBuf, data_dir: PathBuf) -> Result<Self, String> {
+    pub fn new(config_dir: PathBuf, data_dir: PathBuf, idle_timeout: u64) -> Result<Self, String> {
         // 1. Check for library injection
         if let Some(var) = platform::check_preload_env() {
             return Err(format!("refusing to start: {} is set in environment", var));
@@ -139,6 +140,7 @@ impl DaemonServer {
             data_dir,
             trusted_callers,
             start_time: Instant::now(),
+            idle_timeout,
         })
     }
 
@@ -192,6 +194,7 @@ impl DaemonServer {
             .map_err(|e| format!("cannot set non-blocking: {}", e))?;
 
         // Accept loop
+        let mut last_activity = Instant::now();
         while RUNNING.load(Ordering::SeqCst) {
             match listener.accept() {
                 Ok((stream, _addr)) => {
@@ -200,15 +203,19 @@ impl DaemonServer {
                         eprintln!("warning: cannot set stream to blocking: {}", e);
                         continue;
                     }
+                    last_activity = Instant::now();
                     let vault = Arc::clone(&self.vault);
                     let key = self.session_key.clone();
                     let start_time = self.start_time;
+                    let idle_timeout = self.idle_timeout;
                     let plugin_root = self.config_dir.parent().unwrap_or(&self.config_dir);
                     handle_connection(
                         stream,
                         vault,
                         key,
                         start_time,
+                        last_activity,
+                        idle_timeout,
                         &self.trusted_callers,
                         plugin_root,
                     );
@@ -216,6 +223,16 @@ impl DaemonServer {
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     // No pending connection — sleep briefly to avoid busy-wait
                     std::thread::sleep(std::time::Duration::from_millis(50));
+                    // Check idle timeout
+                    if self.idle_timeout > 0
+                        && last_activity.elapsed().as_secs() >= self.idle_timeout
+                    {
+                        eprintln!(
+                            "daemon: idle timeout ({}s), shutting down",
+                            self.idle_timeout
+                        );
+                        break;
+                    }
                 }
                 Err(e) => {
                     if RUNNING.load(Ordering::SeqCst) {
@@ -260,11 +277,14 @@ impl DaemonServer {
 /// Authenticates the caller via PID-based manifest check before processing.
 /// Status requests are exempt (health checks). All other requests require
 /// successful authentication.
+#[allow(clippy::too_many_arguments)]
 fn handle_connection(
     stream: UnixStream,
     vault: Arc<Mutex<Vault>>,
     session_key: Zeroizing<Vec<u8>>,
     start_time: Instant,
+    last_activity: Instant,
+    idle_timeout: u64,
     trusted_callers: &auth::TrustedCallersManifest,
     plugin_root: &Path,
 ) {
@@ -308,11 +328,11 @@ fn handle_connection(
         let response = match serde_json::from_str::<Request>(&line) {
             Ok(Request::Status) => {
                 // Status is always allowed (health check).
-                handle_request(Request::Status, &vault, &session_key, start_time)
+                handle_request(Request::Status, &vault, &session_key, start_time, last_activity, idle_timeout)
             }
             Ok(req) => {
                 if authenticated {
-                    handle_request(req, &vault, &session_key, start_time)
+                    handle_request(req, &vault, &session_key, start_time, last_activity, idle_timeout)
                 } else {
                     Response::err("auth_failed", "caller not authenticated")
                 }
@@ -340,6 +360,8 @@ fn handle_request(
     vault: &Arc<Mutex<Vault>>,
     session_key: &[u8],
     start_time: Instant,
+    last_activity: Instant,
+    idle_timeout: u64,
 ) -> Response {
     match req {
         Request::Sign { event_type, fields } => {
@@ -388,11 +410,12 @@ fn handle_request(
         Request::Status => {
             let pid = std::process::id();
             let uptime = start_time.elapsed().as_secs();
+            let idle_secs = last_activity.elapsed().as_secs();
             let vault_entries = match vault.lock() {
                 Ok(v) => v.list().len(),
                 Err(_) => 0,
             };
-            Response::ok_status(pid, uptime, vault_entries, 0, 0)
+            Response::ok_status(pid, uptime, vault_entries, idle_secs, idle_timeout)
         }
         Request::Verify {
             event_type,

@@ -392,7 +392,7 @@ fn handle_request(
                 Ok(v) => v.list().len(),
                 Err(_) => 0,
             };
-            Response::ok_status(pid, uptime, vault_entries)
+            Response::ok_status(pid, uptime, vault_entries, 0, 0)
         }
         Request::Verify {
             event_type,

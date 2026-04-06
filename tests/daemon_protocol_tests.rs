@@ -103,7 +103,7 @@ fn test_serialize_ok_names_response() {
 
 #[test]
 fn test_serialize_ok_status_response() {
-    let resp = Response::ok_status(12345, 3600, 2);
+    let resp = Response::ok_status(12345, 3600, 2, 0, 0);
     let json = serde_json::to_string(&resp).unwrap();
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(v["ok"], true);
@@ -157,4 +157,26 @@ fn test_serialize_ok_verified_response() {
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(v["ok"], true);
     assert_eq!(v["verified"], true);
+}
+
+#[test]
+fn test_serialize_ok_status_includes_idle_fields() {
+    let resp = Response::ok_status(12345, 3600, 2, 120, 0);
+    let json = serde_json::to_string(&resp).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(v["ok"], true);
+    assert_eq!(v["pid"], 12345);
+    assert_eq!(v["uptime_seconds"], 3600);
+    assert_eq!(v["vault_entries"], 2);
+    assert_eq!(v["idle_seconds"], 120);
+    assert_eq!(v["idle_timeout"], 0);
+}
+
+#[test]
+fn test_serialize_non_status_omits_idle_fields() {
+    let resp = Response::ok_sign("abcdef");
+    let json = serde_json::to_string(&resp).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert!(v.get("idle_seconds").is_none());
+    assert!(v.get("idle_timeout").is_none());
 }

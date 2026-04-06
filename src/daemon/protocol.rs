@@ -5,7 +5,7 @@
 //
 // ## Index
 // - Request                   — tagged enum for incoming operations
-// - Response                  — output envelope with constructors (ok_verified for verify op)
+// - Response                  — output envelope with constructors; ok_status includes idle_seconds/idle_timeout
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -54,6 +54,10 @@ pub struct Response {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vault_entries: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub idle_seconds: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub idle_timeout: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub verified: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -71,6 +75,8 @@ impl Response {
             pid: None,
             uptime_seconds: None,
             vault_entries: None,
+            idle_seconds: None,
+            idle_timeout: None,
             verified: None,
             error: None,
             message: None,
@@ -86,6 +92,8 @@ impl Response {
             pid: None,
             uptime_seconds: None,
             vault_entries: None,
+            idle_seconds: None,
+            idle_timeout: None,
             verified: None,
             error: None,
             message: None,
@@ -101,13 +109,15 @@ impl Response {
             pid: None,
             uptime_seconds: None,
             vault_entries: None,
+            idle_seconds: None,
+            idle_timeout: None,
             verified: None,
             error: None,
             message: None,
         }
     }
 
-    pub fn ok_status(pid: u32, uptime_seconds: u64, vault_entries: usize) -> Self {
+    pub fn ok_status(pid: u32, uptime_seconds: u64, vault_entries: usize, idle_seconds: u64, idle_timeout: u64) -> Self {
         Self {
             ok: true,
             proof: None,
@@ -116,6 +126,8 @@ impl Response {
             pid: Some(pid),
             uptime_seconds: Some(uptime_seconds),
             vault_entries: Some(vault_entries),
+            idle_seconds: Some(idle_seconds),
+            idle_timeout: Some(idle_timeout),
             verified: None,
             error: None,
             message: None,
@@ -131,6 +143,8 @@ impl Response {
             pid: None,
             uptime_seconds: None,
             vault_entries: None,
+            idle_seconds: None,
+            idle_timeout: None,
             verified: None,
             error: None,
             message: None,
@@ -146,6 +160,8 @@ impl Response {
             pid: None,
             uptime_seconds: None,
             vault_entries: None,
+            idle_seconds: None,
+            idle_timeout: None,
             verified: None,
             error: Some(error.to_string()),
             message: Some(message.to_string()),
@@ -161,6 +177,8 @@ impl Response {
             pid: None,
             uptime_seconds: None,
             vault_entries: None,
+            idle_seconds: None,
+            idle_timeout: None,
             verified: Some(true),
             error: None,
             message: None,

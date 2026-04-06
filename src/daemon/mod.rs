@@ -5,7 +5,7 @@
 //
 // ## Index
 // - DaemonServer              -- main server struct
-// - DaemonServer::new         -- construct and initialize (key gen, preload check, stale cleanup)
+// - DaemonServer::new         -- construct and initialize (key gen, preload check, stale cleanup, idle timeout)
 // - DaemonServer::start       -- bind socket, accept loop, signal handling
 // - DaemonServer::cleanup     -- remove socket and PID files
 // - handle_connection         -- read JSON lines from a stream, dispatch, respond

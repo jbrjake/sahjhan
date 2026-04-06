@@ -3,7 +3,7 @@
 // Daemon process management CLI commands.
 //
 // ## Index
-// - [cmd-daemon-start]          cmd_daemon_start()        — start daemon in foreground
+// - [cmd-daemon-start]          cmd_daemon_start()        — start daemon in foreground (accepts idle_timeout)
 // - [cmd-daemon-stop]           cmd_daemon_stop()         — stop running daemon
 // - [cmd-daemon-status]         cmd_daemon_status()       — query daemon status
 // - [resolve-socket-path]       resolve_socket_path()     — resolve daemon socket path

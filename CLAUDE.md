@@ -219,8 +219,9 @@ Sahjhan is a protocol enforcement engine. It has:
 | Concept | File | Anchor/Item | Purpose |
 |---------|------|-------------|---------|
 | Daemon server | `daemon/mod.rs` | `DaemonServer` | Main server struct (socket_path, pid_path, session_key, vault, config/data dirs, trusted_callers) |
-| Server init | `daemon/mod.rs` | `DaemonServer::new` | Preload check, stale cleanup, key gen, mlock, deny debug, load trusted callers |
+| Server init | `daemon/mod.rs` | `DaemonServer::new` | Preload check, stale cleanup, key gen, mlock, deny debug, load trusted callers, idle timeout |
 | Server start | `daemon/mod.rs` | `DaemonServer::start` | Bind socket, set 0600 perms, write PID, signal handling, non-blocking accept loop |
+| Idle timeout | `daemon/mod.rs` | `DaemonServer::start` | last_activity tracking in accept loop; clean shutdown on idle_timeout expiry |
 | Server cleanup | `daemon/mod.rs` | `DaemonServer::cleanup` | Remove socket and PID files |
 | Handle connection | `daemon/mod.rs` | `handle_connection` | Read JSON lines from stream, dispatch to handle_request, write responses |
 | Handle request | `daemon/mod.rs` | `handle_request` | Dispatch Request variant to sign/vault/status operation |
@@ -263,7 +264,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | Mermaid | `cli/mermaid.rs` | `[cmd-mermaid]` | Diagram generation command (stateDiagram-v2 or ASCII) |
 | Reseal | `cli/authed_event.rs` | `[cmd-reseal]` | HMAC-authenticated config reseal (proof verified via daemon) |
 | Verify proof | `cli/verify_cmd.rs` | `[cmd-verify]` | Verify HMAC-SHA256 proof via daemon socket |
-| Daemon start | `cli/daemon_cmd.rs` | `[cmd-daemon-start]` | Start daemon in foreground |
+| Daemon start | `cli/daemon_cmd.rs` | `[cmd-daemon-start]` | Start daemon in foreground (accepts idle_timeout) |
 | Daemon stop | `cli/daemon_cmd.rs` | `[cmd-daemon-stop]` | Stop running daemon (SIGTERM, then SIGKILL) |
 | Daemon status | `cli/daemon_cmd.rs` | `[cmd-daemon-status]` | Query daemon status via socket |
 | Socket path resolver | `cli/daemon_cmd.rs` | `[resolve-socket-path]` | Resolve daemon socket path from config |
@@ -460,8 +461,8 @@ main.rs [cli-main]
 | `tests/hook_eval_tests.rs` | Hook evaluation engine: gate/check/filter/state/monitor/write-gated/managed-path/CLI eval |
 | `tests/concurrent_append_tests.rs` | Concurrent ledger append stress tests (issue #21 TOCTOU race) |
 | `tests/daemon_platform_tests.rs` | Platform API smoke tests: preload env, exe path, cmdline, parent PID, mlock |
-| `tests/daemon_protocol_tests.rs` | Wire protocol types: Request deserialization (all ops + unknowns), Response serialization (all constructors) |
+| `tests/daemon_protocol_tests.rs` | Wire protocol types: Request deserialization (all ops + unknowns), Response serialization (all constructors incl. idle fields) |
 | `tests/daemon_auth_tests.rs` | Trusted-callers manifest load/parse, hash match/mismatch, not-in-manifest, extract_script_path |
 | `tests/daemon_vault_tests.rs` | Vault CRUD: store/read, overwrite, delete, list, read-not-found, delete-noop |
-| `tests/daemon_signing_tests.rs` | E2E daemon signing (deterministic proofs, sign-without-daemon), lifecycle (socket/PID creation, stop cleanup, status, preload rejection) |
+| `tests/daemon_signing_tests.rs` | E2E daemon signing (deterministic proofs, sign-without-daemon), lifecycle (socket/PID creation, stop cleanup, status, preload rejection, idle timeout shutdown) |
 | `tests/daemon_vault_e2e_tests.rs` | E2E vault via CLI: store+read, list, delete, read-nonexistent (all require live daemon) |

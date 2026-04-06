@@ -20,7 +20,7 @@ use super::commands::{
 };
 
 // [cmd-daemon-start]
-pub fn cmd_daemon_start(config_dir: &str) -> i32 {
+pub fn cmd_daemon_start(config_dir: &str, idle_timeout: u64) -> i32 {
     let config_dir_abs = resolve_config_dir(config_dir);
     let config = match load_config(&config_dir_abs) {
         Ok(c) => c,
@@ -31,7 +31,7 @@ pub fn cmd_daemon_start(config_dir: &str) -> i32 {
     };
     let data_dir_abs = resolve_data_dir(&config.paths.data_dir);
 
-    let server = match DaemonServer::new(config_dir_abs, data_dir_abs, 0) {
+    let server = match DaemonServer::new(config_dir_abs, data_dir_abs, idle_timeout) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("daemon: {}", e);

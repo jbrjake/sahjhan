@@ -405,7 +405,11 @@ enum LedgerAction {
 #[derive(Subcommand)]
 enum DaemonAction {
     /// Start daemon in foreground
-    Start,
+    Start {
+        /// Idle timeout in seconds (0 = never timeout, default)
+        #[arg(long, default_value = "0")]
+        idle_timeout: u64,
+    },
     /// Stop running daemon
     Stop,
     /// Query daemon status
@@ -655,8 +659,8 @@ fn main() {
             Box::new(LegacyResult::new("query", code))
         }
         Commands::Daemon { action } => match action {
-            DaemonAction::Start => {
-                let code = daemon_cmd::cmd_daemon_start(&cli.config_dir);
+            DaemonAction::Start { idle_timeout } => {
+                let code = daemon_cmd::cmd_daemon_start(&cli.config_dir, idle_timeout);
                 Box::new(LegacyResult::new("daemon_start", code))
             }
             DaemonAction::Stop => {

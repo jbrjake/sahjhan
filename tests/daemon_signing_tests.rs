@@ -543,3 +543,343 @@ fn test_daemon_status_includes_idle_fields() {
 
     stop_daemon(&mut daemon);
 }
+
+// ---------------------------------------------------------------------------
+// Reset authentication tests (#26)
+// ---------------------------------------------------------------------------
+
+#[test]
+#[ignore]
+fn test_reset_requires_proof() {
+    let dir = setup_dir();
+    let mut daemon = start_daemon(dir.path());
+    wait_for_socket(dir.path());
+
+    // Get a proof for reset from the daemon
+    let sign_output = Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "sign",
+            "--event-type",
+            "reset",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .expect("sign command failed");
+    assert!(sign_output.status.success(), "sign should succeed");
+    let proof = String::from_utf8_lossy(&sign_output.stdout)
+        .trim()
+        .to_string();
+
+    // Reset with valid proof should succeed
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "reset",
+            "--confirm",
+            "--proof",
+            &proof,
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    stop_daemon(&mut daemon);
+}
+
+#[test]
+#[ignore]
+fn test_reset_without_proof_is_rejected() {
+    let dir = setup_dir();
+
+    // Reset without --proof should fail at arg parsing (proof is required)
+    let output = Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "reset", "--confirm"])
+        .current_dir(dir.path())
+        .output()
+        .expect("reset command failed to run");
+
+    assert!(
+        !output.status.success(),
+        "reset without proof should be rejected"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--proof"),
+        "should mention --proof requirement, got: {}",
+        stderr
+    );
+}
+
+#[test]
+#[ignore]
+fn test_reset_with_wrong_proof_is_rejected() {
+    let dir = setup_dir();
+    let mut daemon = start_daemon(dir.path());
+    wait_for_socket(dir.path());
+
+    // Reset with bogus proof should fail
+    let output = Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "reset",
+            "--confirm",
+            "--proof",
+            "deadbeef",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .expect("reset command failed to run");
+
+    assert!(
+        !output.status.success(),
+        "reset with wrong proof should be rejected"
+    );
+
+    stop_daemon(&mut daemon);
+}
+
+// ---------------------------------------------------------------------------
+// Auth error reason code tests (#26)
+// ---------------------------------------------------------------------------
+
+/// Setup dir with a non-empty trusted-callers.toml so auth is enforced.
+fn setup_dir_with_callers() -> tempfile::TempDir {
+    let dir = tempdir().unwrap();
+    let config_dir = dir.path().join("enforcement");
+    std::fs::create_dir_all(&config_dir).unwrap();
+
+    std::fs::write(
+        config_dir.join("protocol.toml"),
+        r#"[protocol]
+name = "test-daemon"
+version = "1.0.0"
+description = "Daemon test protocol"
+
+[paths]
+managed = ["output"]
+data_dir = "output/.sahjhan"
+render_dir = "output"
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        config_dir.join("states.toml"),
+        "[states.idle]\nlabel = \"Idle\"\ninitial = true\n",
+    )
+    .unwrap();
+
+    std::fs::write(
+        config_dir.join("transitions.toml"),
+        "[[transitions]]\nfrom = \"idle\"\nto = \"idle\"\ncommand = \"noop\"\ngates = []\n",
+    )
+    .unwrap();
+
+    // Non-empty callers table — auth is enforced
+    std::fs::write(
+        config_dir.join("trusted-callers.toml"),
+        "[callers]\n\"hooks/nonexistent.py\" = \"sha256:0000000000000000000000000000000000000000000000000000000000000000\"\n",
+    )
+    .unwrap();
+
+    std::fs::create_dir_all(dir.path().join("output")).unwrap();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "init"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    dir
+}
+
+#[test]
+#[ignore]
+fn test_auth_error_includes_reason_code() {
+    let dir = setup_dir_with_callers();
+    let mut daemon = start_daemon(dir.path());
+    wait_for_socket(dir.path());
+
+    let socket_path = dir.path().join("output/.sahjhan/daemon.sock");
+
+    // Connect directly and try to sign — should fail auth with reason
+    let mut stream = UnixStream::connect(&socket_path).expect("connect to daemon socket");
+    writeln!(
+        stream,
+        r#"{{"op":"sign","event_type":"test","fields":{{}}}}"#
+    )
+    .expect("write sign request");
+
+    let reader = BufReader::new(&stream);
+    let line = reader
+        .lines()
+        .next()
+        .expect("should get a response")
+        .expect("response should be readable");
+
+    let val: serde_json::Value =
+        serde_json::from_str(&line).expect("response should be valid JSON");
+
+    assert_eq!(val["ok"], false, "auth should fail");
+    assert_eq!(
+        val["error"], "auth_failed",
+        "error code should be auth_failed"
+    );
+
+    // The response MUST include a reason field with a known code
+    assert!(
+        val["reason"].is_string(),
+        "auth error response must include 'reason' field, got: {}",
+        serde_json::to_string_pretty(&val).unwrap()
+    );
+    let reason = val["reason"].as_str().unwrap();
+    let known_reasons = [
+        "pid_resolution_failed",
+        "hash_mismatch",
+        "peer_cred_unavailable",
+    ];
+    assert!(
+        known_reasons.contains(&reason),
+        "reason should be one of {:?}, got: {}",
+        known_reasons,
+        reason
+    );
+
+    stop_daemon(&mut daemon);
+}
+
+// ---------------------------------------------------------------------------
+// Ancestor walk auth test (#26)
+// ---------------------------------------------------------------------------
+
+/// Setup dir with a real hook script in trusted-callers.toml.
+/// The hook script runs `sahjhan sign` — auth must succeed by walking
+/// the process tree from sahjhan → shell → python → finding the script.
+fn setup_dir_with_real_hook() -> (tempfile::TempDir, String) {
+    let dir = tempdir().unwrap();
+    let config_dir = dir.path().join("enforcement");
+    std::fs::create_dir_all(&config_dir).unwrap();
+
+    std::fs::write(
+        config_dir.join("protocol.toml"),
+        r#"[protocol]
+name = "test-ancestor-walk"
+version = "1.0.0"
+description = "Ancestor walk test"
+
+[paths]
+managed = ["output"]
+data_dir = "output/.sahjhan"
+render_dir = "output"
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        config_dir.join("states.toml"),
+        "[states.idle]\nlabel = \"Idle\"\ninitial = true\n",
+    )
+    .unwrap();
+
+    std::fs::write(
+        config_dir.join("transitions.toml"),
+        "[[transitions]]\nfrom = \"idle\"\nto = \"idle\"\ncommand = \"noop\"\ngates = []\n",
+    )
+    .unwrap();
+
+    // Create hook script
+    let hooks_dir = config_dir.join("hooks");
+    std::fs::create_dir_all(&hooks_dir).unwrap();
+
+    // The hook script calls sahjhan sign
+    let sahjhan_bin = env!("CARGO_BIN_EXE_sahjhan");
+    let hook_content = format!(
+        r#"#!/usr/bin/env python3
+import subprocess, sys, os
+os.chdir(sys.argv[1])
+result = subprocess.run(
+    ["{bin}", "--config-dir", "enforcement", "sign",
+     "--event-type", "test", "--field", "x=1"],
+    capture_output=True, text=True
+)
+print(result.stdout, end='')
+if result.returncode != 0:
+    print(result.stderr, end='', file=sys.stderr)
+sys.exit(result.returncode)
+"#,
+        bin = sahjhan_bin
+    );
+    std::fs::write(hooks_dir.join("test_hook.py"), &hook_content).unwrap();
+
+    // Compute hash of the hook script
+    use sha2::{Digest, Sha256};
+    let content = std::fs::read(hooks_dir.join("test_hook.py")).unwrap();
+    let hash = format!("sha256:{}", hex::encode(Sha256::digest(&content)));
+
+    // Write trusted-callers.toml with the hook script
+    std::fs::write(
+        config_dir.join("trusted-callers.toml"),
+        format!("[callers]\n\"hooks/test_hook.py\" = \"{}\"\n", hash),
+    )
+    .unwrap();
+
+    std::fs::create_dir_all(dir.path().join("output")).unwrap();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "init"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    (dir, hash)
+}
+
+#[test]
+#[ignore]
+fn test_ancestor_walk_authenticates_hook_script() {
+    let (dir, _hash) = setup_dir_with_real_hook();
+    let mut daemon = start_daemon(dir.path());
+    wait_for_socket(dir.path());
+
+    // Run the hook script, which calls `sahjhan sign`.
+    // Process tree: python3 → sahjhan sign (connects to daemon socket)
+    // The daemon must walk up: sahjhan (our binary) → parent → python3
+    // and find test_hook.py in the cmdline of the python3 process.
+    let hook_script = dir.path().join("enforcement/hooks/test_hook.py");
+    let output = std::process::Command::new("python3")
+        .arg(&hook_script)
+        .arg(dir.path())
+        .output()
+        .expect("hook script should run");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Capture daemon stderr for diagnostics
+    let _ = daemon.kill();
+    let daemon_output = daemon.wait_with_output().unwrap();
+    let daemon_stderr = String::from_utf8_lossy(&daemon_output.stderr);
+
+    assert!(
+        output.status.success(),
+        "hook script should succeed (ancestor walk should find trusted script)\nstdout: {}\nstderr: {}\ndaemon stderr:\n{}",
+        stdout, stderr, daemon_stderr
+    );
+    // The proof should be a hex string
+    assert!(
+        !stdout.trim().is_empty(),
+        "should get a proof back from sign, stderr: {}\ndaemon stderr:\n{}",
+        stderr,
+        daemon_stderr
+    );
+}

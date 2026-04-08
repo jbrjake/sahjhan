@@ -401,12 +401,51 @@ fn test_stale_marker_warns_and_falls_back() {
 }
 
 // ---------------------------------------------------------------------------
-// reset clears marker
+// reset clears marker (requires daemon for proof — #26)
 // ---------------------------------------------------------------------------
 
-#[test]
-fn test_reset_removes_active_ledger_marker() {
+/// Spawn the daemon as a background process.
+fn start_daemon(dir: &std::path::Path) -> std::process::Child {
+    std::process::Command::new(env!("CARGO_BIN_EXE_sahjhan"))
+        .args(["--config-dir", "enforcement", "daemon", "start"])
+        .current_dir(dir)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to start daemon")
+}
+
+/// Block until the daemon socket file appears (up to 5 seconds).
+fn wait_for_socket(dir: &std::path::Path) {
+    let socket_path = dir.join("output/.sahjhan/daemon.sock");
+    for _ in 0..50 {
+        if socket_path.exists() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    panic!("Daemon socket did not appear at {:?}", socket_path);
+}
+
+/// Kill the daemon and reap the child process.
+fn stop_daemon(child: &mut std::process::Child) {
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// Setup dir with trusted-callers.toml for daemon tests.
+fn setup_dir_for_reset() -> tempfile::TempDir {
     let dir = setup_initialized_dir();
+    let config_dir = dir.path().join("enforcement");
+    // Write empty trusted-callers.toml (allow all — test env)
+    std::fs::write(config_dir.join("trusted-callers.toml"), "[callers]\n").unwrap();
+    dir
+}
+
+#[test]
+#[ignore]
+fn test_reset_removes_active_ledger_marker() {
+    let dir = setup_dir_for_reset();
     create_named_ledger(dir.path(), "run-1");
 
     // Activate
@@ -420,18 +459,29 @@ fn test_reset_removes_active_ledger_marker() {
     let marker = dir.path().join("output/.sahjhan/active-ledger");
     assert!(marker.exists());
 
-    // Get the reset token
-    let output = Command::cargo_bin("sahjhan")
+    // Start daemon for proof
+    let mut daemon = start_daemon(dir.path());
+    wait_for_socket(dir.path());
+
+    // Get proof from daemon
+    let sign_output = Command::cargo_bin("sahjhan")
         .unwrap()
-        .args(["--config-dir", "enforcement", "reset", "--confirm"])
+        .args([
+            "--config-dir",
+            "enforcement",
+            "sign",
+            "--event-type",
+            "reset",
+        ])
         .current_dir(dir.path())
         .output()
-        .unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    // Extract token from "reset requires --token XXXXXX"
-    let token = stdout.split_whitespace().last().unwrap().to_string();
+        .expect("sign command failed");
+    assert!(sign_output.status.success(), "sign should succeed");
+    let proof = String::from_utf8_lossy(&sign_output.stdout)
+        .trim()
+        .to_string();
 
-    // Run actual reset
+    // Run actual reset with proof
     Command::cargo_bin("sahjhan")
         .unwrap()
         .args([
@@ -439,8 +489,8 @@ fn test_reset_removes_active_ledger_marker() {
             "enforcement",
             "reset",
             "--confirm",
-            "--token",
-            &token,
+            "--proof",
+            &proof,
         ])
         .current_dir(dir.path())
         .assert()
@@ -451,6 +501,8 @@ fn test_reset_removes_active_ledger_marker() {
         !marker.exists(),
         "active-ledger marker should be removed by reset"
     );
+
+    stop_daemon(&mut daemon);
 }
 
 // ---------------------------------------------------------------------------

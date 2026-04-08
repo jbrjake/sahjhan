@@ -152,9 +152,9 @@ enum Commands {
         #[arg(long)]
         confirm: bool,
 
-        /// Confirmation token derived from genesis hash
+        /// HMAC-SHA256 proof from daemon (replaces self-defeating token)
         #[arg(long)]
-        token: Option<String>,
+        proof: String,
     },
 
     /// Generate hook scripts for a harness
@@ -562,8 +562,8 @@ fn main() {
             let code = authed_event::cmd_reseal(&cli.config_dir, &proof, &targeting);
             Box::new(LegacyResult::new("reseal", code))
         }
-        Commands::Reset { confirm, token } => {
-            let code = init::cmd_reset(&cli.config_dir, confirm, &token);
+        Commands::Reset { confirm, proof } => {
+            let code = init::cmd_reset(&cli.config_dir, confirm, &proof);
             Box::new(LegacyResult::new("reset", code))
         }
         Commands::Hook { action } => match action {

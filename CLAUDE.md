@@ -21,7 +21,7 @@ When you modify any source file in this repository, you MUST update documentatio
 
 ```
 cargo build                    # Build
-cargo test                     # Run all tests (416 tests)
+cargo test                     # Run all tests (419+ tests)
 cargo test <test_name>         # Run one test
 cargo clippy -- -D warnings    # Lint
 cargo fmt                      # Format
@@ -228,12 +228,14 @@ Sahjhan is a protocol enforcement engine. It has:
 | Compute sign | `daemon/mod.rs` | `compute_sign` | HMAC-SHA256 proof computation (same algorithm as authed_event.rs) |
 | Canonical payload | `daemon/mod.rs` | `build_canonical_payload` | Build HMAC payload: event_type + null-separated sorted fields |
 | Wire request | `daemon/protocol.rs` | `Request` | Tagged enum for incoming JSON operations (sign, vault_store, vault_read, vault_delete, vault_list, status) |
-| Wire response | `daemon/protocol.rs` | `Response` | Output envelope; constructors: ok_sign, ok_data, ok_names, ok_status, ok_empty, err |
+| Wire response | `daemon/protocol.rs` | `Response` | Output envelope; constructors: ok_sign, ok_data, ok_names, ok_status, ok_empty, err, err_with_reason; includes optional `reason` field (#26) |
 | Trusted callers manifest | `daemon/auth.rs` | `TrustedCallersManifest` | Loads trusted-callers.toml (path → sha256 hash map) |
 | Caller verification | `daemon/auth.rs` | `TrustedCallersManifest::verify_caller` | Checks relative script path is in manifest and its SHA-256 matches |
 | Script path extractor | `daemon/auth.rs` | `extract_script_path` | Extracts first non-flag arg from interpreter cmdline (the script path) |
 | Auth error | `daemon/auth.rs` | `AuthError` | NotInManifest, HashMismatch, ScriptNotFound, NoScriptPath, ManifestLoad, ManifestParse, Platform |
-| Peer authentication | `daemon/auth.rs` | `authenticate_peer` | PID-based caller auth: peer PID → exe check → parent walk → cmdline → manifest verify |
+| Auth reason codes | `daemon/auth.rs` | `AuthError::reason_code` | Maps error to diagnostic reason: pid_resolution_failed, hash_mismatch, peer_cred_unavailable (#26) |
+| Find trusted ancestor | `daemon/auth.rs` | `find_trusted_ancestor` | Walk process ancestor chain looking for trusted script in manifest (#26) |
+| Peer authentication | `daemon/auth.rs` | `authenticate_peer` | PID-based caller auth via ancestor walk: peer PID → exe check → walk ancestors → cmdline → manifest verify (#26) |
 | Peer PID | `daemon/platform.rs` | `[get-peer-pid]` | Extract connecting PID from Unix socket (macOS: LOCAL_PEERPID, Linux: SO_PEERCRED) |
 | Exe path | `daemon/platform.rs` | `[get-exe-path]` | Resolve PID to executable path (macOS: proc_pidpath, Linux: /proc/pid/exe) |
 | Command line | `daemon/platform.rs` | `[get-cmdline]` | Read process command-line arguments (macOS: KERN_PROCARGS2, Linux: /proc/pid/cmdline) |
@@ -251,7 +253,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | Alias resolution | `cli/aliases.rs` | `[resolve-alias]` | Rewrite CLI args via protocol aliases |
 | JSON output types | `cli/output.rs` | `CommandOutput`, `CommandResult<T>`, data structs | Structured output with JSON envelope (`schema_version: 1`) |
 | Shared helpers | `cli/commands.rs` | (see file index) | Exit codes, ledger targeting, config loading, active-ledger marker, `[compute-registry-path]`, `[status-cache-path]`, `[write-status-cache]` |
-| Init/validate/reset | `cli/init.rs` | `[cmd-init]`, `[cmd-validate]`, `[cmd-reset]` | Lifecycle commands; init writes status-cache.json |
+| Init/validate/reset | `cli/init.rs` | `[cmd-init]`, `[cmd-validate]`, `[cmd-reset]` | Lifecycle commands; init writes status-cache.json; reset requires HMAC proof via daemon (#26) |
 | Transition/gate/event | `cli/transition.rs` | `[cmd-transition]`, `[cmd-gate-check]`, `[record-and-render]`, `validate_event_fields`, `[cmd-event]` | State machine commands; transition updates status-cache.json |
 | Status/sets | `cli/status.rs` | `[cmd-status]`, `[cmd-set-status]`, `[cmd-set-complete]` | Status display + set management; status warns on missing cache |
 | Log inspection | `cli/log.rs` | `[cmd-log-dump]`, `[cmd-log-verify]`, `[cmd-log-tail]` | Ledger viewing |
@@ -479,6 +481,6 @@ main.rs [cli-main]
 | `tests/daemon_protocol_tests.rs` | Wire protocol types: Request deserialization (all ops + unknowns), Response serialization (all constructors incl. idle fields) |
 | `tests/daemon_auth_tests.rs` | Trusted-callers manifest load/parse, hash match/mismatch, not-in-manifest, extract_script_path |
 | `tests/daemon_vault_tests.rs` | Vault CRUD: store/read, overwrite, delete, list, read-not-found, delete-noop |
-| `tests/daemon_signing_tests.rs` | E2E daemon signing (deterministic proofs, sign-without-daemon), lifecycle (socket/PID creation, stop cleanup, status, preload rejection, idle timeout shutdown) |
+| `tests/daemon_signing_tests.rs` | E2E daemon signing (deterministic proofs, sign-without-daemon), lifecycle (socket/PID creation, stop cleanup, status, preload rejection, idle timeout shutdown), reset auth (#26), auth reason codes (#26), ancestor walk auth (#26) |
 | `tests/daemon_vault_e2e_tests.rs` | E2E vault via CLI: store+read, list, delete, read-nonexistent (all require live daemon) |
 | `tests/active_ledger_tests.rs` | Active-ledger marker: activate/deactivate, create --activate, resolution priority, stale marker fallback, reset clears marker, status display, events land in active ledger |

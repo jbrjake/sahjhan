@@ -5,7 +5,7 @@
 // ## Index
 // - [cmd-init] cmd_init() — initialize ledger, manifest, genesis
 // - [cmd-validate] cmd_validate() — validate protocol config
-// - [cmd-reset] cmd_reset() — archive and reset run
+// - [cmd-reset] cmd_reset() — archive and reset run (requires HMAC proof via daemon)
 
 use std::path::PathBuf;
 
@@ -13,9 +13,9 @@ use crate::config::ProtocolConfig;
 use crate::manifest::tracker::Manifest;
 
 use super::commands::{
-    atty_check, hex_encode_short, ledger_path, load_config, manifest_path, open_ledger, pathdiff,
-    remove_active_ledger, resolve_config_dir, resolve_data_dir, save_manifest, write_status_cache,
-    EXIT_CONFIG_ERROR, EXIT_INTEGRITY_ERROR, EXIT_SUCCESS, EXIT_USAGE_ERROR,
+    ledger_path, load_config, manifest_path, open_ledger, pathdiff, remove_active_ledger,
+    resolve_config_dir, resolve_data_dir, save_manifest, write_status_cache, EXIT_CONFIG_ERROR,
+    EXIT_INTEGRITY_ERROR, EXIT_SUCCESS, EXIT_USAGE_ERROR,
 };
 
 // ---------------------------------------------------------------------------
@@ -167,10 +167,18 @@ pub fn cmd_init(config_dir: &str) -> i32 {
 // ---------------------------------------------------------------------------
 
 // [cmd-reset]
-pub fn cmd_reset(config_dir: &str, confirm: bool, token: &Option<String>) -> i32 {
+pub fn cmd_reset(config_dir: &str, confirm: bool, proof: &str) -> i32 {
     if !confirm {
-        eprintln!("error: reset requires --confirm");
+        eprintln!("error: reset requires --confirm and --proof");
         return EXIT_USAGE_ERROR;
+    }
+
+    // Verify proof via daemon before doing anything destructive
+    let verify_code = super::verify_cmd::cmd_verify(config_dir, "reset", &[], proof);
+    if verify_code != 0 {
+        eprintln!("error: reset requires a valid proof from the daemon");
+        eprintln!("hint: sahjhan sign --event-type reset | xargs -I{{}} sahjhan reset --confirm --proof {{}}");
+        return verify_code;
     }
 
     let config_path = resolve_config_dir(config_dir);
@@ -183,71 +191,36 @@ pub fn cmd_reset(config_dir: &str, confirm: bool, token: &Option<String>) -> i32
     };
 
     let data_dir = resolve_data_dir(&config.paths.data_dir);
-    let ledger = match open_ledger(&data_dir, &config_path) {
-        Ok(l) => l,
-        Err((code, msg)) => {
-            eprintln!("{}", msg);
-            return code;
-        }
-    };
-
-    // Derive confirmation token from genesis hash
-    let genesis_hash = ledger
-        .entries()
-        .first()
-        .map(|e| e.entry_hash)
-        .unwrap_or([0u8; 32]);
-    let token_str = hex_encode_short(&genesis_hash, 6);
-
-    // Check if piped (not a TTY) — record violation
-    let is_tty = atty_check();
-
-    match token {
-        Some(provided_token) if provided_token == &token_str => {
-            // Token matches — proceed with reset
-            if !is_tty {
-                // Programmatic invocation — record violation before reset
-                eprintln!("warning: reset invoked programmatically");
-            }
-
-            // Archive current ledger and manifest
-            let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
-            let ledger_archive = data_dir.join(format!("ledger.{}.jsonl", timestamp));
-            let manifest_archive = data_dir.join(format!("manifest.{}.json", timestamp));
-
-            let lp = ledger_path(&data_dir);
-            let mp = manifest_path(&data_dir);
-
-            if let Err(e) = std::fs::rename(&lp, &ledger_archive) {
-                eprintln!("error: cannot archive ledger: {}", e);
-                return EXIT_INTEGRITY_ERROR;
-            }
-            if let Err(e) = std::fs::rename(&mp, &manifest_archive) {
-                eprintln!("error: cannot archive manifest: {}", e);
-                return EXIT_INTEGRITY_ERROR;
-            }
-
-            // Remove active-ledger marker (#25)
-            remove_active_ledger(&data_dir);
-
-            // Reinitialize
-            let result = cmd_init(config_dir);
-            if result == EXIT_SUCCESS {
-                println!("reset. prior run archived.");
-            }
-            result
-        }
-        Some(provided_token) => {
-            eprintln!(
-                "error: token mismatch. expected '{}', got '{}'",
-                token_str, provided_token
-            );
-            EXIT_USAGE_ERROR
-        }
-        None => {
-            // Display token and prompt
-            println!("reset requires --token {}", token_str);
-            EXIT_USAGE_ERROR
-        }
+    // Open ledger (just to confirm it exists — proof already verified)
+    if let Err((code, msg)) = open_ledger(&data_dir, &config_path) {
+        eprintln!("{}", msg);
+        return code;
     }
+
+    // Archive current ledger and manifest
+    let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
+    let ledger_archive = data_dir.join(format!("ledger.{}.jsonl", timestamp));
+    let manifest_archive = data_dir.join(format!("manifest.{}.json", timestamp));
+
+    let lp = ledger_path(&data_dir);
+    let mp = manifest_path(&data_dir);
+
+    if let Err(e) = std::fs::rename(&lp, &ledger_archive) {
+        eprintln!("error: cannot archive ledger: {}", e);
+        return EXIT_INTEGRITY_ERROR;
+    }
+    if let Err(e) = std::fs::rename(&mp, &manifest_archive) {
+        eprintln!("error: cannot archive manifest: {}", e);
+        return EXIT_INTEGRITY_ERROR;
+    }
+
+    // Remove active-ledger marker (#25)
+    remove_active_ledger(&data_dir);
+
+    // Reinitialize
+    let result = cmd_init(config_dir);
+    if result == EXIT_SUCCESS {
+        println!("reset. prior run archived.");
+    }
+    result
 }

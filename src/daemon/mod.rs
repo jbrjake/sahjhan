@@ -208,7 +208,7 @@ impl DaemonServer {
                     let key = self.session_key.clone();
                     let start_time = self.start_time;
                     let idle_timeout = self.idle_timeout;
-                    let plugin_root = self.config_dir.parent().unwrap_or(&self.config_dir);
+                    let plugin_root = &self.config_dir;
                     handle_connection(
                         stream,
                         vault,
@@ -293,14 +293,15 @@ fn handle_connection(
     // daemon operate without caller restrictions when trusted-callers.toml
     // has an empty [callers] table, which is the default for development
     // and testing.
-    let authenticated = if trusted_callers.callers.is_empty() {
-        true
+    let (authenticated, auth_reason) = if trusted_callers.callers.is_empty() {
+        (true, None)
     } else {
         match auth::authenticate_peer(&stream, trusted_callers, plugin_root) {
-            Ok(()) => true,
+            Ok(()) => (true, None),
             Err(e) => {
-                eprintln!("auth: {}", e);
-                false
+                let reason = e.reason_code().to_string();
+                eprintln!("auth: {} (reason: {})", e, reason);
+                (false, Some(reason))
             }
         }
     };
@@ -348,7 +349,8 @@ fn handle_connection(
                         idle_timeout,
                     )
                 } else {
-                    Response::err("auth_failed", "caller not authenticated")
+                    let reason = auth_reason.as_deref().unwrap_or("pid_resolution_failed");
+                    Response::err_with_reason("auth_failed", "caller not authenticated", reason)
                 }
             }
             Err(e) => Response::err("parse_error", &format!("invalid request: {}", e)),

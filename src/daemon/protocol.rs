@@ -5,7 +5,7 @@
 //
 // ## Index
 // - Request                   — tagged enum for incoming operations
-// - Response                  — output envelope with constructors; ok_status includes idle_seconds/idle_timeout
+// - Response                  — output envelope with constructors; ok_status includes idle_seconds/idle_timeout; err_with_reason for auth diagnostics
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -63,6 +63,8 @@ pub struct Response {
     pub error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 impl Response {
@@ -80,6 +82,7 @@ impl Response {
             verified: None,
             error: None,
             message: None,
+            reason: None,
         }
     }
 
@@ -97,6 +100,7 @@ impl Response {
             verified: None,
             error: None,
             message: None,
+            reason: None,
         }
     }
 
@@ -114,6 +118,7 @@ impl Response {
             verified: None,
             error: None,
             message: None,
+            reason: None,
         }
     }
 
@@ -137,6 +142,7 @@ impl Response {
             verified: None,
             error: None,
             message: None,
+            reason: None,
         }
     }
 
@@ -154,6 +160,7 @@ impl Response {
             verified: None,
             error: None,
             message: None,
+            reason: None,
         }
     }
 
@@ -171,6 +178,25 @@ impl Response {
             verified: None,
             error: Some(error.to_string()),
             message: Some(message.to_string()),
+            reason: None,
+        }
+    }
+
+    pub fn err_with_reason(error: &str, message: &str, reason: &str) -> Self {
+        Self {
+            ok: false,
+            proof: None,
+            data: None,
+            names: None,
+            pid: None,
+            uptime_seconds: None,
+            vault_entries: None,
+            idle_seconds: None,
+            idle_timeout: None,
+            verified: None,
+            error: Some(error.to_string()),
+            message: Some(message.to_string()),
+            reason: Some(reason.to_string()),
         }
     }
 
@@ -188,6 +214,7 @@ impl Response {
             verified: Some(true),
             error: None,
             message: None,
+            reason: None,
         }
     }
 }

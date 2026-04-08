@@ -119,3 +119,77 @@ fn test_extract_script_path_from_cmdline() {
     let args: Vec<String> = vec![];
     assert_eq!(extract_script_path(&args), None);
 }
+
+// ---------------------------------------------------------------------------
+// AuthError → reason code mapping (#26)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_auth_error_reason_codes() {
+    use sahjhan::daemon::auth::AuthError;
+
+    // Each AuthError variant should map to a known reason code
+    let cases: Vec<(AuthError, &str)> = vec![
+        (AuthError::NoScriptPath, "pid_resolution_failed"),
+        (
+            AuthError::Platform("test".to_string()),
+            "pid_resolution_failed",
+        ),
+        (
+            AuthError::HashMismatch {
+                path: "test.py".to_string(),
+                expected: "sha256:aaa".to_string(),
+                actual: "sha256:bbb".to_string(),
+            },
+            "hash_mismatch",
+        ),
+        (
+            AuthError::NotInManifest {
+                path: "unknown.py".to_string(),
+            },
+            "pid_resolution_failed",
+        ),
+    ];
+
+    for (error, expected_reason) in cases {
+        assert_eq!(
+            error.reason_code(),
+            expected_reason,
+            "AuthError::{:?} should map to '{}'",
+            error,
+            expected_reason
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Process tree walking (#26)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_extract_script_path_skips_interpreter_flags() {
+    use sahjhan::daemon::auth::extract_script_path;
+
+    // Python with -u flag before script
+    let args = vec![
+        "/usr/bin/python3".to_string(),
+        "-u".to_string(),
+        "-B".to_string(),
+        "/path/to/hook.py".to_string(),
+    ];
+    assert_eq!(
+        extract_script_path(&args),
+        Some("/path/to/hook.py".to_string())
+    );
+
+    // Node with --experimental flag
+    let args = vec![
+        "/usr/local/bin/node".to_string(),
+        "--experimental-modules".to_string(),
+        "/path/to/hook.js".to_string(),
+    ];
+    assert_eq!(
+        extract_script_path(&args),
+        Some("/path/to/hook.js".to_string())
+    );
+}

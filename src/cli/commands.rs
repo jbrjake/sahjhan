@@ -22,13 +22,11 @@
 // - [guard-event-only] guard_event_only() — block stateful ops on event-only ledgers
 // - [build-state-params] build_state_params() — build state params for gate context
 // - [compute-registry-path] compute_registry_path() — compute registry-storable path for a ledger file
-// - [hex-encode-short] hex_encode_short() — short hex encoding of hash bytes
 // - [active-ledger-path] active_ledger_path() — canonical active-ledger marker file path
 // - [read-active-ledger] read_active_ledger() — read active ledger name from marker file
 // - [write-active-ledger] write_active_ledger() — write active ledger name to marker file
 // - [remove-active-ledger] remove_active_ledger() — remove active-ledger marker file
 // - [determine-ledger-source] determine_ledger_source() — determine ledger name and resolution source for display
-// - [atty-check] atty_check() — check if stdin is a TTY
 // - [status-cache-path] status_cache_path() — canonical status cache file path
 // - [write-status-cache] write_status_cache() — write protocol state cache to data_dir
 
@@ -393,15 +391,6 @@ pub(crate) fn compute_registry_path(file: &Path, data_dir: &Path) -> String {
     }
 }
 
-// [hex-encode-short]
-pub(crate) fn hex_encode_short(bytes: &[u8; 32], len: usize) -> String {
-    bytes
-        .iter()
-        .map(|b| format!("{:02x}", b))
-        .collect::<String>()[..len]
-        .to_string()
-}
-
 // ---------------------------------------------------------------------------
 // Active-ledger marker (#25)
 // ---------------------------------------------------------------------------
@@ -469,28 +458,6 @@ pub(crate) fn determine_ledger_source(
         }
     }
     ("default".to_string(), "no active-ledger marker".to_string())
-}
-
-// [atty-check]
-/// Check if stdin is a TTY (rough heuristic).
-pub(crate) fn atty_check() -> bool {
-    // Simple heuristic: check if stdin is a terminal via libc.
-    // For portability, we'll just return true and note this is a stub.
-    // A full implementation would use the `atty` crate or libc isatty.
-    unsafe { libc_isatty() }
-}
-
-#[cfg(unix)]
-unsafe fn libc_isatty() -> bool {
-    extern "C" {
-        fn isatty(fd: i32) -> i32;
-    }
-    unsafe { isatty(0) != 0 }
-}
-
-#[cfg(not(unix))]
-unsafe fn libc_isatty() -> bool {
-    true
 }
 
 // [status-cache-path]

@@ -429,7 +429,7 @@ fn test_reset_removes_active_ledger_marker() {
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     // Extract token from "reset requires --token XXXXXX"
-    let token = stdout.trim().split_whitespace().last().unwrap().to_string();
+    let token = stdout.split_whitespace().last().unwrap().to_string();
 
     // Run actual reset
     Command::cargo_bin("sahjhan")

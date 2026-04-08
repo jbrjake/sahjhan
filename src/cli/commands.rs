@@ -23,6 +23,11 @@
 // - [build-state-params] build_state_params() — build state params for gate context
 // - [compute-registry-path] compute_registry_path() — compute registry-storable path for a ledger file
 // - [hex-encode-short] hex_encode_short() — short hex encoding of hash bytes
+// - [active-ledger-path] active_ledger_path() — canonical active-ledger marker file path
+// - [read-active-ledger] read_active_ledger() — read active ledger name from marker file
+// - [write-active-ledger] write_active_ledger() — write active ledger name to marker file
+// - [remove-active-ledger] remove_active_ledger() — remove active-ledger marker file
+// - [determine-ledger-source] determine_ledger_source() — determine ledger name and resolution source for display
 // - [atty-check] atty_check() — check if stdin is a TTY
 // - [status-cache-path] status_cache_path() — canonical status cache file path
 // - [write-status-cache] write_status_cache() — write protocol state cache to data_dir
@@ -217,7 +222,24 @@ pub(crate) fn resolve_ledger_from_targeting(
         return Ok((resolved, Some(entry.mode.clone())));
     }
 
-    // 3. Default: try registry first, else fall back to data_dir/ledger.jsonl
+    // 3. Active-ledger marker
+    let data_dir = resolve_data_dir(&config.paths.data_dir);
+    if let Some(active_name) = read_active_ledger(&data_dir) {
+        let reg_path = registry_path_from_config(config);
+        if let Ok(registry) = LedgerRegistry::new(&reg_path) {
+            if let Ok(entry) = registry.resolve(Some(&active_name)) {
+                let resolved = resolve_registry_path(&entry.path, config);
+                return Ok((resolved, Some(entry.mode.clone())));
+            }
+        }
+        // Marker names an unregistered ledger — warn and fall through to default
+        eprintln!(
+            "warning: active-ledger '{}' is not registered in ledgers.toml; falling back to default",
+            active_name
+        );
+    }
+
+    // 4. Default: try registry first, else fall back to data_dir/ledger.jsonl
     let reg_path = registry_path_from_config(config);
     if reg_path.exists() {
         if let Ok(registry) = LedgerRegistry::new(&reg_path) {
@@ -229,7 +251,6 @@ pub(crate) fn resolve_ledger_from_targeting(
     }
 
     // Fall back to default ledger path
-    let data_dir = resolve_data_dir(&config.paths.data_dir);
     Ok((ledger_path(&data_dir), None))
 }
 
@@ -379,6 +400,75 @@ pub(crate) fn hex_encode_short(bytes: &[u8; 32], len: usize) -> String {
         .map(|b| format!("{:02x}", b))
         .collect::<String>()[..len]
         .to_string()
+}
+
+// ---------------------------------------------------------------------------
+// Active-ledger marker (#25)
+// ---------------------------------------------------------------------------
+
+// [active-ledger-path]
+/// Canonical path to the active-ledger marker file within data_dir.
+pub(crate) fn active_ledger_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("active-ledger")
+}
+
+// [read-active-ledger]
+/// Read the active ledger name from the marker file. Returns None if absent or empty.
+pub(crate) fn read_active_ledger(data_dir: &Path) -> Option<String> {
+    let path = active_ledger_path(data_dir);
+    match std::fs::read_to_string(&path) {
+        Ok(content) => {
+            let trimmed = content.trim().to_string();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
+        }
+        Err(_) => None,
+    }
+}
+
+// [write-active-ledger]
+/// Write the active ledger name to the marker file.
+pub(crate) fn write_active_ledger(data_dir: &Path, name: &str) -> Result<(), String> {
+    let path = active_ledger_path(data_dir);
+    std::fs::write(&path, format!("{}\n", name))
+        .map_err(|e| format!("cannot write active-ledger marker: {}", e))
+}
+
+// [remove-active-ledger]
+/// Remove the active-ledger marker file. Returns true if it existed.
+pub(crate) fn remove_active_ledger(data_dir: &Path) -> bool {
+    let path = active_ledger_path(data_dir);
+    std::fs::remove_file(&path).is_ok()
+}
+
+// [determine-ledger-source]
+/// Determine the resolved ledger name and source label for display.
+///
+/// Returns (ledger_name, source_description) mirroring the resolution order
+/// in `resolve_ledger_from_targeting`.
+pub(crate) fn determine_ledger_source(
+    targeting: &LedgerTargeting,
+    config: &ProtocolConfig,
+) -> (String, String) {
+    if let Some(ref name) = targeting.ledger_name {
+        return (name.clone(), "explicit --ledger flag".to_string());
+    }
+    if let Some(ref path) = targeting.ledger_path {
+        return (path.clone(), "explicit --ledger-path flag".to_string());
+    }
+    let data_dir = resolve_data_dir(&config.paths.data_dir);
+    if let Some(active_name) = read_active_ledger(&data_dir) {
+        let reg_path = registry_path_from_config(config);
+        if let Ok(registry) = LedgerRegistry::new(&reg_path) {
+            if registry.resolve(Some(&active_name)).is_ok() {
+                return (active_name, "active-ledger marker".to_string());
+            }
+        }
+    }
+    ("default".to_string(), "no active-ledger marker".to_string())
 }
 
 // [atty-check]

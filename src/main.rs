@@ -357,6 +357,10 @@ enum LedgerAction {
         /// Ledger mode: stateful or event-only
         #[arg(long, default_value = "stateful")]
         mode: String,
+
+        /// Set this ledger as the active-ledger after creation
+        #[arg(long)]
+        activate: bool,
     },
     /// List registered ledgers
     List,
@@ -400,6 +404,13 @@ enum LedgerAction {
         #[arg(long)]
         path: String,
     },
+    /// Set a registered ledger as the active default
+    Activate {
+        /// Ledger name (must be registered)
+        name: String,
+    },
+    /// Remove the active-ledger marker
+    Deactivate,
 }
 
 #[derive(Subcommand)]
@@ -584,6 +595,7 @@ fn main() {
                 from,
                 instance_id,
                 mode,
+                activate,
             } => {
                 let code = ledger::cmd_ledger_create(
                     &cli.config_dir,
@@ -592,6 +604,7 @@ fn main() {
                     from.as_deref(),
                     instance_id.as_deref(),
                     &mode,
+                    activate,
                 );
                 Box::new(LegacyResult::new("ledger_create", code))
             }
@@ -620,6 +633,8 @@ fn main() {
                 let code = ledger::cmd_ledger_import(&cli.config_dir, &name, &path);
                 Box::new(LegacyResult::new("ledger_import", code))
             }
+            LedgerAction::Activate { name } => ledger::cmd_ledger_activate(&cli.config_dir, &name),
+            LedgerAction::Deactivate => ledger::cmd_ledger_deactivate(&cli.config_dir),
         },
         Commands::Mermaid { rendered } => {
             let code = mermaid_cmd::cmd_mermaid(&cli.config_dir, rendered);

@@ -24,6 +24,8 @@
 // - HookEvalMessage             — single hook eval message
 // - HookAutoRecord              — auto-recorded event
 // - HookMonitorWarning          — monitor warning
+// - LedgerActivateData          — ledger activate output
+// - LedgerDeactivateData        — ledger deactivate output
 
 use std::collections::BTreeMap;
 use std::fmt::Display;
@@ -230,6 +232,8 @@ impl CommandOutput for LegacyResult {
 #[derive(Serialize)]
 pub struct StatusData {
     pub state: String,
+    pub ledger_name: String,
+    pub ledger_source: String,
     pub event_count: usize,
     pub chain_valid: bool,
     pub chain_error: Option<String>,
@@ -241,6 +245,7 @@ pub struct StatusData {
 
 impl Display for StatusData {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "Ledger: {} ({})", self.ledger_name, self.ledger_source)?;
         let chain_str = if self.chain_valid {
             "chain valid".to_string()
         } else {
@@ -714,4 +719,38 @@ pub struct HookAutoRecord {
 pub struct HookMonitorWarning {
     pub name: String,
     pub message: String,
+}
+
+// ---------------------------------------------------------------------------
+// LedgerActivateData
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+pub struct LedgerActivateData {
+    pub activated: String,
+}
+
+impl Display for LedgerActivateData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Activated ledger: {}", self.activated)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// LedgerDeactivateData
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+pub struct LedgerDeactivateData {
+    pub deactivated: bool,
+}
+
+impl Display for LedgerDeactivateData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.deactivated {
+            write!(f, "Deactivated active ledger")
+        } else {
+            write!(f, "No active ledger to deactivate")
+        }
+    }
 }

@@ -72,6 +72,7 @@ fn test_template_create_full_stack() {
         Some("run"), // from_template
         Some("25"),  // instance_id
         "stateful",  // mode
+        false,       // activate
     );
 
     assert_eq!(result, 0, "cmd_ledger_create should succeed");
@@ -106,6 +107,7 @@ fn test_template_create_unknown_template() {
         Some("nonexistent"),
         Some("1"),
         "stateful",
+        false,
     );
 
     assert_ne!(result, 0, "Should fail for unknown template");
@@ -129,6 +131,7 @@ fn test_template_create_missing_instance_id() {
         Some("run"),
         None, // no instance_id
         "stateful",
+        false,
     );
 
     assert_ne!(result, 0, "Should fail when instance_id is missing");

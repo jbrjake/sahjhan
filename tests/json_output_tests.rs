@@ -102,6 +102,8 @@ fn test_status_data_json_fields() {
     use sahjhan::cli::output::*;
     let data = StatusData {
         state: "idle".to_string(),
+        ledger_name: "default".to_string(),
+        ledger_source: "no active-ledger marker".to_string(),
         event_count: 1,
         chain_valid: true,
         chain_error: None,
@@ -132,6 +134,8 @@ fn test_status_data_json_fields() {
     let result = CommandResult::ok("status", data);
     let v = parse_envelope(&result.to_json());
     assert_eq!(v["data"]["state"], "idle");
+    assert_eq!(v["data"]["ledger_name"], "default");
+    assert_eq!(v["data"]["ledger_source"], "no active-ledger marker");
     assert_eq!(v["data"]["event_count"], 1);
     assert_eq!(v["data"]["chain_valid"], true);
     assert_eq!(v["data"]["sets"][0]["name"], "check");
@@ -146,6 +150,8 @@ fn test_status_data_text_matches_current_format() {
     use sahjhan::cli::output::*;
     let data = StatusData {
         state: "idle".to_string(),
+        ledger_name: "default".to_string(),
+        ledger_source: "no active-ledger marker".to_string(),
         event_count: 1,
         chain_valid: true,
         chain_error: None,
@@ -174,6 +180,7 @@ fn test_status_data_text_matches_current_format() {
         }],
     };
     let text = data.to_string();
+    assert!(text.contains("Ledger: default (no active-ledger marker)"));
     assert!(text.contains("state: idle (1 events, chain valid)"));
     assert!(text.contains("check: 1/2"));
     assert!(text.contains("\u{2713} tests"));

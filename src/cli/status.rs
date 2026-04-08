@@ -16,7 +16,7 @@ use crate::render::engine::RenderEngine;
 use crate::state::machine::StateMachine;
 
 use super::commands::{
-    build_state_params, load_config, load_manifest, open_targeted_ledger,
+    build_state_params, determine_ledger_source, load_config, load_manifest, open_targeted_ledger,
     registry_path_from_config, resolve_config_dir, resolve_data_dir, save_manifest,
     status_cache_path, track_ledger_in_manifest, LedgerTargeting, EXIT_CONFIG_ERROR,
     EXIT_INTEGRITY_ERROR, EXIT_SUCCESS, EXIT_USAGE_ERROR,
@@ -77,6 +77,8 @@ pub fn cmd_status(config_dir: &str, targeting: &LedgerTargeting) -> Box<dyn Comm
             },
         ));
     }
+
+    let (ledger_name, ledger_source) = determine_ledger_source(targeting, &config);
 
     let _data_dir = resolve_data_dir(&config.paths.data_dir);
     let _manifest = match load_manifest(&_data_dir) {
@@ -185,6 +187,8 @@ pub fn cmd_status(config_dir: &str, targeting: &LedgerTargeting) -> Box<dyn Comm
         "status",
         StatusData {
             state: current_state,
+            ledger_name,
+            ledger_source,
             event_count,
             chain_valid,
             chain_error,

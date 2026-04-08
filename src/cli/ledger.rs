@@ -3,12 +3,14 @@
 // Multi-ledger management commands.
 //
 // ## Index
-// - [cmd-ledger-create] cmd_ledger_create() — register and initialize a new named ledger (direct or template-based)
+// - [cmd-ledger-create] cmd_ledger_create() — register and initialize a new named ledger (direct or template-based); supports --activate
 // - [cmd-ledger-list] cmd_ledger_list() — list registered ledgers
 // - [cmd-ledger-remove] cmd_ledger_remove() — remove a ledger from the registry
 // - [cmd-ledger-verify] cmd_ledger_verify() — verify hash chain integrity of a ledger
 // - [cmd-ledger-checkpoint] cmd_ledger_checkpoint() — write a checkpoint to a ledger
 // - [cmd-ledger-import] cmd_ledger_import() — import bare JSONL from stdin
+// - [cmd-ledger-activate] cmd_ledger_activate() — set active-ledger marker
+// - [cmd-ledger-deactivate] cmd_ledger_deactivate() — remove active-ledger marker
 
 use std::path::{Path, PathBuf};
 
@@ -17,10 +19,11 @@ use crate::ledger::import::import_jsonl;
 use crate::ledger::registry::{LedgerMode, LedgerRegistry};
 
 use super::commands::{
-    compute_registry_path, ledger_path, load_config, registry_path_from_config, resolve_config_dir,
-    resolve_data_dir, resolve_registry_path, EXIT_CONFIG_ERROR, EXIT_INTEGRITY_ERROR, EXIT_SUCCESS,
-    EXIT_USAGE_ERROR,
+    compute_registry_path, ledger_path, load_config, registry_path_from_config,
+    remove_active_ledger, resolve_config_dir, resolve_data_dir, resolve_registry_path,
+    write_active_ledger, EXIT_CONFIG_ERROR, EXIT_INTEGRITY_ERROR, EXIT_SUCCESS, EXIT_USAGE_ERROR,
 };
+use super::output::{CommandOutput, CommandResult, LedgerActivateData, LedgerDeactivateData};
 
 // ---------------------------------------------------------------------------
 // ledger create (Task 12)
@@ -34,6 +37,7 @@ pub fn cmd_ledger_create(
     from_template: Option<&str>,
     instance_id: Option<&str>,
     mode_str: &str,
+    activate: bool,
 ) -> i32 {
     let config_path = resolve_config_dir(config_dir);
     let config = match load_config(&config_path) {
@@ -178,6 +182,15 @@ pub fn cmd_ledger_create(
     }
 
     println!("created: {}", ledger_name);
+
+    if activate {
+        if let Err(e) = write_active_ledger(&data_dir, &ledger_name) {
+            eprintln!("error: {}", e);
+            return EXIT_CONFIG_ERROR;
+        }
+        println!("Activated ledger: {}", ledger_name);
+    }
+
     EXIT_SUCCESS
 }
 
@@ -451,4 +464,94 @@ pub fn cmd_ledger_import(config_dir: &str, name: &str, path: &str) -> i32 {
 
     println!("imported: {}", name);
     EXIT_SUCCESS
+}
+
+// ---------------------------------------------------------------------------
+// ledger activate (#25)
+// ---------------------------------------------------------------------------
+
+// [cmd-ledger-activate]
+pub fn cmd_ledger_activate(config_dir: &str, name: &str) -> Box<dyn CommandOutput> {
+    let config_path = resolve_config_dir(config_dir);
+    let config = match load_config(&config_path) {
+        Ok(c) => c,
+        Err((code, msg)) => {
+            return Box::new(CommandResult::<LedgerActivateData>::err(
+                "ledger_activate",
+                code,
+                "config_error",
+                msg,
+            ));
+        }
+    };
+
+    // Verify the name is registered
+    let reg_path = registry_path_from_config(&config);
+    let registry = match LedgerRegistry::new(&reg_path) {
+        Ok(r) => r,
+        Err(e) => {
+            return Box::new(CommandResult::<LedgerActivateData>::err(
+                "ledger_activate",
+                EXIT_CONFIG_ERROR,
+                "config_error",
+                format!("cannot load ledger registry: {}", e),
+            ));
+        }
+    };
+
+    if let Err(e) = registry.resolve(Some(name)) {
+        return Box::new(CommandResult::<LedgerActivateData>::err(
+            "ledger_activate",
+            EXIT_USAGE_ERROR,
+            "usage_error",
+            format!("cannot activate: {}", e),
+        ));
+    }
+
+    let data_dir = resolve_data_dir(&config.paths.data_dir);
+    if let Err(e) = write_active_ledger(&data_dir, name) {
+        return Box::new(CommandResult::<LedgerActivateData>::err(
+            "ledger_activate",
+            EXIT_CONFIG_ERROR,
+            "io_error",
+            e,
+        ));
+    }
+
+    Box::new(CommandResult::ok(
+        "ledger_activate",
+        LedgerActivateData {
+            activated: name.to_string(),
+        },
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// ledger deactivate (#25)
+// ---------------------------------------------------------------------------
+
+// [cmd-ledger-deactivate]
+pub fn cmd_ledger_deactivate(config_dir: &str) -> Box<dyn CommandOutput> {
+    let config_path = resolve_config_dir(config_dir);
+    let config = match load_config(&config_path) {
+        Ok(c) => c,
+        Err((code, msg)) => {
+            return Box::new(CommandResult::<LedgerDeactivateData>::err(
+                "ledger_deactivate",
+                code,
+                "config_error",
+                msg,
+            ));
+        }
+    };
+
+    let data_dir = resolve_data_dir(&config.paths.data_dir);
+    let existed = remove_active_ledger(&data_dir);
+
+    Box::new(CommandResult::ok(
+        "ledger_deactivate",
+        LedgerDeactivateData {
+            deactivated: existed,
+        },
+    ))
 }

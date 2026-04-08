@@ -14,8 +14,8 @@ use crate::manifest::tracker::Manifest;
 
 use super::commands::{
     atty_check, hex_encode_short, ledger_path, load_config, manifest_path, open_ledger, pathdiff,
-    resolve_config_dir, resolve_data_dir, save_manifest, write_status_cache, EXIT_CONFIG_ERROR,
-    EXIT_INTEGRITY_ERROR, EXIT_SUCCESS, EXIT_USAGE_ERROR,
+    remove_active_ledger, resolve_config_dir, resolve_data_dir, save_manifest, write_status_cache,
+    EXIT_CONFIG_ERROR, EXIT_INTEGRITY_ERROR, EXIT_SUCCESS, EXIT_USAGE_ERROR,
 };
 
 // ---------------------------------------------------------------------------
@@ -226,6 +226,9 @@ pub fn cmd_reset(config_dir: &str, confirm: bool, token: &Option<String>) -> i32
                 eprintln!("error: cannot archive manifest: {}", e);
                 return EXIT_INTEGRITY_ERROR;
             }
+
+            // Remove active-ledger marker (#25)
+            remove_active_ledger(&data_dir);
 
             // Reinitialize
             let result = cmd_init(config_dir);

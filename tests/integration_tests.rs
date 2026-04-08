@@ -742,11 +742,16 @@ fn test_status_terse_format() {
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.starts_with("state:"), "stdout was: {}", stdout);
+    assert!(stdout.starts_with("Ledger:"), "stdout was: {}", stdout);
+    assert!(
+        stdout.contains("Ledger: default (no active-ledger marker)"),
+        "stdout was: {}",
+        stdout
+    );
+    assert!(stdout.contains("state:"), "stdout was: {}", stdout);
     assert!(stdout.contains("next:"), "stdout was: {}", stdout);
     assert!(!stdout.contains("===="), "stdout was: {}", stdout);
     assert!(!stdout.contains("State:"), "stdout was: {}", stdout);
-    assert!(!stdout.contains("Ledger:"), "stdout was: {}", stdout);
     assert!(!stdout.contains("Manifest:"), "stdout was: {}", stdout);
 }
 

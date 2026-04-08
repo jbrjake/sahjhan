@@ -28,7 +28,7 @@ cargo fmt                      # Format
 ```
 
 **Config dir:** Protocol TOML files (protocol.toml, states.toml, transitions.toml, events.toml, renders.toml, hooks.toml)
-**Data dir:** Runtime state (ledger.jsonl, manifest.json, ledgers.toml registry)
+**Data dir:** Runtime state (ledger.jsonl, manifest.json, ledgers.toml registry, active-ledger marker)
 **Example config:** `examples/minimal/`
 
 ---
@@ -250,12 +250,12 @@ Sahjhan is a protocol enforcement engine. It has:
 | CLI entry point | `main.rs` | `[cli-main]` | clap arg parsing, alias resolution, dispatch; `--json` global flag |
 | Alias resolution | `cli/aliases.rs` | `[resolve-alias]` | Rewrite CLI args via protocol aliases |
 | JSON output types | `cli/output.rs` | `CommandOutput`, `CommandResult<T>`, data structs | Structured output with JSON envelope (`schema_version: 1`) |
-| Shared helpers | `cli/commands.rs` | (see file index) | Exit codes, ledger targeting, config loading, `[compute-registry-path]`, `[status-cache-path]`, `[write-status-cache]` |
+| Shared helpers | `cli/commands.rs` | (see file index) | Exit codes, ledger targeting, config loading, active-ledger marker, `[compute-registry-path]`, `[status-cache-path]`, `[write-status-cache]` |
 | Init/validate/reset | `cli/init.rs` | `[cmd-init]`, `[cmd-validate]`, `[cmd-reset]` | Lifecycle commands; init writes status-cache.json |
 | Transition/gate/event | `cli/transition.rs` | `[cmd-transition]`, `[cmd-gate-check]`, `[record-and-render]`, `validate_event_fields`, `[cmd-event]` | State machine commands; transition updates status-cache.json |
 | Status/sets | `cli/status.rs` | `[cmd-status]`, `[cmd-set-status]`, `[cmd-set-complete]` | Status display + set management; status warns on missing cache |
 | Log inspection | `cli/log.rs` | `[cmd-log-dump]`, `[cmd-log-verify]`, `[cmd-log-tail]` | Ledger viewing |
-| Ledger management | `cli/ledger.rs` | `[cmd-ledger-create]`, `[cmd-ledger-list]`, etc. | Multi-ledger CRUD; create supports `--from` template mode |
+| Ledger management | `cli/ledger.rs` | `[cmd-ledger-create]`, `[cmd-ledger-list]`, `[cmd-ledger-activate]`, `[cmd-ledger-deactivate]`, etc. | Multi-ledger CRUD; create supports `--from` template + `--activate`; activate/deactivate manage active-ledger marker |
 | Query | `cli/query.rs` | `[cmd-query]` | SQL queries over events |
 | Render | `cli/render.rs` | `[cmd-render]`, `[cmd-render-dump-context]` | Template rendering |
 | Manifest | `cli/manifest_cmd.rs` | `[cmd-manifest-verify]`, `[cmd-manifest-list]` | File integrity |
@@ -385,6 +385,21 @@ cli/commands.rs [load-config]
   → config/mod.rs [validate-deep] (via cmd_validate) — file/alias/gate/ledger checks
 ```
 
+### Flow: Ledger Resolution Order
+
+How `--ledger` / active-ledger marker / default are resolved:
+
+```
+cli/commands.rs [resolve-ledger]
+  1. --ledger-path <path>         ← explicit file path, highest priority
+  2. --ledger <name>              ← named ledger from registry
+  3. active-ledger marker         ← {data_dir}/active-ledger file; warn if unregistered
+  4. registry default ("default") ← fallback; else data_dir/ledger.jsonl
+
+cli/commands.rs [determine-ledger-source]
+  → mirrors resolution order to return (name, source_label) for status display
+```
+
 ### Flow: Config Integrity Verification
 
 How config seals are created and verified:
@@ -466,3 +481,4 @@ main.rs [cli-main]
 | `tests/daemon_vault_tests.rs` | Vault CRUD: store/read, overwrite, delete, list, read-not-found, delete-noop |
 | `tests/daemon_signing_tests.rs` | E2E daemon signing (deterministic proofs, sign-without-daemon), lifecycle (socket/PID creation, stop cleanup, status, preload rejection, idle timeout shutdown) |
 | `tests/daemon_vault_e2e_tests.rs` | E2E vault via CLI: store+read, list, delete, read-nonexistent (all require live daemon) |
+| `tests/active_ledger_tests.rs` | Active-ledger marker: activate/deactivate, create --activate, resolution priority, stale marker fallback, reset clears marker, status display, events land in active ledger |

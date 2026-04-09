@@ -470,14 +470,97 @@ fn handle_request(
                 Response::err("invalid_proof", "proof does not match")
             }
         }
-        Request::EnforcementRead => {
-            Response::err("not_implemented", "enforcement_read not yet implemented")
+        Request::EnforcementRead => match vault.lock() {
+            Ok(v) => match v.read("_enforcement") {
+                Some(bytes) => {
+                    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+                    Response::ok_data(&encoded)
+                }
+                None => Response::err("not_found", "no enforcement state"),
+            },
+            Err(e) => Response::err("internal_error", &format!("vault lock poisoned: {}", e)),
+        },
+        Request::EnforcementWrite { data } => {
+            let bytes = match base64::engine::general_purpose::STANDARD.decode(&data) {
+                Ok(b) => b,
+                Err(e) => {
+                    return Response::err("decode_error", &format!("invalid base64: {}", e));
+                }
+            };
+            let mut obj: serde_json::Map<String, serde_json::Value> =
+                match serde_json::from_slice(&bytes) {
+                    Ok(serde_json::Value::Object(m)) => m,
+                    Ok(_) => {
+                        return Response::err(
+                            "invalid_data",
+                            "enforcement state must be a JSON object",
+                        );
+                    }
+                    Err(e) => {
+                        return Response::err("invalid_data", &format!("invalid JSON: {}", e));
+                    }
+                };
+            obj.insert(
+                "last_refresh".to_string(),
+                serde_json::Value::String(chrono::Utc::now().to_rfc3339()),
+            );
+            let serialized = serde_json::to_vec(&obj).expect("re-serialization cannot fail");
+            match vault.lock() {
+                Ok(mut v) => {
+                    v.store("_enforcement".to_string(), serialized);
+                    Response::ok_empty()
+                }
+                Err(e) => Response::err("internal_error", &format!("vault lock poisoned: {}", e)),
+            }
         }
-        Request::EnforcementWrite { .. } => {
-            Response::err("not_implemented", "enforcement_write not yet implemented")
-        }
-        Request::EnforcementUpdate { .. } => {
-            Response::err("not_implemented", "enforcement_update not yet implemented")
+        Request::EnforcementUpdate { patch } => {
+            let patch_bytes = match base64::engine::general_purpose::STANDARD.decode(&patch) {
+                Ok(b) => b,
+                Err(e) => {
+                    return Response::err("decode_error", &format!("invalid base64: {}", e));
+                }
+            };
+            let patch_obj: serde_json::Map<String, serde_json::Value> =
+                match serde_json::from_slice(&patch_bytes) {
+                    Ok(serde_json::Value::Object(m)) => m,
+                    Ok(_) => {
+                        return Response::err("invalid_data", "patch must be a JSON object");
+                    }
+                    Err(e) => {
+                        return Response::err("invalid_data", &format!("invalid JSON: {}", e));
+                    }
+                };
+            match vault.lock() {
+                Ok(mut v) => {
+                    let current = match v.read("_enforcement") {
+                        Some(bytes) => bytes.to_vec(),
+                        None => {
+                            return Response::err("not_found", "no enforcement state to update");
+                        }
+                    };
+                    let mut state: serde_json::Map<String, serde_json::Value> =
+                        match serde_json::from_slice(&current) {
+                            Ok(serde_json::Value::Object(m)) => m,
+                            _ => {
+                                return Response::err(
+                                    "internal_error",
+                                    "stored enforcement state is not a valid JSON object",
+                                );
+                            }
+                        };
+                    state.extend(patch_obj);
+                    state.insert(
+                        "last_refresh".to_string(),
+                        serde_json::Value::String(chrono::Utc::now().to_rfc3339()),
+                    );
+                    let serialized =
+                        serde_json::to_vec(&state).expect("re-serialization cannot fail");
+                    let encoded = base64::engine::general_purpose::STANDARD.encode(&serialized);
+                    v.store("_enforcement".to_string(), serialized);
+                    Response::ok_data(&encoded)
+                }
+                Err(e) => Response::err("internal_error", &format!("vault lock poisoned: {}", e)),
+            }
         }
     }
 }

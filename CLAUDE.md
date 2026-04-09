@@ -224,11 +224,11 @@ Sahjhan is a protocol enforcement engine. It has:
 | Idle timeout | `daemon/mod.rs` | `DaemonServer::start` | last_activity tracking in accept loop; clean shutdown on idle_timeout expiry |
 | Server cleanup | `daemon/mod.rs` | `DaemonServer::cleanup` | Remove socket and PID files |
 | Handle connection | `daemon/mod.rs` | `handle_connection` | Read JSON lines from stream, dispatch to handle_request, write responses |
-| Handle request | `daemon/mod.rs` | `handle_request` | Dispatch Request variant to sign/vault/status operation |
+| Handle request | `daemon/mod.rs` | `handle_request` | Dispatch Request variant to sign/vault/status/enforcement operation |
 | Compute sign | `daemon/mod.rs` | `compute_sign` | HMAC-SHA256 proof computation (same algorithm as authed_event.rs) |
 | Canonical payload | `daemon/mod.rs` | `build_canonical_payload` | Build HMAC payload: event_type + null-separated sorted fields |
-| Wire request | `daemon/protocol.rs` | `Request` | Tagged enum for incoming JSON operations (sign, vault_store, vault_read, vault_delete, vault_list, status) |
-| Wire response | `daemon/protocol.rs` | `Response` | Output envelope; constructors: ok_sign, ok_data, ok_names, ok_status, ok_empty, err, err_with_reason; includes optional `reason` field (#26) |
+| Wire request | `daemon/protocol.rs` | `Request` | Tagged enum for incoming JSON operations (sign, vault_store, vault_read, vault_delete, vault_list, status, verify, enforcement_read, enforcement_write, enforcement_update) |
+| Wire response | `daemon/protocol.rs` | `Response` | Output envelope; constructors: ok_sign, ok_data, ok_names, ok_status, ok_empty, err, err_with_reason; ok_status includes enforcement_active bool; includes optional `reason` field (#26) |
 | Trusted callers manifest | `daemon/auth.rs` | `TrustedCallersManifest` | Loads trusted-callers.toml (path → sha256 hash map) |
 | Caller verification | `daemon/auth.rs` | `TrustedCallersManifest::verify_caller` | Checks relative script path is in manifest and its SHA-256 matches |
 | Script path extractor | `daemon/auth.rs` | `extract_script_path` | Extracts first non-flag arg from interpreter cmdline (the script path) |

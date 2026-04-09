@@ -1,6 +1,13 @@
 use sahjhan::daemon::vault::Vault;
 
 #[test]
+fn test_vault_stores_reserved_names_at_data_level() {
+    let mut vault = Vault::new();
+    vault.store("_enforcement".to_string(), b"data".to_vec());
+    assert_eq!(vault.read("_enforcement").unwrap(), b"data");
+}
+
+#[test]
 fn test_vault_store_and_read() {
     let mut vault = Vault::new();
     vault.store("secret".to_string(), b"hello world".to_vec());

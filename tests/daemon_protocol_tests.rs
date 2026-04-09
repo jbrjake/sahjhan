@@ -200,6 +200,13 @@ fn test_serialize_ok_status_enforcement_inactive() {
 }
 
 #[test]
+fn test_parse_vault_store_reserved_name() {
+    let json = r#"{"op": "vault_store", "name": "_enforcement", "data": "aGVsbG8="}"#;
+    let req: Request = serde_json::from_str(json).unwrap();
+    assert!(matches!(req, Request::VaultStore { .. }));
+}
+
+#[test]
 fn test_parse_enforcement_read_request() {
     let json = r#"{"op": "enforcement_read"}"#;
     let req: Request = serde_json::from_str(json).unwrap();

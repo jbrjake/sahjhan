@@ -385,6 +385,9 @@ fn handle_request(
             Response::ok_sign(&proof)
         }
         Request::VaultStore { name, data } => {
+            if name.starts_with('_') {
+                return Response::err("reserved", "vault names starting with '_' are reserved");
+            }
             let bytes = match base64::engine::general_purpose::STANDARD.decode(&data) {
                 Ok(b) => b,
                 Err(e) => {
@@ -399,26 +402,41 @@ fn handle_request(
                 Err(e) => Response::err("internal_error", &format!("vault lock poisoned: {}", e)),
             }
         }
-        Request::VaultRead { name } => match vault.lock() {
-            Ok(v) => match v.read(&name) {
-                Some(bytes) => {
-                    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
-                    Response::ok_data(&encoded)
-                }
-                None => Response::err("not_found", &format!("no entry named '{}'", name)),
-            },
-            Err(e) => Response::err("internal_error", &format!("vault lock poisoned: {}", e)),
-        },
-        Request::VaultDelete { name } => match vault.lock() {
-            Ok(mut v) => {
-                v.delete(&name);
-                Response::ok_empty()
+        Request::VaultRead { name } => {
+            if name.starts_with('_') {
+                return Response::err("reserved", "vault names starting with '_' are reserved");
             }
-            Err(e) => Response::err("internal_error", &format!("vault lock poisoned: {}", e)),
-        },
+            match vault.lock() {
+                Ok(v) => match v.read(&name) {
+                    Some(bytes) => {
+                        let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+                        Response::ok_data(&encoded)
+                    }
+                    None => Response::err("not_found", &format!("no entry named '{}'", name)),
+                },
+                Err(e) => Response::err("internal_error", &format!("vault lock poisoned: {}", e)),
+            }
+        }
+        Request::VaultDelete { name } => {
+            if name.starts_with('_') {
+                return Response::err("reserved", "vault names starting with '_' are reserved");
+            }
+            match vault.lock() {
+                Ok(mut v) => {
+                    v.delete(&name);
+                    Response::ok_empty()
+                }
+                Err(e) => Response::err("internal_error", &format!("vault lock poisoned: {}", e)),
+            }
+        }
         Request::VaultList => match vault.lock() {
             Ok(v) => {
-                let names: Vec<String> = v.list().into_iter().map(|s| s.to_string()).collect();
+                let names: Vec<String> = v
+                    .list()
+                    .into_iter()
+                    .filter(|s| !s.starts_with('_'))
+                    .map(|s| s.to_string())
+                    .collect();
                 Response::ok_names(names)
             }
             Err(e) => Response::err("internal_error", &format!("vault lock poisoned: {}", e)),

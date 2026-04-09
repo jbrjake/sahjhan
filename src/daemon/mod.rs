@@ -9,7 +9,7 @@
 // - DaemonServer::start       -- bind socket, accept loop, signal handling
 // - DaemonServer::cleanup     -- remove socket and PID files
 // - handle_connection         -- read JSON lines from a stream, dispatch, respond
-// - handle_request            -- match Request variant to operation
+// - handle_request            -- match Request variant to operation; enforcement_read/write/update ops; _-prefixed vault namespace guard
 // - compute_sign              -- HMAC-SHA256 signing (same algorithm as authed_event.rs)
 // - build_canonical_payload   -- canonical HMAC payload from event_type + fields
 // - mod platform              -- OS-specific APIs

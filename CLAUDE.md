@@ -227,6 +227,8 @@ Sahjhan is a protocol enforcement engine. It has:
 | Handle request | `daemon/mod.rs` | `handle_request` | Dispatch Request variant to sign/vault/status/enforcement operation |
 | Compute sign | `daemon/mod.rs` | `compute_sign` | HMAC-SHA256 proof computation (same algorithm as authed_event.rs) |
 | Canonical payload | `daemon/mod.rs` | `build_canonical_payload` | Build HMAC payload: event_type + null-separated sorted fields |
+| Enforcement handlers | `daemon/mod.rs` | `handle_request` | enforcement_read/write/update: opaque JSON state in vault under `_enforcement` (#27) |
+| Reserved vault namespace | `daemon/mod.rs` | `handle_request` | `_`-prefixed names rejected by generic vault ops, filtered from vault_list (#27) |
 | Wire request | `daemon/protocol.rs` | `Request` | Tagged enum for incoming JSON operations (sign, vault_store, vault_read, vault_delete, vault_list, status, verify, enforcement_read, enforcement_write, enforcement_update) |
 | Wire response | `daemon/protocol.rs` | `Response` | Output envelope; constructors: ok_sign, ok_data, ok_names, ok_status, ok_empty, err, err_with_reason; ok_status includes enforcement_active bool; includes optional `reason` field (#26) |
 | Trusted callers manifest | `daemon/auth.rs` | `TrustedCallersManifest` | Loads trusted-callers.toml (path → sha256 hash map) |
@@ -483,4 +485,5 @@ main.rs [cli-main]
 | `tests/daemon_vault_tests.rs` | Vault CRUD: store/read, overwrite, delete, list, read-not-found, delete-noop |
 | `tests/daemon_signing_tests.rs` | E2E daemon signing (deterministic proofs, sign-without-daemon), lifecycle (socket/PID creation, stop cleanup, status, preload rejection, idle timeout shutdown), reset auth (#26), auth reason codes (#26), ancestor walk auth (#26) |
 | `tests/daemon_vault_e2e_tests.rs` | E2E vault via CLI: store+read, list, delete, read-nonexistent (all require live daemon) |
+| `tests/daemon_enforcement_tests.rs` | Enforcement state ops: write/read round-trip, update merge, not_found, reserved namespace, vault_list filtering, status enforcement_active, validation (#27) |
 | `tests/active_ledger_tests.rs` | Active-ledger marker: activate/deactivate, create --activate, resolution priority, stale marker fallback, reset clears marker, status display, events land in active ledger |

@@ -180,3 +180,34 @@ fn test_serialize_non_status_omits_idle_fields() {
     assert!(v.get("idle_seconds").is_none());
     assert!(v.get("idle_timeout").is_none());
 }
+
+#[test]
+fn test_parse_enforcement_read_request() {
+    let json = r#"{"op": "enforcement_read"}"#;
+    let req: Request = serde_json::from_str(json).unwrap();
+    assert!(matches!(req, Request::EnforcementRead));
+}
+
+#[test]
+fn test_parse_enforcement_write_request() {
+    let json = r#"{"op": "enforcement_write", "data": "eyJzdGF0ZSI6ICJhY3RpdmUifQ=="}"#;
+    let req: Request = serde_json::from_str(json).unwrap();
+    match req {
+        Request::EnforcementWrite { data } => {
+            assert_eq!(data, "eyJzdGF0ZSI6ICJhY3RpdmUifQ==");
+        }
+        _ => panic!("Expected EnforcementWrite"),
+    }
+}
+
+#[test]
+fn test_parse_enforcement_update_request() {
+    let json = r#"{"op": "enforcement_update", "patch": "eyJhY3RpdmUiOiB0cnVlfQ=="}"#;
+    let req: Request = serde_json::from_str(json).unwrap();
+    match req {
+        Request::EnforcementUpdate { patch } => {
+            assert_eq!(patch, "eyJhY3RpdmUiOiB0cnVlfQ==");
+        }
+        _ => panic!("Expected EnforcementUpdate"),
+    }
+}

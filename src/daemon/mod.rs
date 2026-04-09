@@ -445,6 +445,15 @@ fn handle_request(
                 Response::err("invalid_proof", "proof does not match")
             }
         }
+        Request::EnforcementRead => {
+            Response::err("not_implemented", "enforcement_read not yet implemented")
+        }
+        Request::EnforcementWrite { .. } => {
+            Response::err("not_implemented", "enforcement_write not yet implemented")
+        }
+        Request::EnforcementUpdate { .. } => {
+            Response::err("not_implemented", "enforcement_update not yet implemented")
+        }
     }
 }
 

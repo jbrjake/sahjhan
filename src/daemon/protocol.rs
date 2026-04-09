@@ -4,8 +4,8 @@
 // Newline-delimited JSON over SOCK_STREAM.
 //
 // ## Index
-// - Request                   — tagged enum for incoming operations
-// - Response                  — output envelope with constructors; ok_status includes idle_seconds/idle_timeout; err_with_reason for auth diagnostics
+// - Request                   — tagged enum for incoming operations (sign, vault_store/read/delete/list, status, verify, enforcement_read/write/update)
+// - Response                  — output envelope with constructors; ok_status includes idle_seconds/idle_timeout/enforcement_active; err_with_reason for auth diagnostics
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -35,6 +35,12 @@ pub enum Request {
         fields: HashMap<String, String>,
         proof: String,
     },
+    #[serde(rename = "enforcement_read")]
+    EnforcementRead,
+    #[serde(rename = "enforcement_write")]
+    EnforcementWrite { data: String },
+    #[serde(rename = "enforcement_update")]
+    EnforcementUpdate { patch: String },
 }
 
 // [response]

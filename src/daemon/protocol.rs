@@ -64,6 +64,8 @@ pub struct Response {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub idle_timeout: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub enforcement_active: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub verified: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -85,6 +87,7 @@ impl Response {
             vault_entries: None,
             idle_seconds: None,
             idle_timeout: None,
+            enforcement_active: None,
             verified: None,
             error: None,
             message: None,
@@ -103,6 +106,7 @@ impl Response {
             vault_entries: None,
             idle_seconds: None,
             idle_timeout: None,
+            enforcement_active: None,
             verified: None,
             error: None,
             message: None,
@@ -121,6 +125,7 @@ impl Response {
             vault_entries: None,
             idle_seconds: None,
             idle_timeout: None,
+            enforcement_active: None,
             verified: None,
             error: None,
             message: None,
@@ -134,6 +139,7 @@ impl Response {
         vault_entries: usize,
         idle_seconds: u64,
         idle_timeout: u64,
+        enforcement_active: bool,
     ) -> Self {
         Self {
             ok: true,
@@ -145,6 +151,7 @@ impl Response {
             vault_entries: Some(vault_entries),
             idle_seconds: Some(idle_seconds),
             idle_timeout: Some(idle_timeout),
+            enforcement_active: Some(enforcement_active),
             verified: None,
             error: None,
             message: None,
@@ -163,6 +170,7 @@ impl Response {
             vault_entries: None,
             idle_seconds: None,
             idle_timeout: None,
+            enforcement_active: None,
             verified: None,
             error: None,
             message: None,
@@ -181,6 +189,7 @@ impl Response {
             vault_entries: None,
             idle_seconds: None,
             idle_timeout: None,
+            enforcement_active: None,
             verified: None,
             error: Some(error.to_string()),
             message: Some(message.to_string()),
@@ -199,6 +208,7 @@ impl Response {
             vault_entries: None,
             idle_seconds: None,
             idle_timeout: None,
+            enforcement_active: None,
             verified: None,
             error: Some(error.to_string()),
             message: Some(message.to_string()),
@@ -217,6 +227,7 @@ impl Response {
             vault_entries: None,
             idle_seconds: None,
             idle_timeout: None,
+            enforcement_active: None,
             verified: Some(true),
             error: None,
             message: None,

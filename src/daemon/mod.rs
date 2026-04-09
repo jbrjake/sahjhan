@@ -427,11 +427,18 @@ fn handle_request(
             let pid = std::process::id();
             let uptime = start_time.elapsed().as_secs();
             let idle_secs = last_activity.elapsed().as_secs();
-            let vault_entries = match vault.lock() {
-                Ok(v) => v.list().len(),
-                Err(_) => 0,
+            let (vault_entries, enforcement_active) = match vault.lock() {
+                Ok(v) => (v.list().len(), v.read("_enforcement").is_some()),
+                Err(_) => (0, false),
             };
-            Response::ok_status(pid, uptime, vault_entries, idle_secs, idle_timeout)
+            Response::ok_status(
+                pid,
+                uptime,
+                vault_entries,
+                idle_secs,
+                idle_timeout,
+                enforcement_active,
+            )
         }
         Request::Verify {
             event_type,

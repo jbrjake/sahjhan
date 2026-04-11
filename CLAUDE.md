@@ -25,6 +25,7 @@ cargo test                     # Run all tests (419+ tests)
 cargo test <test_name>         # Run one test
 cargo clippy -- -D warnings    # Lint
 cargo fmt                      # Format
+cargo fmt --all -- --check     # CI format check (run before every commit)
 ```
 
 **Config dir:** Protocol TOML files (protocol.toml, states.toml, transitions.toml, events.toml, renders.toml, hooks.toml)

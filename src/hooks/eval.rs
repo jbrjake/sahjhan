@@ -199,7 +199,7 @@ fn derive_current_state(config: &ProtocolConfig, ledger: &Ledger) -> String {
     }
 
     // Fall back to initial state
-    config.initial_state().unwrap_or("unknown").to_string()
+    config.initial_state().unwrap_or("idle").to_string()
 }
 
 // ---------------------------------------------------------------------------

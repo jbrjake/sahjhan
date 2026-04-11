@@ -459,10 +459,14 @@ fn eval_managed_paths(
     };
 
     for (idx, managed) in config.paths.managed.iter().enumerate() {
-        if file_path.starts_with(managed)
-            || file_path == managed.as_str()
-            || (managed.ends_with('/') && file_path.starts_with(managed.trim_end_matches('/')))
-        {
+        // Ensure directory-boundary matching: "output" must not match
+        // "output-extra/foo" — only "output/foo" or "output" itself.
+        let managed_prefix = if managed.ends_with('/') {
+            managed.clone()
+        } else {
+            format!("{}/", managed)
+        };
+        if file_path == managed.as_str() || file_path.starts_with(&managed_prefix) {
             messages.push(HookMessage {
                 source: "managed_path".to_string(),
                 rule_index: idx,
@@ -637,5 +641,59 @@ mod tests {
         };
         let result = resolve_tool_template("{tool.file_path}", &request);
         assert_eq!(result, "src/main.rs");
+    }
+
+    #[test]
+    fn test_managed_path_prefix_boundary() {
+        // Regression: "output" must not match "output-extra/foo"
+        let config = ProtocolConfig {
+            paths: crate::config::PathsConfig {
+                managed: vec!["output".to_string()],
+                data_dir: "output/.sahjhan".to_string(),
+                render_dir: "output".to_string(),
+            },
+            protocol: crate::config::ProtocolMeta {
+                name: "test".to_string(),
+                version: "1.0".to_string(),
+                description: "test".to_string(),
+            },
+            sets: HashMap::new(),
+            aliases: HashMap::new(),
+            states: HashMap::new(),
+            transitions: vec![],
+            events: HashMap::new(),
+            renders: vec![],
+            checkpoints: Default::default(),
+            ledgers: HashMap::new(),
+            guards: None,
+            hooks: vec![],
+            monitors: vec![],
+        };
+
+        // Should block: file is under managed path
+        let mut msgs = Vec::new();
+        let req_under = HookEvalRequest {
+            event: HookEvent::PreToolUse,
+            tool: Some("Edit".to_string()),
+            file: Some("output/foo.md".to_string()),
+            output_text: None,
+        };
+        eval_managed_paths(&config, &req_under, &mut msgs);
+        assert_eq!(msgs.len(), 1, "should block file under managed path");
+
+        // Should NOT block: file shares prefix but is in different directory
+        let mut msgs2 = Vec::new();
+        let req_sibling = HookEvalRequest {
+            event: HookEvent::PreToolUse,
+            tool: Some("Edit".to_string()),
+            file: Some("output-extra/foo.md".to_string()),
+            output_text: None,
+        };
+        eval_managed_paths(&config, &req_sibling, &mut msgs2);
+        assert_eq!(
+            msgs2.len(),
+            0,
+            "should NOT block file in sibling directory with shared prefix"
+        );
     }
 }

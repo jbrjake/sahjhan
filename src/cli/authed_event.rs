@@ -34,11 +34,22 @@ pub fn cmd_authed_event(
         }
     };
 
-    // Verify event type IS restricted
-    if let Some(event_config) = config.events.get(event_type) {
-        if event_config.restricted != Some(true) {
+    // Verify event type IS restricted.
+    // Undefined event types are rejected — authed-event requires explicit
+    // declaration in events.toml with restricted = true.
+    match config.events.get(event_type) {
+        Some(event_config) => {
+            if event_config.restricted != Some(true) {
+                eprintln!(
+                    "error: event type '{}' is not restricted. Use 'sahjhan event' instead.",
+                    event_type
+                );
+                return EXIT_USAGE_ERROR;
+            }
+        }
+        None => {
             eprintln!(
-                "error: event type '{}' is not restricted. Use 'sahjhan event' instead.",
+                "error: event type '{}' is not defined in events.toml",
                 event_type
             );
             return EXIT_USAGE_ERROR;

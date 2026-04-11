@@ -18,6 +18,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
+use subtle::ConstantTimeEq;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -70,7 +71,13 @@ impl TrustedCallersManifest {
         let content = std::fs::read(&full_path).map_err(AuthError::ManifestLoad)?;
         let actual_hash = format!("sha256:{}", hex::encode(Sha256::digest(&content)));
 
-        if actual_hash != *expected_hash {
+        // Constant-time comparison to prevent timing side-channels
+        let hashes_equal: bool = {
+            let a = actual_hash.as_bytes();
+            let b = expected_hash.as_bytes();
+            a.len() == b.len() && a.ct_eq(b).into()
+        };
+        if !hashes_equal {
             return Err(AuthError::HashMismatch {
                 path: relative_path.to_string(),
                 expected: expected_hash.clone(),

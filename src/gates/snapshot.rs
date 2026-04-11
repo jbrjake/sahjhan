@@ -13,7 +13,7 @@ use crate::config::GateConfig;
 use super::command::{run_shell_output_with_timeout, CommandOutputOutcome};
 use super::evaluator::{GateAttestation, GateContext, GateResult};
 use super::template::{find_unresolved_vars, resolve_template};
-use super::types::build_template_vars;
+use super::types::{build_template_vars, validate_template_fields};
 
 // [eval-snapshot-compare]
 pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> GateResult {
@@ -47,6 +47,22 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
         .and_then(|v| v.as_integer())
         .map(|t| t as u64)
         .unwrap_or(60);
+
+    // Validate fields referenced in the template before interpolation.
+    if let Err(reason) = validate_template_fields(raw_cmd, ctx) {
+        return GateResult {
+            passed: false,
+            evaluable: true,
+            gate_type: "snapshot_compare".to_string(),
+            description: format!(
+                "snapshot_compare: {} {} {}",
+                extract, compare, reference_raw
+            ),
+            reason: Some(reason),
+            intent: None,
+            attestation: None,
+        };
+    }
 
     let vars = build_template_vars(ctx);
     let cmd = resolve_template(raw_cmd, &vars);
@@ -172,7 +188,33 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
             let extracted_str = extracted.as_str().unwrap_or(&extracted_owned);
             let passed = match compare {
                 "eq" => extracted_str == reference,
-                _ => false,
+                "gt" | "gte" | "lt" | "lte" => {
+                    // Numeric comparisons require numeric values; string fallback
+                    // only supports equality.
+                    return GateResult {
+                        passed: false,
+                        evaluable: true,
+                        gate_type: "snapshot_compare".to_string(),
+                        description,
+                        reason: Some(format!(
+                            "compare '{}' requires numeric values, but extracted '{}' is not a number",
+                            compare, extracted_str
+                        )),
+                        intent: None,
+                        attestation: None,
+                    };
+                }
+                other => {
+                    return GateResult {
+                        passed: false,
+                        evaluable: true,
+                        gate_type: "snapshot_compare".to_string(),
+                        description,
+                        reason: Some(format!("unknown compare operator '{}'", other)),
+                        intent: None,
+                        attestation: None,
+                    };
+                }
             };
             let attestation = if passed && should_attest {
                 let stdout_hash = format!("{:x}", Sha256::digest(stdout.as_bytes()));
@@ -224,6 +266,8 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
     let passed = match compare {
         "gt" => extracted_num > reference_num,
         "gte" => extracted_num >= reference_num,
+        "lt" => extracted_num < reference_num,
+        "lte" => extracted_num <= reference_num,
         "eq" => (extracted_num - reference_num).abs() < f64::EPSILON,
         other => {
             return GateResult {

@@ -508,7 +508,9 @@ pub fn cmd_event(
         }
     };
 
-    // Check if event type is restricted
+    // Check if event type is restricted.
+    // Undefined event types are allowed through cmd_event (they just won't
+    // have field validation). Only explicitly restricted types are blocked.
     if let Some(event_config) = config.events.get(event_type) {
         if event_config.restricted == Some(true) {
             eprintln!(

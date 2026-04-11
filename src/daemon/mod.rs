@@ -33,6 +33,7 @@ use std::time::Instant;
 use base64::Engine;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
+use subtle::ConstantTimeEq;
 use zeroize::Zeroizing;
 
 use self::auth::TrustedCallersManifest;
@@ -467,7 +468,7 @@ fn handle_request(
             proof,
         } => {
             let expected = compute_sign(session_key, &event_type, &fields);
-            if proof == expected {
+            if constant_time_eq(proof.as_bytes(), expected.as_bytes()) {
                 Response::ok_verified()
             } else {
                 Response::err("invalid_proof", "proof does not match")
@@ -566,6 +567,18 @@ fn handle_request(
             }
         }
     }
+}
+
+/// Constant-time byte comparison using the `subtle` crate.
+///
+/// Returns `true` only if both slices have identical length and contents.
+/// Runs in time proportional to the slice length regardless of where
+/// (or whether) the first mismatch occurs, preventing timing side-channels.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.ct_eq(b).into()
 }
 
 /// Compute HMAC-SHA256 proof for signing requests.

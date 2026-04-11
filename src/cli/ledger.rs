@@ -19,9 +19,10 @@ use crate::ledger::import::import_jsonl;
 use crate::ledger::registry::{LedgerMode, LedgerRegistry};
 
 use super::commands::{
-    compute_registry_path, ledger_path, load_config, registry_path_from_config,
-    remove_active_ledger, resolve_config_dir, resolve_data_dir, resolve_registry_path,
-    write_active_ledger, EXIT_CONFIG_ERROR, EXIT_INTEGRITY_ERROR, EXIT_SUCCESS, EXIT_USAGE_ERROR,
+    compute_registry_path, ledger_path, load_config, read_active_ledger,
+    registry_path_from_config, remove_active_ledger, resolve_config_dir, resolve_data_dir,
+    resolve_registry_path, write_active_ledger, EXIT_CONFIG_ERROR, EXIT_INTEGRITY_ERROR,
+    EXIT_SUCCESS, EXIT_USAGE_ERROR,
 };
 use super::output::{CommandOutput, CommandResult, LedgerActivateData, LedgerDeactivateData};
 
@@ -343,7 +344,12 @@ pub fn cmd_ledger_verify(config_dir: &str, name: Option<&str>, path: Option<&str
 // ---------------------------------------------------------------------------
 
 // [cmd-ledger-checkpoint]
-pub fn cmd_ledger_checkpoint(config_dir: &str, name: &str, scope: &str, snapshot: &str) -> i32 {
+pub fn cmd_ledger_checkpoint(
+    config_dir: &str,
+    name: Option<&str>,
+    scope: &str,
+    snapshot: &str,
+) -> i32 {
     let config_path = resolve_config_dir(config_dir);
     let config = match load_config(&config_path) {
         Ok(c) => c,
@@ -351,6 +357,22 @@ pub fn cmd_ledger_checkpoint(config_dir: &str, name: &str, scope: &str, snapshot
             eprintln!("{}", msg);
             return code;
         }
+    };
+
+    // Resolve ledger name: explicit --name, then active-ledger marker
+    let data_dir = resolve_data_dir(&config.paths.data_dir);
+    let resolved_name = match name {
+        Some(n) => n.to_string(),
+        None => match read_active_ledger(&data_dir) {
+            Some(active) => active,
+            None => {
+                eprintln!(
+                    "error: no --name provided and no active ledger set. \
+                     Use --name <ledger> or run 'sahjhan ledger activate <name>' first."
+                );
+                return EXIT_USAGE_ERROR;
+            }
+        },
     };
 
     let reg_path = registry_path_from_config(&config);
@@ -362,7 +384,7 @@ pub fn cmd_ledger_checkpoint(config_dir: &str, name: &str, scope: &str, snapshot
         }
     };
 
-    let entry = match registry.resolve(Some(name)) {
+    let entry = match registry.resolve(Some(&resolved_name)) {
         Ok(e) => e.clone(),
         Err(e) => {
             eprintln!("error: {}", e);

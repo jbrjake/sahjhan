@@ -382,9 +382,9 @@ enum LedgerAction {
     },
     /// Write a checkpoint to a ledger
     Checkpoint {
-        /// Ledger name
+        /// Target ledger name (defaults to active ledger)
         #[arg(long)]
-        name: String,
+        name: Option<String>,
 
         /// Checkpoint scope
         #[arg(long, default_value = "state")]
@@ -626,7 +626,7 @@ fn main() {
                 scope,
                 snapshot,
             } => {
-                let code = ledger::cmd_ledger_checkpoint(&cli.config_dir, &name, &scope, &snapshot);
+                let code = ledger::cmd_ledger_checkpoint(&cli.config_dir, name.as_deref(), &scope, &snapshot);
                 Box::new(LegacyResult::new("ledger_checkpoint", code))
             }
             LedgerAction::Import { name, path } => {

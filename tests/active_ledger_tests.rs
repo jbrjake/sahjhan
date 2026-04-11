@@ -637,3 +637,82 @@ fn test_activate_overwrites_prior_marker() {
 
     assert_eq!(std::fs::read_to_string(&marker).unwrap().trim(), "run-2");
 }
+
+// ---------------------------------------------------------------------------
+// ledger checkpoint defaults to active ledger (#28)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_checkpoint_defaults_to_active_ledger() {
+    let dir = setup_initialized_dir();
+    create_named_ledger(dir.path(), "run-1");
+
+    // Activate run-1
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "ledger", "activate", "run-1"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Checkpoint without --name should use active ledger
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "ledger",
+            "checkpoint",
+            "--snapshot",
+            "pre-clear",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("checkpoint: seq"));
+}
+
+#[test]
+fn test_checkpoint_explicit_name_still_works() {
+    let dir = setup_initialized_dir();
+    create_named_ledger(dir.path(), "run-1");
+
+    // Checkpoint with explicit --name (no active ledger needed)
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "ledger",
+            "checkpoint",
+            "--name",
+            "run-1",
+            "--snapshot",
+            "manual",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("checkpoint: seq"));
+}
+
+#[test]
+fn test_checkpoint_no_name_no_active_ledger_fails() {
+    let dir = setup_initialized_dir();
+
+    // No --name and no active ledger — should fail
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "ledger",
+            "checkpoint",
+            "--snapshot",
+            "pre-clear",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("no --name provided and no active ledger set"));
+}

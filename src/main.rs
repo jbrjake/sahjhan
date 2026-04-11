@@ -626,7 +626,12 @@ fn main() {
                 scope,
                 snapshot,
             } => {
-                let code = ledger::cmd_ledger_checkpoint(&cli.config_dir, name.as_deref(), &scope, &snapshot);
+                let code = ledger::cmd_ledger_checkpoint(
+                    &cli.config_dir,
+                    name.as_deref(),
+                    &scope,
+                    &snapshot,
+                );
                 Box::new(LegacyResult::new("ledger_checkpoint", code))
             }
             LedgerAction::Import { name, path } => {

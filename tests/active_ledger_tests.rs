@@ -714,5 +714,7 @@ fn test_checkpoint_no_name_no_active_ledger_fails() {
         .current_dir(dir.path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("no --name provided and no active ledger set"));
+        .stderr(predicate::str::contains(
+            "no --name provided and no active ledger set",
+        ));
 }

@@ -172,7 +172,7 @@ The hook saw `python3 script.py`. Not the protected path. The key leaked in one 
 
 The only place a secret can live that a same-user adversary with code execution can't reach is in the memory of another process.
 
-So Sahjhan has a daemon mode. `sahjhan daemon start` launches a background process that generates a 32-byte session key, holds it in memory, and serves signing and vault operations over a Unix domain socket. The key is never written to disk. `mlock` prevents it from leaking to swap (best-effort — it's not the primary defense). `ptrace(PT_DENY_ATTACH)` on macOS and `prctl(PR_SET_DUMPABLE, 0)` on Linux block debugger attachment and `/proc/pid/mem` reads. If the environment has `LD_PRELOAD` or `DYLD_INSERT_LIBRARIES` set, the daemon refuses to start.
+So Sahjhan has a daemon mode. `sahjhan daemon start` launches a background process that generates a 32-byte session key, holds it in memory, and serves signing and vault operations over a Unix domain socket. The key is never written to disk. `mlock` prevents it from leaking to swap (best-effort — it's not the primary defense). `ptrace(PT_DENY_ATTACH)` on macOS and `prctl(PR_SET_DUMPABLE, 0)` on Linux block debugger attachment and `/proc/pid/mem` reads. If the environment has `LD_PRELOAD` or `DYLD_INSERT_LIBRARIES` set, the daemon refuses to start. Pass `--idle-timeout <seconds>` if you want it to shut itself down after a quiet period — useful in CI, where a daemon outliving the job is just a leaked process with secrets in it.
 
 When a hook needs a proof, it calls `sahjhan sign`. The CLI connects to the daemon socket, the daemon computes the HMAC, and the proof comes back. The agent never sees the key. Even if the agent reads the Rust source code and understands exactly how the HMAC is computed, it still can't produce one without those 32 bytes in the daemon's address space.
 
@@ -188,6 +188,8 @@ The daemon also authenticates its callers. Every connection goes through PID-bas
 Both the path and the SHA-256 hash must match. The agent can't call `sahjhan sign` directly (parent PID would be `bash`, not a trusted script). It can't write a script into the trusted path (the bootstrap hook blocks writes to `enforcement/`). It can't modify a trusted script to do something else (hash won't match). It can't copy a trusted script somewhere and run it from there (path won't match).
 
 The vault handles more than keys. The quiz bank — the questions the hook uses to verify the agent actually read the code — lives in daemon memory too. The hook loads it at startup with `sahjhan vault store --name quiz-bank --file questions.json`, then retrieves questions with `sahjhan vault read --name quiz-bank` during the quiz. The file gets deleted from disk after loading. No point in HMAC-protecting the answers if the agent can read the questions in advance, and no point in leaving a file on disk that doesn't need to exist.
+
+Protocol scripts sometimes need their own scratch state — counters, timers, flags — that the agent shouldn't be able to read or edit. The daemon exposes `enforcement_read` / `enforcement_write` / `enforcement_update` over the socket for that. They live under a reserved `_`-prefixed vault namespace that `vault read` and `vault list` refuse to touch. Same process, different door, and the agent doesn't have a key to either.
 
 Kill the daemon and the secrets vanish. That's denial of service, not exfiltration. The daemon cleans up its socket and PID files on shutdown. If it dies uncleanly, stale files get cleaned on the next start.
 
@@ -625,6 +627,26 @@ path = "project.jsonl"
 
 Templates are validated at `sahjhan validate` time — Sahjhan checks that path patterns use valid placeholders and that singleton paths don't collide.
 
+### The active ledger
+
+Typing `--ledger run-25` on every single command gets old by the third command. So Sahjhan has an active-ledger marker: a pointer file in the data directory that says "this is the one, unless you tell me otherwise." Set it once, and every subsequent command targets it by default.
+
+```bash
+sahjhan ledger activate run-25
+# run-25 is now the active ledger
+
+sahjhan event finding --field id=BH-042 --field severity=HIGH
+# recorded to run-25, no --ledger flag needed
+
+sahjhan ledger create --from run 26 --activate
+# creates run-26 and switches the marker in one step
+
+sahjhan ledger deactivate
+# clears the marker
+```
+
+Resolution order, highest priority first: `--ledger-path` > `--ledger <name>` > active marker > registry default. `sahjhan status` tells you which ledger it's reading from and why, so you don't spend twenty minutes confused about where your events went. `sahjhan reset` clears the marker along with everything else it archives.
+
 ## How it works
 
 TOML defines the states, transitions, and gates. The compiled binary enforces them. My agents used to read my Python guard scripts and find the gaps in minutes. There's nothing to read here.
@@ -777,7 +799,7 @@ Generates `pre_tool_hook.py` (PreToolUse), `post_tool_hook.py` (PostToolUse), `s
 | Edit source without a failing test | Runtime hook checks gate, blocks the edit |
 | Claim "audit complete" in non-terminal state | Stop hook pattern-matches output, blocks |
 | Shell tricks (`echo >`, `sed -i`, `python -c`) | Detected, violation recorded permanently |
-| Delete or reset the ledger | Hash chain. There is no reset. |
+| Delete the ledger | Hash chain for deletion. Reset is a real command, but it needs an HMAC proof the agent can't forge. |
 | Fabricate history entries | Every entry is hash-linked. Fabricate one, the chain breaks. |
 | `sahjhan event quiz_passed --field pass=true` | Restricted. Needs HMAC proof the agent can't forge. |
 | Read the session key to forge proofs | No key on disk. It's in the daemon's memory. `ptrace` blocked. |
@@ -895,7 +917,7 @@ Twenty events in `fix_loop` without advancing state. That's a lot of activity wi
 
 ## CLI reference
 
-All commands accept `--config-dir <path>` (default: `enforcement`), `--ledger <name>`, and `--ledger-path <path>`.
+All commands accept `--config-dir <path>` (default: `enforcement`), `--ledger <name>`, `--ledger-path <path>`, and `--json` (emit a structured JSON envelope instead of human output — for scripting).
 
 ```
 sahjhan init                              Initialize ledger, registry, manifest, genesis
@@ -910,7 +932,7 @@ sahjhan sign --event-type <type> [--field KEY=VALUE]
                                           Get HMAC proof from daemon
 sahjhan verify --event-type <type> --proof <HMAC> [--field KEY=VALUE]
                                           Verify an HMAC proof via daemon
-sahjhan daemon start                      Start daemon (foreground, holds keys in memory)
+sahjhan daemon start [--idle-timeout N]   Start daemon (foreground, holds keys in memory; 0=no timeout)
 sahjhan daemon stop                       Stop running daemon
 sahjhan daemon status                     Query daemon health
 sahjhan vault store --name <n> --file <f> Store file contents in daemon memory
@@ -927,7 +949,7 @@ sahjhan manifest list                     Show tracked files and hashes
 sahjhan manifest restore <path>           Restore file from known-good state
 sahjhan render                            Regenerate markdown views from ledger
 sahjhan gate check <transition> [args...]  Dry-run gate evaluation (✓/✗/?)
-sahjhan reset --confirm --token <TOKEN>   Archive current run and restart
+sahjhan reset --confirm --proof <HMAC>    Archive current run and restart (HMAC proof required)
 sahjhan hook generate [--harness cc]      Generate integration hooks
 sahjhan hook eval --event <E> [--tool <T>] [--file <F>] [--output-text <text>]
                                           Evaluate hooks against current state (JSON)
@@ -937,13 +959,15 @@ sahjhan query --type <type> [--count]     Convenience: filter by event type
 sahjhan query --glob <pattern> "<SQL>"    Query across multiple ledger files
 sahjhan query --format table|json|csv|jsonl
 
-sahjhan ledger create --name <n> --path <p> [--mode stateful|event-only]
-sahjhan ledger create --from <template> <instance_id>  Create from template
+sahjhan ledger create --name <n> --path <p> [--mode stateful|event-only] [--activate]
+sahjhan ledger create --from <template> <instance_id> [--activate]   Create from template
 sahjhan ledger list                       Show registered ledgers
 sahjhan ledger remove --name <n>          Unregister (keeps file)
 sahjhan ledger verify [--name <n>]        Validate chain integrity
-sahjhan ledger checkpoint --name <n>      Write checkpoint event
+sahjhan ledger checkpoint [--name <n>]    Write checkpoint event (defaults to active ledger)
 sahjhan ledger import --name <n> --path <p>   Import bare JSONL from stdin
+sahjhan ledger activate <name>            Set a ledger as the active default
+sahjhan ledger deactivate                 Clear the active-ledger marker
 
 sahjhan mermaid                           Generate Mermaid stateDiagram-v2
 sahjhan mermaid --rendered                ASCII art protocol diagram
@@ -994,7 +1018,8 @@ Exclusive file locks for writes, shared for reads. 5 second lock timeout.
 +--------------------------------------------------+
 |               Filesystem                          |
 |   ledger.jsonl, ledgers.toml, manifest.json,      |
-|   rendered views, trusted-callers.toml            |
+|   active-ledger marker, rendered views,           |
+|   trusted-callers.toml                            |
 +--------------------------------------------------+
 ```
 

@@ -70,7 +70,12 @@ enum Commands {
     Init,
 
     /// Show current state, set progress, gate status
-    Status,
+    Status {
+        /// Skip transition gate evaluation (gates can run arbitrary
+        /// commands; hook callers need fast, side-effect-free status)
+        #[arg(long)]
+        no_gates: bool,
+    },
 
     /// Ledger operations
     Log {
@@ -487,7 +492,7 @@ fn main() {
 
     let result: Box<dyn CommandOutput> = match cli.command {
         // Converted commands return Box<dyn CommandOutput> directly
-        Commands::Status => status::cmd_status(&cli.config_dir, &targeting),
+        Commands::Status { no_gates } => status::cmd_status(&cli.config_dir, &targeting, no_gates),
         Commands::Log { action } => match action {
             LogAction::Dump => log::cmd_log_dump(&cli.config_dir, &targeting),
             LogAction::Tail { n } => log::cmd_log_tail(&cli.config_dir, n, &targeting),

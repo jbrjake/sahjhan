@@ -3,7 +3,7 @@
 // Status display and set management commands.
 //
 // ## Index
-// - [cmd-status] cmd_status() — show current state, progress, gate status
+// - [cmd-status] cmd_status() — show current state, progress, gate status; --no-gates skips transition gate evaluation
 // - [cmd-set-status] cmd_set_status() — show completion status for a set
 // - [cmd-set-complete] cmd_set_complete() — record member completion (runs gates)
 
@@ -31,7 +31,11 @@ use super::output::{
 // ---------------------------------------------------------------------------
 
 // [cmd-status]
-pub fn cmd_status(config_dir: &str, targeting: &LedgerTargeting) -> Box<dyn CommandOutput> {
+pub fn cmd_status(
+    config_dir: &str,
+    targeting: &LedgerTargeting,
+    no_gates: bool,
+) -> Box<dyn CommandOutput> {
     let config_path = resolve_config_dir(config_dir);
     let config = match load_config(&config_path) {
         Ok(c) => c,
@@ -125,12 +129,18 @@ pub fn cmd_status(config_dir: &str, targeting: &LedgerTargeting) -> Box<dyn Comm
         })
         .collect();
 
-    // Build transitions summary
-    let available_transitions: Vec<_> = config
-        .transitions
-        .iter()
-        .filter(|t| t.from == current_state)
-        .collect();
+    // Build transitions summary. Gate evaluation can run arbitrary commands
+    // (command_succeeds gates spawn test suites), so callers inside hook
+    // timeouts pass --no-gates to skip it entirely.
+    let available_transitions: Vec<_> = if no_gates {
+        vec![]
+    } else {
+        config
+            .transitions
+            .iter()
+            .filter(|t| t.from == current_state)
+            .collect()
+    };
 
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let transitions: Vec<TransitionSummaryData> = available_transitions
@@ -181,6 +191,9 @@ pub fn cmd_status(config_dir: &str, targeting: &LedgerTargeting) -> Box<dyn Comm
         warnings.push(
             "status-cache.json not found \u{2014} enforcement hooks may be inactive".to_string(),
         );
+    }
+    if no_gates {
+        warnings.push("transitions omitted (--no-gates: gates not evaluated)".to_string());
     }
 
     Box::new(CommandResult::ok(

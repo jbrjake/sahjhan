@@ -105,6 +105,89 @@ fn test_status_shows_current_state() {
 }
 
 #[test]
+fn test_status_no_gates_skips_gate_evaluation() {
+    // `status` evaluates every candidate transition's gates, which can run
+    // arbitrary commands (test suites, etc.). `--no-gates` must skip them
+    // entirely so hook callers can refresh state inside tight timeouts.
+    let marker = "gate-ran.marker";
+    let dir = setup_dir_with_custom_transitions(&format!(
+        r#"[[transitions]]
+from = "idle"
+to = "working"
+command = "begin"
+gates = [
+    {{ type = "command_succeeds", cmd = "touch {}" }},
+]
+"#,
+        marker
+    ));
+
+    // Plain status runs the gate command — marker appears
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "status"])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("next:"));
+    assert!(
+        dir.path().join(marker).exists(),
+        "plain status should have evaluated the gate command"
+    );
+    std::fs::remove_file(dir.path().join(marker)).unwrap();
+
+    // --no-gates must not run the gate command, must still report state,
+    // and must say why the transitions section is absent.
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "status", "--no-gates"])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("state:"))
+        .stdout(predicate::str::contains("idle"))
+        .stdout(predicate::str::contains("gates not evaluated"))
+        .stdout(predicate::str::contains("next:").not());
+    assert!(
+        !dir.path().join(marker).exists(),
+        "--no-gates must not evaluate gate commands"
+    );
+}
+
+#[test]
+fn test_status_no_gates_json_omits_transitions() {
+    let dir = setup_initialized_dir();
+    let output = Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--json",
+            "--config-dir",
+            "enforcement",
+            "status",
+            "--no-gates",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let v: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(v["data"]["state"], "idle");
+    assert_eq!(
+        v["data"]["transitions"],
+        serde_json::json!([]),
+        "transitions must be empty under --no-gates"
+    );
+    let warnings = v["data"]["warnings"].as_array().unwrap();
+    assert!(
+        warnings.iter().any(|w| w
+            .as_str()
+            .is_some_and(|s| s.contains("gates not evaluated"))),
+        "JSON warnings must explain the omitted transitions, got: {:?}",
+        warnings
+    );
+}
+
+#[test]
 fn test_status_warns_when_cache_missing() {
     let dir = setup_initialized_dir();
     let cache_path = dir.path().join("output/.sahjhan/status-cache.json");

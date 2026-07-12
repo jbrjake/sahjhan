@@ -10,6 +10,8 @@
 // - DaemonServer::cleanup     -- remove socket and PID files
 // - handle_connection         -- read JSON lines from a stream, dispatch, respond
 // - handle_request            -- match Request variant to operation; enforcement_read/write/update ops; _-prefixed vault namespace guard
+// - overlay_ledger_state      -- override enforcement blob "state" with ledger-derived state (holtz #57)
+// - derive_ledger_state       -- resolve active ledger, verify chain, derive current state
 // - compute_sign              -- HMAC-SHA256 signing (same algorithm as authed_event.rs)
 // - build_canonical_payload   -- canonical HMAC payload from event_type + fields
 // - mod platform              -- OS-specific APIs
@@ -39,6 +41,10 @@ use zeroize::Zeroizing;
 use self::auth::TrustedCallersManifest;
 use self::protocol::{Request, Response};
 use self::vault::Vault;
+use crate::cli::commands::{resolve_ledger_from_targeting, LedgerTargeting};
+use crate::config::ProtocolConfig;
+use crate::hooks::eval::derive_current_state;
+use crate::ledger::chain::Ledger;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -337,6 +343,7 @@ fn handle_connection(
                     start_time,
                     last_activity,
                     idle_timeout,
+                    plugin_root,
                 )
             }
             Ok(req) => {
@@ -348,6 +355,7 @@ fn handle_connection(
                         start_time,
                         last_activity,
                         idle_timeout,
+                        plugin_root,
                     )
                 } else {
                     let reason = auth_reason.as_deref().unwrap_or("pid_resolution_failed");
@@ -372,6 +380,7 @@ fn handle_connection(
 }
 
 /// Dispatch a parsed request to the appropriate operation.
+#[allow(clippy::too_many_arguments)]
 fn handle_request(
     req: Request,
     vault: &Arc<Mutex<Vault>>,
@@ -379,6 +388,7 @@ fn handle_request(
     start_time: Instant,
     last_activity: Instant,
     idle_timeout: u64,
+    config_dir: &Path,
 ) -> Response {
     match req {
         Request::Sign { event_type, fields } => {
@@ -477,6 +487,11 @@ fn handle_request(
         Request::EnforcementRead => match vault.lock() {
             Ok(v) => match v.read("_enforcement") {
                 Some(bytes) => {
+                    // The stored blob's "state" field is only as fresh as the
+                    // consumer's last successful write; transitions advance the
+                    // ledger without touching the vault (holtz #57). Serve
+                    // ledger truth at read time instead of the stored value.
+                    let bytes = overlay_ledger_state(bytes, config_dir);
                     let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
                     Response::ok_data(&encoded)
                 }
@@ -567,6 +582,45 @@ fn handle_request(
             }
         }
     }
+}
+
+/// Override the enforcement blob's `state` field with the ledger-derived
+/// current state.
+///
+/// The vault blob is consumer-owned and opaque except for this one key:
+/// `state` must always reflect the ledger (the source of truth), because
+/// transitions advance the ledger without any authenticated path back into
+/// the vault (holtz #57). If the ledger cannot be resolved or fails chain
+/// verification, or the blob is not a JSON object, the stored bytes are
+/// served unchanged (fail-soft).
+fn overlay_ledger_state(bytes: &[u8], config_dir: &Path) -> Vec<u8> {
+    let Some(state) = derive_ledger_state(config_dir) else {
+        return bytes.to_vec();
+    };
+    match serde_json::from_slice::<serde_json::Value>(bytes) {
+        Ok(serde_json::Value::Object(mut obj)) => {
+            obj.insert("state".to_string(), serde_json::Value::String(state));
+            serde_json::to_vec(&obj).unwrap_or_else(|_| bytes.to_vec())
+        }
+        _ => bytes.to_vec(),
+    }
+}
+
+/// Resolve the active ledger the same way the CLI does (active-ledger
+/// marker → registry → default), verify its hash chain, and derive the
+/// current state from the last `state_transition` event.
+///
+/// Returns `None` on any failure so callers can fall back to stored data.
+fn derive_ledger_state(config_dir: &Path) -> Option<String> {
+    let config = ProtocolConfig::load(config_dir).ok()?;
+    let targeting = LedgerTargeting {
+        ledger_name: None,
+        ledger_path: None,
+    };
+    let (path, _mode) = resolve_ledger_from_targeting(&config, &targeting).ok()?;
+    let ledger = Ledger::open(&path).ok()?;
+    ledger.verify().ok()?;
+    Some(derive_current_state(&config, &ledger))
 }
 
 /// Constant-time byte comparison using the `subtle` crate.

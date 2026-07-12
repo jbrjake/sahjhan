@@ -188,7 +188,9 @@ pub fn evaluate_hooks(
 
 /// Find the current state from the last state_transition in the ledger,
 /// or return the initial state from config.
-fn derive_current_state(config: &ProtocolConfig, ledger: &Ledger) -> String {
+///
+/// `pub(crate)`: also used by the daemon's enforcement_read overlay.
+pub(crate) fn derive_current_state(config: &ProtocolConfig, ledger: &Ledger) -> String {
     // Scan backwards for the last state_transition
     for entry in ledger.entries().iter().rev() {
         if entry.event_type == "state_transition" {

@@ -32,13 +32,14 @@ render_dir = "output"
 
     std::fs::write(
         config_dir.join("states.toml"),
-        "[states.idle]\nlabel = \"Idle\"\ninitial = true\n",
+        "[states.idle]\nlabel = \"Idle\"\ninitial = true\n\n[states.working]\nlabel = \"Working\"\n",
     )
     .unwrap();
 
     std::fs::write(
         config_dir.join("transitions.toml"),
-        "[[transitions]]\nfrom = \"idle\"\nto = \"idle\"\ncommand = \"noop\"\ngates = []\n",
+        "[[transitions]]\nfrom = \"idle\"\nto = \"idle\"\ncommand = \"noop\"\ngates = []\n\n\
+         [[transitions]]\nfrom = \"idle\"\nto = \"working\"\ncommand = \"go\"\ngates = []\n",
     )
     .unwrap();
 
@@ -138,11 +139,133 @@ fn test_enforcement_write_then_read() {
         .decode(read_data)
         .unwrap();
     let obj: serde_json::Value = serde_json::from_slice(&decoded).unwrap();
-    assert_eq!(obj["state"], "active");
+    // The stored "state" is overridden at read time by the ledger-derived
+    // state (holtz #57): a fresh ledger has no state_transition, so the
+    // config's initial state wins over the stale stored value.
+    assert_eq!(obj["state"], "idle");
     assert_eq!(obj["score"], 42);
     assert!(
         obj["last_refresh"].is_string(),
         "last_refresh should be present"
+    );
+
+    stop_daemon(&mut daemon);
+}
+
+// ---------------------------------------------------------------------------
+// Ledger-state overlay on enforcement_read (holtz #57)
+// ---------------------------------------------------------------------------
+
+/// Write a stale enforcement blob, then send the request and return the
+/// decoded blob from the response.
+fn read_enforcement_blob(dir: &std::path::Path) -> serde_json::Value {
+    let resp = send_request(dir, r#"{"op": "enforcement_read"}"#);
+    assert_eq!(resp["ok"], true, "enforcement_read failed: {:?}", resp);
+    let data = resp["data"].as_str().unwrap();
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .unwrap();
+    serde_json::from_slice(&decoded).unwrap()
+}
+
+fn write_enforcement_blob(dir: &std::path::Path, json: &str) {
+    let data = base64::engine::general_purpose::STANDARD.encode(json);
+    let req = format!(r#"{{"op": "enforcement_write", "data": "{}"}}"#, data);
+    let resp = send_request(dir, &req);
+    assert_eq!(resp["ok"], true, "enforcement_write failed: {:?}", resp);
+}
+
+#[test]
+#[ignore]
+fn test_enforcement_read_overlays_state_from_ledger_transition() {
+    let dir = setup_dir();
+    let mut daemon = start_daemon(dir.path());
+    wait_for_socket(dir.path());
+
+    // Stale blob: consumer's hook last saw "merge_ready"
+    write_enforcement_blob(dir.path(), r#"{"state": "merge_ready", "stall": 3}"#);
+
+    // The ledger advances without any enforcement_write (the #57 scenario)
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "transition", "go"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    let obj = read_enforcement_blob(dir.path());
+    assert_eq!(
+        obj["state"], "working",
+        "read must serve ledger-derived state, not the stale stored value"
+    );
+    // Other consumer-owned fields pass through untouched
+    assert_eq!(obj["stall"], 3);
+
+    stop_daemon(&mut daemon);
+}
+
+#[test]
+#[ignore]
+fn test_enforcement_read_serves_stored_state_when_ledger_invalid() {
+    let dir = setup_dir();
+    let mut daemon = start_daemon(dir.path());
+    wait_for_socket(dir.path());
+
+    write_enforcement_blob(dir.path(), r#"{"state": "merge_ready"}"#);
+
+    // Corrupt the ledger: chain verification must fail, so the overlay
+    // is skipped and the stored blob is served unchanged (fail-soft).
+    let ledger_path = dir.path().join("output/.sahjhan/ledger.jsonl");
+    let mut contents = std::fs::read_to_string(&ledger_path).unwrap();
+    contents.push_str("{\"garbage\": true}\n");
+    std::fs::write(&ledger_path, contents).unwrap();
+
+    let obj = read_enforcement_blob(dir.path());
+    assert_eq!(
+        obj["state"], "merge_ready",
+        "corrupt ledger must not produce a derived state"
+    );
+
+    stop_daemon(&mut daemon);
+}
+
+#[test]
+#[ignore]
+fn test_enforcement_read_overlay_follows_active_ledger() {
+    let dir = setup_dir();
+    let mut daemon = start_daemon(dir.path());
+    wait_for_socket(dir.path());
+
+    write_enforcement_blob(dir.path(), r#"{"state": "merge_ready"}"#);
+
+    // Create and activate a second ledger, then advance state on it.
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "ledger",
+            "create",
+            "--name",
+            "run-1",
+            "--path",
+            "output/.sahjhan/run-1.jsonl",
+            "--activate",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "transition", "go"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    let obj = read_enforcement_blob(dir.path());
+    assert_eq!(
+        obj["state"], "working",
+        "overlay must derive state from the ACTIVE ledger"
     );
 
     stop_daemon(&mut daemon);
@@ -353,7 +476,10 @@ fn test_enforcement_write_then_read_full_round_trip() {
         .decode(data)
         .unwrap();
     let obj: serde_json::Value = serde_json::from_slice(&decoded).unwrap();
-    assert_eq!(obj["state"], "auditing");
+    // "state" is overridden at read time by the ledger-derived state
+    // (holtz #57); the fixture ledger has no transitions, so the initial
+    // state wins over the stored "auditing".
+    assert_eq!(obj["state"], "idle");
     assert_eq!(obj["items_remaining"], 3);
     assert_eq!(obj["last_item"], "auth.rs");
     assert!(obj["last_refresh"].is_string());

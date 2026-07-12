@@ -191,6 +191,10 @@ The vault handles more than keys. The quiz bank — the questions the hook uses 
 
 Protocol scripts sometimes need their own scratch state — counters, timers, flags — that the agent shouldn't be able to read or edit. The daemon exposes `enforcement_read` / `enforcement_write` / `enforcement_update` over the socket for that. They live under a reserved `_`-prefixed vault namespace that `vault read` and `vault list` refuse to touch. Same process, different door, and the agent doesn't have a key to either.
 
+One key in that blob is special: `state`. Consumers used to write it themselves after parsing `sahjhan status`, which meant it was only as fresh as their last successful refresh — transitions advance the ledger, not the vault, and a hook that times out refreshing leaves the daemon serving a state many transitions old (holtz #57 wedged a session for 150+ turns this way). Since v0.14.0 the daemon ignores the stored value on read: `enforcement_read` resolves the active ledger, verifies its hash chain, derives the current state from the last `state_transition`, and overrides `state` in the response. If the ledger can't be resolved or fails verification, the stored bytes are served unchanged. There is deliberately no socket op to *write* the state — a CLI invoked by the agent can't authenticate as a trusted caller, and the ledger is already the source of truth.
+
+Relatedly, `sahjhan status --no-gates` skips transition gate evaluation. Plain `status` evaluates every candidate transition's gates to print `ready`/`blocked`, and `command_succeeds` gates can spawn test suites — poison for a hook running under a five-second timeout. With `--no-gates` you get state, sets, event count, and chain verification with no side effects; the transitions section is omitted and a warning says why.
+
 Kill the daemon and the secrets vanish. That's denial of service, not exfiltration. The daemon cleans up its socket and PID files on shutdown. If it dies uncleanly, stale files get cleaned on the next start.
 
 ### Config integrity

@@ -326,23 +326,20 @@ impl ProtocolConfig {
                 continue;
             }
             match parts[0] {
-                "transition" => {
-                    if !transition_commands.contains(parts[1]) {
-                        errors.push(format!(
-                            "protocol.toml: alias '{}' targets transition '{}' which is not defined",
-                            alias_name, parts[1]
-                        ));
-                    }
+                "transition" if !transition_commands.contains(parts[1]) => {
+                    errors.push(format!(
+                        "protocol.toml: alias '{}' targets transition '{}' which is not defined",
+                        alias_name, parts[1]
+                    ));
                 }
-                "event" => {
-                    if !event_types.contains(parts[1]) {
-                        errors.push(format!(
-                            "protocol.toml: alias '{}' targets event type '{}' which is not defined",
-                            alias_name, parts[1]
-                        ));
-                    }
+                "event" if !event_types.contains(parts[1]) => {
+                    errors.push(format!(
+                        "protocol.toml: alias '{}' targets event type '{}' which is not defined",
+                        alias_name, parts[1]
+                    ));
                 }
-                // Other command targets (set, log, status, etc.) are built-in — skip.
+                // Valid targets and other command kinds (set, log, status,
+                // etc.) are built-in — skip.
                 _ => {}
             }
         }

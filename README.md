@@ -187,6 +187,8 @@ The daemon also authenticates its callers. Every connection goes through PID-bas
 
 Both the path and the SHA-256 hash must match. The agent can't call `sahjhan sign` directly (parent PID would be `bash`, not a trusted script). It can't write a script into the trusted path (the bootstrap hook blocks writes to `enforcement/`). It can't modify a trusted script to do something else (hash won't match). It can't copy a trusted script somewhere and run it from there (path won't match).
 
+The manifest itself is the root of trust here — it decides who may sign — so it lives inside the config seal (below) alongside the protocol files. Rewriting it to add your own caller and restarting the daemon no longer works silently: the next command re-hashes `trusted-callers.toml`, sees it drift from the sealed value, and refuses to run with a config integrity violation. Changing who can sign now requires a `reseal`, which needs the session key and lands on the permanent record — the same authenticated path as any other config change.
+
 The vault handles more than keys. The quiz bank — the questions the hook uses to verify the agent actually read the code — lives in daemon memory too. The hook loads it at startup with `sahjhan vault store --name quiz-bank --file questions.json`, then retrieves questions with `sahjhan vault read --name quiz-bank` during the quiz. The file gets deleted from disk after loading. No point in HMAC-protecting the answers if the agent can read the questions in advance, and no point in leaving a file on disk that doesn't need to exist.
 
 Protocol scripts sometimes need their own scratch state — counters, timers, flags — that the agent shouldn't be able to read or edit. The daemon exposes `enforcement_read` / `enforcement_write` / `enforcement_update` over the socket for that. They live under a reserved `_`-prefixed vault namespace that `vault read` and `vault list` refuse to touch. Same process, different door, and the agent doesn't have a key to either.
@@ -203,7 +205,7 @@ So the ledger can't be edited. The hash chain works. Restricted events need a pr
 
 Everything except the TOML config files. You know, the ones that define every gate, every transition, every rule. `transitions.toml` is just a text file sitting in a directory the agent can write to. Remove a gate, lower a threshold, add `gates = []` to the one transition that matters — and Sahjhan's hardened ledger will faithfully enforce your gutted protocol. The vault door is six inches of steel. The wall next to it is drywall.
 
-On `sahjhan init`, Sahjhan SHA-256 hashes all six config files and stores those hashes in the genesis ledger entry. Every subsequent command re-hashes and compares. One byte different — a gate removed, a timeout changed, a comment added to make the diff look innocent — and Sahjhan won't run:
+On `sahjhan init`, Sahjhan SHA-256 hashes all seven sealed config files — the five protocol files, `hooks.toml`, and `trusted-callers.toml` — and stores those hashes in the genesis ledger entry. Every subsequent command re-hashes and compares. One byte different — a gate removed, a timeout changed, a comment added to make the diff look innocent — and Sahjhan won't run:
 
 ```
 error: config integrity violation:
@@ -987,9 +989,9 @@ The format is human-readable on purpose. You should be able to audit what your a
 
 The manifest hashes its own entries and stores that hash in the ledger. Tampering with the manifest means tampering with the ledger. Circular on purpose.
 
-Config files are SHA-256 sealed into the genesis entry at init time. Every command verifies the seal. `sahjhan reseal` updates the seal but requires HMAC proof — same session key, same mechanism as restricted events. The reseal event is recorded in the ledger, so config changes are auditable.
+Config files are SHA-256 sealed into the genesis entry at init time — the five protocol files, `hooks.toml`, and `trusted-callers.toml`. Every command verifies the seal. `sahjhan reseal` updates the seal but requires HMAC proof — same session key, same mechanism as restricted events. The reseal event is recorded in the ledger, so config changes are auditable.
 
-Session keys exist only in daemon process memory. Never written to disk, never passed over the wire. The daemon generates 32 random bytes at startup, locks the pages with `mlock` where the OS allows it, blocks debugger attachment, and refuses to start if library injection environment variables are set. Callers authenticate via kernel-provided socket peer credentials — the daemon resolves the connecting PID's process tree, finds the hook script, and checks its path and SHA-256 hash against a static manifest. The manifest lives under `enforcement/`, which the bootstrap hook write-protects.
+Session keys exist only in daemon process memory. Never written to disk, never passed over the wire. The daemon generates 32 random bytes at startup, locks the pages with `mlock` where the OS allows it, blocks debugger attachment, and refuses to start if library injection environment variables are set. Callers authenticate via kernel-provided socket peer credentials — the daemon resolves the connecting PID's process tree, finds the hook script, and checks its path and SHA-256 hash against a static manifest. The manifest lives under `enforcement/`, write-protected by the bootstrap hook and sealed into the genesis entry, so an in-place edit trips a config integrity violation instead of silently reassigning signing authority.
 
 Template variables in gate commands are POSIX shell-escaped before interpolation. Field patterns validated before escaping. The `cmd` string comes from TOML config (write-protected), so only variable values come from the agent.
 

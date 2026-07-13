@@ -76,7 +76,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | Transition defs | `config/transitions.rs` | `TransitionConfig`, `GateConfig` | transitions.toml; `args` declares positional params; `intent` is optional per-gate "why"; `gates` holds nested child gates for composite types (any_of, all_of, not, k_of_n); remaining fields are `#[serde(flatten)]` into params |
 | Event definitions | `config/events.rs` | `EventConfig`, `EventFieldConfig` | events.toml; field patterns for validation; `restricted` marks HMAC-only events; `optional` marks non-required fields |
 | Render definitions | `config/renders.rs` | `RenderConfig` | renders.toml; trigger/template/target/ledger/ledger_template |
-| Config seal hashing | `config/mod.rs` | `compute_config_seals()` | SHA-256 hash all 6 TOML config files |
+| Config seal hashing | `config/mod.rs` | `compute_config_seals()` | SHA-256 hash all 7 sealed config files (incl. `trusted-callers.toml`, holtz #30) |
 
 ### gates/ — Gate Evaluation
 
@@ -437,7 +437,7 @@ How config seals are created and verified:
 
 ```
 cli/init.rs [cmd-init]
-  → config/mod.rs compute_config_seals()      ← SHA-256 of all 6 TOML files
+  → config/mod.rs compute_config_seals()      ← SHA-256 of all 7 sealed config files (incl. trusted-callers.toml)
   → ledger/chain.rs init_with_seals()          ← seals stored in genesis entry fields
 
 cli/commands.rs [open-ledger] or [open-targeted]

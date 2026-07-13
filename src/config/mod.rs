@@ -8,7 +8,7 @@
 // - [validate-deep]         ProtocolConfig::validate_deep()  — file/alias/gate/render/ledger/branching checks
 // - [validate-gate]         ProtocolConfig::validate_gate()  — recursive gate validator (composite + leaf)
 // - initial_state()         — find the state with initial = true
-// - [compute-config-seals]  compute_config_seals()           — SHA-256 hashes of all six TOML config files
+// - [compute-config-seals]  compute_config_seals()           — SHA-256 hashes of all seven sealed config files
 
 pub mod events;
 pub mod hooks;
@@ -726,11 +726,18 @@ impl ProtocolConfig {
     }
 }
 
-/// Compute SHA-256 hashes of all six TOML config files.
+/// Compute SHA-256 hashes of all seven sealed config files.
 ///
-/// Missing optional files (events.toml, renders.toml, hooks.toml) hash as empty bytes.
-/// Returns a BTreeMap with keys: config_seal_protocol, config_seal_states,
-/// config_seal_transitions, config_seal_events, config_seal_renders, config_seal_hooks.
+/// Missing optional files (events.toml, renders.toml, hooks.toml, trusted-callers.toml)
+/// hash as empty bytes. Returns a BTreeMap with keys: config_seal_protocol,
+/// config_seal_states, config_seal_transitions, config_seal_events, config_seal_renders,
+/// config_seal_hooks, config_seal_trusted_callers.
+///
+/// `trusted-callers.toml` is the daemon's signing-authority manifest (who may sign
+/// restricted events). Sealing it brings the root of trust inside the tamper-evident
+/// boundary: an in-place edit trips `ConfigIntegrityViolation`, so changing signing
+/// authority must go through `reseal` (HMAC-authenticated, on the permanent record)
+/// rather than a silent file edit + daemon restart (holtz #30).
 // [compute-config-seals]
 pub fn compute_config_seals(dir: &Path) -> BTreeMap<String, String> {
     use sha2::{Digest, Sha256};
@@ -742,6 +749,7 @@ pub fn compute_config_seals(dir: &Path) -> BTreeMap<String, String> {
         ("config_seal_events", "events.toml"),
         ("config_seal_renders", "renders.toml"),
         ("config_seal_hooks", "hooks.toml"),
+        ("config_seal_trusted_callers", "trusted-callers.toml"),
     ];
 
     let mut seals = BTreeMap::new();

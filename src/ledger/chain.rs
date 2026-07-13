@@ -445,7 +445,11 @@ impl Ledger {
         for (key, expected) in &sealed {
             if let Some(actual) = current.get(key) {
                 if actual != expected {
+                    // Seal keys are snake_case (`config_seal_trusted_callers`) but the
+                    // on-disk filename uses a hyphen (`trusted-callers.toml`); restore it
+                    // so the violation message names the real file.
                     let filename = key.strip_prefix("config_seal_").unwrap_or(key);
+                    let filename = filename.replace('_', "-");
                     mismatches.push(format!(
                         "  - {}.toml (expected: {}..., found: {}...)",
                         filename,

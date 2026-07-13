@@ -39,13 +39,14 @@ fn test_compute_config_seals_all_files_present() {
 
     let seals = sahjhan::config::compute_config_seals(dir.path());
 
-    assert_eq!(seals.len(), 6);
+    assert_eq!(seals.len(), 7);
     assert!(seals.contains_key("config_seal_protocol"));
     assert!(seals.contains_key("config_seal_states"));
     assert!(seals.contains_key("config_seal_transitions"));
     assert!(seals.contains_key("config_seal_events"));
     assert!(seals.contains_key("config_seal_renders"));
     assert!(seals.contains_key("config_seal_hooks"));
+    assert!(seals.contains_key("config_seal_trusted_callers"));
 
     // Each value should be a 64-char hex SHA-256
     for hash in seals.values() {
@@ -64,12 +65,13 @@ fn test_compute_config_seals_optional_files_missing() {
 
     let seals = sahjhan::config::compute_config_seals(dir.path());
 
-    assert_eq!(seals.len(), 6);
+    assert_eq!(seals.len(), 7);
     // Missing files should get the SHA-256 of empty bytes
     let empty_hash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
     assert_eq!(seals["config_seal_events"], empty_hash);
     assert_eq!(seals["config_seal_renders"], empty_hash);
     assert_eq!(seals["config_seal_hooks"], empty_hash);
+    assert_eq!(seals["config_seal_trusted_callers"], empty_hash);
     // Present files should NOT be the empty hash
     assert_ne!(seals["config_seal_protocol"], empty_hash);
 }
@@ -213,6 +215,47 @@ fn test_verify_config_seal_detects_tamper() {
     let msg = format!("{}", err);
     assert!(msg.contains("config integrity violation"));
     assert!(msg.contains("transitions"));
+}
+
+// The signing-authority manifest sits inside the sealed boundary (holtz #30):
+// rewriting who may sign restricted events must trip a ConfigIntegrityViolation,
+// not slip through as a silent file edit.
+#[test]
+fn test_verify_config_seal_detects_trusted_callers_tamper() {
+    let config_dir = tempdir().unwrap();
+    std::fs::write(config_dir.path().join("protocol.toml"), b"proto content").unwrap();
+    std::fs::write(config_dir.path().join("states.toml"), b"states content").unwrap();
+    std::fs::write(config_dir.path().join("transitions.toml"), b"trans content").unwrap();
+    std::fs::write(
+        config_dir.path().join("trusted-callers.toml"),
+        b"[callers]\n\"hook.py\" = \"sha256:abc\"\n",
+    )
+    .unwrap();
+
+    let seals = sahjhan::config::compute_config_seals(config_dir.path());
+
+    let ledger_dir = tempdir().unwrap();
+    let ledger_path = ledger_dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init_with_seals(&ledger_path, "test", "1.0.0", seals).unwrap();
+
+    // Sealed manifest is untouched — passes.
+    assert!(ledger.verify_config_seal(config_dir.path()).is_ok());
+
+    // Rewrite the manifest to grant a new signing authority.
+    std::fs::write(
+        config_dir.path().join("trusted-callers.toml"),
+        b"[callers]\n\"evil.py\" = \"sha256:deadbeef\"\n",
+    )
+    .unwrap();
+
+    let err = ledger.verify_config_seal(config_dir.path()).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("config integrity violation"));
+    // The violation names the real hyphenated filename, not the snake_case seal key.
+    assert!(
+        msg.contains("trusted-callers.toml"),
+        "expected message to name trusted-callers.toml, got: {msg}"
+    );
 }
 
 #[test]

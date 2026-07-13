@@ -3,7 +3,7 @@
 // ## Index
 // - [eval-command-succeeds]        eval_command_succeeds()         — run a shell command; pass if exit code is 0; captures stdout for attestation
 // - [eval-command-output]          eval_command_output()           — run a shell command; pass if stdout matches expected string; captures stdout for attestation
-// - [run-shell-output-with-timeout] run_shell_output_with_timeout() — run a command with polling timeout, captures stdout + ExitStatus
+// - [run-shell-output-with-timeout] run_shell_output_with_timeout() — run a command with polling timeout, captures stdout + stderr + ExitStatus
 
 use std::path::Path;
 use std::process::Command;
@@ -24,8 +24,11 @@ use super::types::{build_template_vars, validate_template_fields};
 
 /// Outcome of running a shell command with output capture and timeout.
 pub(super) enum CommandOutputOutcome {
-    /// Command completed within the timeout, producing this stdout and exit status.
-    Completed(String, std::process::ExitStatus),
+    /// Command completed within the timeout, producing this stdout, stderr,
+    /// and exit status. stderr is captured so gates can report *why* a command
+    /// failed (e.g. `python: command not found`) instead of only its
+    /// downstream symptom.
+    Completed(String, String, std::process::ExitStatus),
     /// Command exceeded the timeout and was killed.
     TimedOut,
 }
@@ -87,7 +90,7 @@ pub(super) fn eval_command_succeeds(gate: &GateConfig, ctx: &GateContext) -> Gat
     let start = Instant::now();
 
     match run_shell_output_with_timeout(&cmd, &ctx.working_dir, timeout_secs) {
-        Ok(CommandOutputOutcome::Completed(stdout, status)) => {
+        Ok(CommandOutputOutcome::Completed(stdout, _stderr, status)) => {
             let wall_time_ms = start.elapsed().as_millis() as u64;
             let passed = status.success();
             let attestation = if passed && should_attest {
@@ -209,7 +212,7 @@ pub(super) fn eval_command_output(gate: &GateConfig, ctx: &GateContext) -> GateR
     let start = Instant::now();
 
     match run_shell_output_with_timeout(&cmd, &ctx.working_dir, timeout_secs) {
-        Ok(CommandOutputOutcome::Completed(stdout, status)) => {
+        Ok(CommandOutputOutcome::Completed(stdout, _stderr, status)) => {
             let wall_time_ms = start.elapsed().as_millis() as u64;
             let trimmed = stdout.trim().to_string();
             let passed = trimmed == expect;
@@ -281,7 +284,7 @@ pub(super) fn run_shell_output_with_timeout(
         .arg(cmd)
         .current_dir(working_dir)
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
         .spawn()?;
 
     let deadline = Instant::now() + Duration::from_secs(timeout_secs);
@@ -290,10 +293,15 @@ pub(super) fn run_shell_output_with_timeout(
     loop {
         match child.try_wait()? {
             Some(_status) => {
-                // Process has exited — read stdout.
+                // Process has exited — read stdout and stderr.
                 let output = child.wait_with_output()?;
                 let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-                return Ok(CommandOutputOutcome::Completed(stdout, output.status));
+                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                return Ok(CommandOutputOutcome::Completed(
+                    stdout,
+                    stderr,
+                    output.status,
+                ));
             }
             None => {
                 if Instant::now() >= deadline {

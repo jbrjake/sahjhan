@@ -1098,6 +1098,93 @@ fn test_snapshot_compare_fail() {
     assert!(!evaluate_gate(&gate, &ctx).passed);
 }
 
+#[test]
+fn test_snapshot_compare_failed_command_reports_exit_status_and_stderr() {
+    // A command that exits non-zero (a missing interpreter, an unset $VAR
+    // expanding to a bad path) must surface the exit status and stderr — not
+    // the opaque "stdout is not valid JSON" that made an env failure read like
+    // a data problem (holtz #59).
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let gate = make_gate(
+        "snapshot_compare",
+        vec![
+            (
+                "cmd",
+                toml::Value::String("echo 'boom: not found' >&2; exit 3".to_string()),
+            ),
+            ("extract", toml::Value::String("edges".to_string())),
+            ("compare", toml::Value::String("gt".to_string())),
+            ("reference", toml::Value::String("0".to_string())),
+        ],
+    );
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(!result.passed);
+    let reason = result.reason.unwrap_or_default();
+    assert!(
+        reason.contains("exited with status 3"),
+        "expected exit status in reason, got: {reason}"
+    );
+    assert!(
+        reason.contains("boom: not found"),
+        "expected stderr in reason, got: {reason}"
+    );
+    assert!(
+        !reason.contains("not valid JSON"),
+        "a non-zero exit must not be reported as a JSON parse problem: {reason}"
+    );
+}
+
+#[test]
+fn test_snapshot_compare_exit_zero_nonjson_output_is_clear() {
+    // Exit 0 but non-JSON output: keep reporting the JSON problem, but make
+    // clear the command *did* run (exited 0) so it's distinguishable from the
+    // non-zero case above.
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let gate = make_gate(
+        "snapshot_compare",
+        vec![
+            (
+                "cmd",
+                toml::Value::String("echo not-json-at-all".to_string()),
+            ),
+            ("extract", toml::Value::String("edges".to_string())),
+            ("compare", toml::Value::String("gt".to_string())),
+            ("reference", toml::Value::String("0".to_string())),
+        ],
+    );
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(!result.passed);
+    let reason = result.reason.unwrap_or_default();
+    assert!(
+        reason.contains("exited 0") && reason.contains("not valid JSON"),
+        "expected a clear exit-0 + JSON message, got: {reason}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // snapshot_compare — resolve "snapshot:key" from ledger (Issue #2)
 // ---------------------------------------------------------------------------

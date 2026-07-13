@@ -3,6 +3,7 @@
 // ## Index
 // - [eval-snapshot-compare]       eval_snapshot_compare()       — run command, extract JSON field, compare to reference
 // - [resolve-snapshot-reference]  resolve_snapshot_reference()  — look up a "snapshot:key" value in the ledger
+// - [format-stderr-tail]          format_stderr_tail()          — one-line, truncated stderr snippet for failure reasons
 
 use chrono::Utc;
 use sha2::{Digest, Sha256};
@@ -116,37 +117,61 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
         reference_raw.to_string()
     };
 
-    // Run command and get stdout with timeout enforcement.
-    let (stdout, status) = match run_shell_output_with_timeout(&cmd, &ctx.working_dir, timeout_secs)
-    {
-        Ok(CommandOutputOutcome::Completed(s, st)) => (s, st),
-        Ok(CommandOutputOutcome::TimedOut) => {
-            return GateResult {
-                passed: false,
-                evaluable: true,
-                gate_type: "snapshot_compare".to_string(),
-                description,
-                reason: Some(format!(
-                    "command '{}' timed out after {}s",
-                    cmd, timeout_secs
-                )),
-                intent: None,
-                attestation: None,
+    // Run command and get stdout/stderr with timeout enforcement.
+    let (stdout, stderr, status) =
+        match run_shell_output_with_timeout(&cmd, &ctx.working_dir, timeout_secs) {
+            Ok(CommandOutputOutcome::Completed(s, e, st)) => (s, e, st),
+            Ok(CommandOutputOutcome::TimedOut) => {
+                return GateResult {
+                    passed: false,
+                    evaluable: true,
+                    gate_type: "snapshot_compare".to_string(),
+                    description,
+                    reason: Some(format!(
+                        "command '{}' timed out after {}s",
+                        cmd, timeout_secs
+                    )),
+                    intent: None,
+                    attestation: None,
+                }
             }
-        }
-        Err(e) => {
-            return GateResult {
-                passed: false,
-                evaluable: true,
-                gate_type: "snapshot_compare".to_string(),
-                description,
-                reason: Some(format!("command failed: {}", e)),
-                intent: None,
-                attestation: None,
+            Err(e) => {
+                return GateResult {
+                    passed: false,
+                    evaluable: true,
+                    gate_type: "snapshot_compare".to_string(),
+                    description,
+                    reason: Some(format!("command failed: {}", e)),
+                    intent: None,
+                    attestation: None,
+                }
             }
-        }
-    };
+        };
     let wall_time_ms = start.elapsed().as_millis() as u64;
+
+    // A command that exited non-zero cannot have produced a valid measurement.
+    // Report the exit code and any stderr directly, so an environment failure
+    // — missing interpreter, an unset $VAR expanding to a bad path — reads as
+    // what it is instead of surfacing later as an opaque "not valid JSON".
+    if !status.success() {
+        return GateResult {
+            passed: false,
+            evaluable: true,
+            gate_type: "snapshot_compare".to_string(),
+            description,
+            reason: Some(format!(
+                "command '{}' exited with status {}{}",
+                cmd,
+                status
+                    .code()
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "signal".to_string()),
+                format_stderr_tail(&stderr),
+            )),
+            intent: None,
+            attestation: None,
+        };
+    }
 
     // Parse stdout as JSON and extract the named field.
     let json_value: serde_json::Value = match serde_json::from_str(&stdout) {
@@ -157,7 +182,12 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
                 evaluable: true,
                 gate_type: "snapshot_compare".to_string(),
                 description,
-                reason: Some(format!("stdout is not valid JSON: {}", e)),
+                reason: Some(format!(
+                    "command '{}' exited 0 but its output is not valid JSON: {}{}",
+                    cmd,
+                    e,
+                    format_stderr_tail(&stderr),
+                )),
                 intent: None,
                 attestation: None,
             }
@@ -339,4 +369,28 @@ pub(super) fn resolve_snapshot_reference(
         "no snapshot found with key '{}' in ledger",
         snapshot_key
     ))
+}
+
+// [format-stderr-tail]
+/// Build a short, single-line stderr snippet for inclusion in a gate failure
+/// reason. Returns "" when stderr is empty so clean failures stay terse.
+/// Keeps only the last `MAX` characters (the tail usually holds the actual
+/// error), char-boundary safe, with newlines flattened.
+fn format_stderr_tail(stderr: &str) -> String {
+    let trimmed = stderr.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    const MAX: usize = 300;
+    let total = trimmed.chars().count();
+    let tail: String = trimmed
+        .chars()
+        .skip(total.saturating_sub(MAX))
+        .collect::<String>()
+        .replace('\n', " ⏎ ");
+    if total > MAX {
+        format!(" — stderr: …{}", tail)
+    } else {
+        format!(" — stderr: {}", tail)
+    }
 }

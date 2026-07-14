@@ -10,6 +10,7 @@
 // - DaemonServer::cleanup     -- remove socket and PID files
 // - handle_connection         -- read JSON lines from a stream, dispatch, respond
 // - handle_request            -- match Request variant to operation; enforcement_read/write/update ops; _-prefixed vault namespace guard
+// - handle_record_event       -- authenticated ledger append for a trusted peer (ledger-write analog of enforcement_write)
 // - overlay_ledger_state      -- override enforcement blob "state" with ledger-derived state (holtz #57)
 // - derive_ledger_state       -- resolve active ledger, verify chain, derive current state
 // - compute_sign              -- HMAC-SHA256 signing (same algorithm as authed_event.rs)
@@ -41,10 +42,15 @@ use zeroize::Zeroizing;
 use self::auth::TrustedCallersManifest;
 use self::protocol::{Request, Response};
 use self::vault::Vault;
-use crate::cli::commands::{resolve_ledger_from_targeting, LedgerTargeting};
+use crate::cli::commands::{
+    load_manifest, open_targeted_ledger, resolve_data_dir, resolve_ledger_from_targeting,
+    LedgerTargeting, EXIT_SUCCESS,
+};
+use crate::cli::transition::{record_and_render, validate_event_fields};
 use crate::config::ProtocolConfig;
 use crate::hooks::eval::derive_current_state;
 use crate::ledger::chain::Ledger;
+use crate::state::machine::StateMachine;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -581,6 +587,98 @@ fn handle_request(
                 Err(e) => Response::err("internal_error", &format!("vault lock poisoned: {}", e)),
             }
         }
+        Request::RecordEvent { event_type, fields } => {
+            handle_record_event(config_dir, &event_type, fields)
+        }
+    }
+}
+
+/// Append a consumer-declared event to the active ledger on behalf of an
+/// already-authenticated socket peer.
+///
+/// This is the ledger-write analog of `enforcement_write`. The connecting
+/// peer was authenticated against `trusted-callers.toml` in
+/// `handle_connection` before this request was dispatched, so the peer's
+/// identity *is* the authorization — no HMAC proof is required. This lets a
+/// trusted hook (e.g. `primer.py`) record a `restricted` event directly,
+/// bypassing the fragile `authed-event` CLI-courier path whose submitter
+/// (the bare `sahjhan` binary) cannot be resolved to a manifest script.
+///
+/// The daemon holds no domain knowledge of specific events: the event type
+/// and its field schema are validated against the *consumer's* events.toml.
+/// Any declared event is accepted (restricted or not) — the trust boundary
+/// is the authenticated peer, exactly as for `enforcement_write`.
+///
+/// Ledger + manifest are resolved cwd-relative, identical to the CLI and to
+/// `derive_ledger_state`; the daemon runs with cwd = the consumer project
+/// root, so this targets the same files the CLI would. `Ledger::append`
+/// takes an exclusive file lock and re-reads the on-disk tail, so a
+/// concurrent CLI append cannot corrupt the chain.
+fn handle_record_event(
+    config_dir: &Path,
+    event_type: &str,
+    fields: HashMap<String, String>,
+) -> Response {
+    let config = match ProtocolConfig::load(config_dir) {
+        Ok(c) => c,
+        Err(e) => return Response::err("config_error", &format!("cannot load config: {}", e)),
+    };
+
+    // Event must be declared by the consumer. The daemon never invents event
+    // types — an unknown type is a consumer/caller bug, not a daemon concern.
+    let event_config = match config.events.get(event_type) {
+        Some(ec) => ec,
+        None => {
+            return Response::err(
+                "unknown_event",
+                &format!("event type '{}' is not defined in events.toml", event_type),
+            );
+        }
+    };
+
+    if let Err((_, msg)) = validate_event_fields(event_config, &fields, event_type) {
+        return Response::err("invalid_field", &msg);
+    }
+
+    let targeting = LedgerTargeting {
+        ledger_name: None,
+        ledger_path: None,
+    };
+    let (ledger, _mode) = match open_targeted_ledger(&config, &targeting, config_dir) {
+        Ok(lm) => lm,
+        Err((_, msg)) => return Response::err("ledger_error", &msg),
+    };
+
+    let data_dir = resolve_data_dir(&config.paths.data_dir);
+    let mut manifest = match load_manifest(&data_dir) {
+        Ok(m) => m,
+        Err((_, msg)) => return Response::err("manifest_error", &msg),
+    };
+
+    let mut machine = StateMachine::new(&config, ledger);
+    let code = record_and_render(
+        &config,
+        config_dir,
+        &mut machine,
+        &mut manifest,
+        &data_dir,
+        event_type,
+        fields,
+        &targeting,
+    );
+    if code == EXIT_SUCCESS {
+        let seq = machine
+            .ledger()
+            .entries()
+            .last()
+            .map(|e| e.seq)
+            .unwrap_or(0);
+        Response::ok_data(&seq.to_string())
+    } else {
+        Response::err(
+            "record_failed",
+            &format!("event recording failed (exit {})", code),
+        )
     }
 }
 

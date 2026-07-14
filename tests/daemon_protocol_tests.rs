@@ -14,6 +14,20 @@ fn test_parse_sign_request() {
 }
 
 #[test]
+fn test_parse_record_event_request() {
+    let json = r#"{"op": "record_event", "event_type": "context_reset", "fields": {"run": "42", "trigger": "user_prompt_submit"}}"#;
+    let req: Request = serde_json::from_str(json).unwrap();
+    match req {
+        Request::RecordEvent { event_type, fields } => {
+            assert_eq!(event_type, "context_reset");
+            assert_eq!(fields.get("run").unwrap(), "42");
+            assert_eq!(fields.get("trigger").unwrap(), "user_prompt_submit");
+        }
+        _ => panic!("Expected RecordEvent request"),
+    }
+}
+
+#[test]
 fn test_parse_vault_store_request() {
     let json = r#"{"op": "vault_store", "name": "quiz-bank", "data": "aGVsbG8="}"#;
     let req: Request = serde_json::from_str(json).unwrap();

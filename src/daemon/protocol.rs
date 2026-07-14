@@ -4,7 +4,7 @@
 // Newline-delimited JSON over SOCK_STREAM.
 //
 // ## Index
-// - Request                   — tagged enum for incoming operations (sign, vault_store/read/delete/list, status, verify, enforcement_read/write/update)
+// - Request                   — tagged enum for incoming operations (sign, vault_store/read/delete/list, status, verify, enforcement_read/write/update, record_event)
 // - Response                  — output envelope with constructors; ok_status includes idle_seconds/idle_timeout/enforcement_active; err_with_reason for auth diagnostics
 
 use serde::{Deserialize, Serialize};
@@ -41,6 +41,17 @@ pub enum Request {
     EnforcementWrite { data: String },
     #[serde(rename = "enforcement_update")]
     EnforcementUpdate { patch: String },
+    /// Append a consumer-declared event to the active ledger on behalf of an
+    /// already-authenticated socket peer. The ledger-write analog of
+    /// `enforcement_write`: authorization is the peer's `trusted-callers.toml`
+    /// identity (verified in `handle_connection`), not an HMAC proof. Lets a
+    /// trusted hook record a `restricted` event directly, without the fragile
+    /// `authed-event` CLI-courier ancestor walk.
+    #[serde(rename = "record_event")]
+    RecordEvent {
+        event_type: String,
+        fields: HashMap<String, String>,
+    },
 }
 
 // [response]

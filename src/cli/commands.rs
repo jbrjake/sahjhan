@@ -101,16 +101,35 @@ pub(crate) fn resolve_config_dir(config_dir: &str) -> PathBuf {
 }
 
 // [resolve-data-dir]
-/// Resolve data_dir relative to cwd.
+/// Resolve data_dir relative to the project root.
+///
+/// An absolute `data_dir` is used verbatim. A relative one (e.g.
+/// `docs/holtz/.sahjhan`) is resolved by walking UP from the current
+/// directory to the nearest ancestor that already contains it — so a `cd`
+/// into a subdirectory does not break ledger access (holtz #70 item 4). When
+/// no ancestor contains it (e.g. a fresh `init`), it falls back to the
+/// cwd-relative path, preserving directory-creation semantics.
 pub(crate) fn resolve_data_dir(data_dir: &str) -> PathBuf {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    resolve_data_dir_from(data_dir, &cwd)
+}
+
+/// cwd-parameterized core of [`resolve_data_dir`] (pure, for tests).
+pub(crate) fn resolve_data_dir_from(data_dir: &str, cwd: &Path) -> PathBuf {
     let p = PathBuf::from(data_dir);
     if p.is_absolute() {
-        p
-    } else {
-        std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join(p)
+        return p;
     }
+    let mut dir: Option<&Path> = Some(cwd);
+    while let Some(d) = dir {
+        let candidate = d.join(&p);
+        if candidate.exists() {
+            return candidate;
+        }
+        dir = d.parent();
+    }
+    // No ancestor holds it (fresh init / no audit here) — cwd-relative.
+    cwd.join(p)
 }
 
 // [ledger-path]
@@ -521,5 +540,48 @@ mod tests {
         let file = PathBuf::from("/tmp/ledger.jsonl");
         let result = compute_registry_path(&file, &data_dir);
         assert_eq!(result, "/tmp/ledger.jsonl");
+    }
+
+    // holtz #70 item 4: cwd-relative ledger resolution must walk up to the
+    // project root so a `cd` into a subdir doesn't break ledger access.
+
+    #[test]
+    fn test_resolve_data_dir_absolute_passthrough() {
+        let cwd = PathBuf::from("/somewhere/deep");
+        let got = resolve_data_dir_from("/abs/data", &cwd);
+        assert_eq!(got, PathBuf::from("/abs/data"));
+    }
+
+    #[test]
+    fn test_resolve_data_dir_found_at_cwd() {
+        let root = tempfile::tempdir().unwrap();
+        let data = root.path().join("docs/holtz/.sahjhan");
+        std::fs::create_dir_all(&data).unwrap();
+        // canonicalize both sides: macOS /tmp -> /private/tmp symlink.
+        let got = resolve_data_dir_from("docs/holtz/.sahjhan", root.path());
+        assert_eq!(got.canonicalize().unwrap(), data.canonicalize().unwrap());
+    }
+
+    #[test]
+    fn test_resolve_data_dir_walks_up_from_subdir() {
+        let root = tempfile::tempdir().unwrap();
+        let data = root.path().join("docs/holtz/.sahjhan");
+        std::fs::create_dir_all(&data).unwrap();
+        let subdir = root.path().join("src/deep/nested");
+        std::fs::create_dir_all(&subdir).unwrap();
+        // From a subdir, the relative data_dir must resolve to the root's.
+        let got = resolve_data_dir_from("docs/holtz/.sahjhan", &subdir);
+        assert_eq!(got.canonicalize().unwrap(), data.canonicalize().unwrap());
+    }
+
+    #[test]
+    fn test_resolve_data_dir_falls_back_to_cwd_when_absent() {
+        // Fresh init: nothing exists up the tree — resolve cwd-relative so the
+        // caller can create it here.
+        let root = tempfile::tempdir().unwrap();
+        let cwd = root.path().join("proj");
+        std::fs::create_dir_all(&cwd).unwrap();
+        let got = resolve_data_dir_from("docs/holtz/.sahjhan", &cwd);
+        assert_eq!(got, cwd.join("docs/holtz/.sahjhan"));
     }
 }

@@ -799,6 +799,149 @@ fn test_ledger_has_event_since_fail() {
     assert!(!evaluate_gate(&gate, &ctx).passed);
 }
 
+// ledger_has_event_since: `last_event_of_type:<type>` prefix + min_count
+// (holtz #65 follow-up / sahjhan #31). Previously the prefix was treated as a
+// literal event type (never matched → silently fell back to last_transition),
+// and min_count was ignored.
+
+fn _since_ctx<'a>(ledger: &'a Ledger, config: &'a ProtocolConfig, dir: &Path) -> GateContext<'a> {
+    GateContext {
+        ledger,
+        config,
+        current_state: "working",
+        state_params: HashMap::new(),
+        working_dir: dir.to_path_buf(),
+        event_fields: None,
+    }
+}
+
+#[test]
+fn test_ledger_has_event_since_last_event_of_type_prefix() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    // A `resolved` BEFORE the baseline must not count; one AFTER must.
+    ledger.append("resolved", BTreeMap::new()).unwrap();
+    ledger
+        .append("set_member_complete", BTreeMap::new())
+        .unwrap();
+    ledger.append("resolved", BTreeMap::new()).unwrap();
+
+    let gate = make_gate(
+        "ledger_has_event_since",
+        vec![
+            ("event", toml::Value::String("resolved".to_string())),
+            (
+                "since",
+                toml::Value::String("last_event_of_type:set_member_complete".to_string()),
+            ),
+        ],
+    );
+    let ctx = _since_ctx(&ledger, &config, dir.path());
+    // Baseline = the set_member_complete; exactly one `resolved` after it.
+    assert!(evaluate_gate(&gate, &ctx).passed);
+}
+
+#[test]
+fn test_ledger_has_event_since_prefix_baseline_scopes_out_earlier_events() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    // Two `resolved` events, THEN the baseline — none after it.
+    ledger.append("resolved", BTreeMap::new()).unwrap();
+    ledger.append("resolved", BTreeMap::new()).unwrap();
+    ledger
+        .append("set_member_complete", BTreeMap::new())
+        .unwrap();
+
+    let gate = make_gate(
+        "ledger_has_event_since",
+        vec![
+            ("event", toml::Value::String("resolved".to_string())),
+            (
+                "since",
+                toml::Value::String("last_event_of_type:set_member_complete".to_string()),
+            ),
+        ],
+    );
+    let ctx = _since_ctx(&ledger, &config, dir.path());
+    // No `resolved` after the baseline — must fail (before the fix this
+    // silently counted since last_transition and would have passed).
+    assert!(!evaluate_gate(&gate, &ctx).passed);
+}
+
+#[test]
+fn test_ledger_has_event_since_honors_min_count() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    ledger
+        .append("set_member_complete", BTreeMap::new())
+        .unwrap();
+    ledger.append("resolved", BTreeMap::new()).unwrap();
+    ledger.append("resolved", BTreeMap::new()).unwrap();
+
+    // min_count = 3 with only 2 resolved after baseline → fail.
+    let gate_fail = make_gate(
+        "ledger_has_event_since",
+        vec![
+            ("event", toml::Value::String("resolved".to_string())),
+            (
+                "since",
+                toml::Value::String("last_event_of_type:set_member_complete".to_string()),
+            ),
+            ("min_count", toml::Value::Integer(3)),
+        ],
+    );
+    let ctx = _since_ctx(&ledger, &config, dir.path());
+    assert!(!evaluate_gate(&gate_fail, &ctx).passed);
+
+    // min_count = 2 → pass.
+    let gate_pass = make_gate(
+        "ledger_has_event_since",
+        vec![
+            ("event", toml::Value::String("resolved".to_string())),
+            (
+                "since",
+                toml::Value::String("last_event_of_type:set_member_complete".to_string()),
+            ),
+            ("min_count", toml::Value::Integer(2)),
+        ],
+    );
+    assert!(evaluate_gate(&gate_pass, &ctx).passed);
+}
+
+#[test]
+fn test_ledger_has_event_since_missing_baseline_counts_from_start() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    // No baseline event of the named type exists yet → count from run start.
+    ledger.append("resolved", BTreeMap::new()).unwrap();
+
+    let gate = make_gate(
+        "ledger_has_event_since",
+        vec![
+            ("event", toml::Value::String("resolved".to_string())),
+            (
+                "since",
+                toml::Value::String("last_event_of_type:set_member_complete".to_string()),
+            ),
+        ],
+    );
+    let ctx = _since_ctx(&ledger, &config, dir.path());
+    // Missing baseline → seq 0 → the one `resolved` counts.
+    assert!(evaluate_gate(&gate, &ctx).passed);
+}
+
 // ---------------------------------------------------------------------------
 // set_covered
 // ---------------------------------------------------------------------------
@@ -3253,20 +3396,21 @@ fn test_ledger_has_event_since_custom_event_fail() {
 
 #[test]
 fn test_ledger_has_event_since_custom_event_fallback() {
-    // No "fix_commit" exists — falls back to last transition
-    // transition → failing_test
-    // Gate: has "failing_test" since "fix_commit" → should PASS (fallback to last transition)
+    // No "fix_commit" baseline exists → count from the run start (seq 0), NOT
+    // from the last transition. failing_test recorded BEFORE the transition
+    // must still count. (Before the fix this fell back to last_transition and
+    // would have FAILED here — the removed quirk.)
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     let ledger_path = dir.path().join("ledger.jsonl");
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
+    ledger.append("failing_test", BTreeMap::new()).unwrap();
     let mut trans_fields = BTreeMap::new();
     trans_fields.insert("from".to_string(), "idle".to_string());
     trans_fields.insert("to".to_string(), "working".to_string());
     trans_fields.insert("command".to_string(), "begin".to_string());
     ledger.append("state_transition", trans_fields).unwrap();
-    ledger.append("failing_test", BTreeMap::new()).unwrap();
 
     let gate = make_gate(
         "ledger_has_event_since",
@@ -3285,6 +3429,7 @@ fn test_ledger_has_event_since_custom_event_fallback() {
     };
     assert!(
         evaluate_gate(&gate, &ctx).passed,
-        "should pass: fix_commit not found, falls back to last transition, failing_test exists after"
+        "missing baseline must count from run start (seq 0), so a failing_test \
+         before the last transition still counts"
     );
 }

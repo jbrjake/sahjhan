@@ -98,6 +98,14 @@ pub(super) fn eval_ledger_has_event(gate: &GateConfig, ctx: &GateContext) -> Gat
 }
 
 // [eval-ledger-has-event-since]
+//
+// `since` selects the baseline the count starts after:
+//   "last_transition"            -> the last state_transition (default)
+//   "last_event_of_type:<type>"  -> the last <type> event
+//   "<type>" (legacy bare form)  -> the last <type> event
+// A missing baseline (no such event yet) is treated as the run start (seq 0),
+// so the gate is evaluable from the first event. `min_count` (default 1) sets
+// how many matching events must exist after the baseline.
 pub(super) fn eval_ledger_has_event_since(gate: &GateConfig, ctx: &GateContext) -> GateResult {
     let event = gate
         .params
@@ -109,53 +117,64 @@ pub(super) fn eval_ledger_has_event_since(gate: &GateConfig, ctx: &GateContext) 
         .get("since")
         .and_then(|v| v.as_str())
         .unwrap_or("last_transition");
+    let min_count = gate
+        .params
+        .get("min_count")
+        .and_then(|v| v.as_integer())
+        .map(|n| n.max(1) as u64)
+        .unwrap_or(1);
 
-    let threshold_seq = if since == "last_transition" {
-        ctx.ledger
-            .events_of_type("state_transition")
-            .last()
-            .map(|e| e.seq)
-            .unwrap_or(0)
+    // Resolve the baseline event type from `since`.
+    let baseline_type = if since == "last_transition" {
+        "state_transition"
+    } else if let Some(t) = since.strip_prefix("last_event_of_type:") {
+        t
     } else {
-        let since_event_seq = ctx
-            .ledger
-            .entries()
-            .iter()
-            .rev()
-            .find(|e| e.event_type == since)
-            .map(|e| e.seq);
-        match since_event_seq {
-            Some(seq) => seq,
-            None => ctx
-                .ledger
-                .events_of_type("state_transition")
-                .last()
-                .map(|e| e.seq)
-                .unwrap_or(0),
-        }
+        // Legacy bare event-type form.
+        since
     };
 
-    let found = ctx
+    // Baseline seq = the last occurrence of baseline_type, else run start (0).
+    let threshold_seq = ctx
         .ledger
         .entries()
         .iter()
-        .any(|e| e.event_type == event && e.seq > threshold_seq);
+        .rev()
+        .find(|e| e.event_type == baseline_type)
+        .map(|e| e.seq)
+        .unwrap_or(0);
+
+    let matching = ctx
+        .ledger
+        .entries()
+        .iter()
+        .filter(|e| e.event_type == event && e.seq > threshold_seq)
+        .count() as u64;
+    let found = matching >= min_count;
 
     let since_desc = if since == "last_transition" {
         "last state_transition".to_string()
     } else {
-        format!("last '{}' event", since)
+        format!("last '{}' event", baseline_type)
+    };
+    let count_desc = if min_count > 1 {
+        format!(">= {} '{}' events", min_count, event)
+    } else {
+        format!("'{}' event", event)
     };
 
     GateResult {
         passed: found,
         evaluable: true,
         gate_type: "ledger_has_event_since".to_string(),
-        description: format!("'{}' event exists since {}", event, since_desc),
+        description: format!("{} exist(s) since {}", count_desc, since_desc),
         reason: if found {
             None
         } else {
-            Some(format!("no '{}' event found after {}", event, since_desc))
+            Some(format!(
+                "found {} '{}' event(s) after {}, need >= {}",
+                matching, event, since_desc, min_count
+            ))
         },
         intent: None,
         attestation: None,

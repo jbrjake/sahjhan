@@ -205,6 +205,76 @@ fn test_command_succeeds_fail() {
     assert!(!evaluate_gate(&gate, &ctx).passed);
 }
 
+#[test]
+fn test_command_succeeds_fail_surfaces_stderr() {
+    // A failing gate command must surface its stderr in the reason, so a missing
+    // interpreter/dep (`No module named pytest`) is distinguishable from a real
+    // test failure instead of both looking like a bare "exited with status 1"
+    // (holtz #63 / #70.5).
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let gate = make_gate(
+        "command_succeeds",
+        vec![(
+            "cmd",
+            toml::Value::String("echo 'No module named pytest' >&2; exit 1".to_string()),
+        )],
+    );
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(!result.passed);
+    let reason = result.reason.unwrap();
+    assert!(
+        reason.contains("exited with status 1"),
+        "reason should keep the exit status: {reason}"
+    );
+    assert!(
+        reason.contains("No module named pytest") && reason.contains("stderr"),
+        "reason should surface the captured stderr tail: {reason}"
+    );
+}
+
+#[test]
+fn test_command_succeeds_fail_stdout_fallback() {
+    // When a failing command wrote nothing to stderr, fall back to surfacing its
+    // stdout tail (some tools report errors on stdout).
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let gate = make_gate(
+        "command_succeeds",
+        vec![(
+            "cmd",
+            toml::Value::String("echo DIAGNOSTIC_ON_STDOUT; exit 3".to_string()),
+        )],
+    );
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let reason = evaluate_gate(&gate, &ctx).reason.unwrap();
+    assert!(
+        reason.contains("DIAGNOSTIC_ON_STDOUT") && reason.contains("stdout"),
+        "reason should fall back to stdout when stderr is empty: {reason}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // command_succeeds — timeout enforcement (Issue #1)
 // ---------------------------------------------------------------------------
@@ -303,6 +373,39 @@ fn test_command_output_mismatch() {
         event_fields: None,
     };
     assert!(!evaluate_gate(&gate, &ctx).passed);
+}
+
+#[test]
+fn test_command_output_mismatch_surfaces_stderr() {
+    // command_output mismatch must also surface stderr (holtz #63 / #70.5).
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let gate = make_gate(
+        "command_output",
+        vec![
+            (
+                "cmd",
+                toml::Value::String("echo 'ruff: not found' >&2; echo oops".to_string()),
+            ),
+            ("expect", toml::Value::String("world".to_string())),
+        ],
+    );
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let reason = evaluate_gate(&gate, &ctx).reason.unwrap();
+    assert!(
+        reason.contains("ruff: not found") && reason.contains("stderr"),
+        "command_output mismatch should surface stderr tail: {reason}"
+    );
 }
 
 // ---------------------------------------------------------------------------

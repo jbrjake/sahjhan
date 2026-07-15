@@ -4,6 +4,8 @@
 // - [eval-command-succeeds]        eval_command_succeeds()         — run a shell command; pass if exit code is 0; captures stdout for attestation
 // - [eval-command-output]          eval_command_output()           — run a shell command; pass if stdout matches expected string; captures stdout for attestation
 // - [run-shell-output-with-timeout] run_shell_output_with_timeout() — run a command with polling timeout, captures stdout + stderr + ExitStatus
+// - output_tail()      — bounded tail (lines+bytes) of captured output, or None if blank
+// - annotate_failure() — append a stderr (or stdout) tail to a gate-failure reason so *why* it failed is visible
 
 use std::path::Path;
 use std::process::Command;
@@ -31,6 +33,59 @@ pub(super) enum CommandOutputOutcome {
     Completed(String, String, std::process::ExitStatus),
     /// Command exceeded the timeout and was killed.
     TimedOut,
+}
+
+// ---------------------------------------------------------------------------
+// Failure diagnostics
+// ---------------------------------------------------------------------------
+
+/// Max stderr/stdout tail (lines and bytes) surfaced in a gate-failure reason.
+/// Bounded so a chatty command can't flood the block message.
+const FAILURE_TAIL_LINES: usize = 20;
+const FAILURE_TAIL_BYTES: usize = 2000;
+
+/// Return a bounded tail of `s` (last `FAILURE_TAIL_LINES` lines, capped at
+/// `FAILURE_TAIL_BYTES` — keeping the *end*, where errors usually are), or
+/// `None` if `s` is blank.
+fn output_tail(s: &str) -> Option<String> {
+    let trimmed = s.trim_end();
+    if trimmed.trim().is_empty() {
+        return None;
+    }
+    let lines: Vec<&str> = trimmed.lines().collect();
+    let start = lines.len().saturating_sub(FAILURE_TAIL_LINES);
+    let mut tail = lines[start..].join("\n");
+    if tail.len() > FAILURE_TAIL_BYTES {
+        let mut cut = tail.len() - FAILURE_TAIL_BYTES;
+        while cut < tail.len() && !tail.is_char_boundary(cut) {
+            cut += 1;
+        }
+        tail = format!("\u{2026}{}", &tail[cut..]);
+    }
+    Some(tail)
+}
+
+/// Append a bounded stderr (or, when stderr is blank and `stdout_fallback` is
+/// set, stdout) tail to a gate-failure headline, so the *reason* a command
+/// failed is visible. A missing interpreter (`python3: No module named
+/// pytest`) reads very differently from a genuine test failure, yet a bare exit
+/// code hides which one it was — turning a 30-minute diagnosis into seconds.
+fn annotate_failure(headline: String, stdout: &str, stderr: &str, stdout_fallback: bool) -> String {
+    if let Some(tail) = output_tail(stderr) {
+        return format!(
+            "{}\n\u{2500}\u{2500} stderr (tail) \u{2500}\u{2500}\n{}",
+            headline, tail
+        );
+    }
+    if stdout_fallback {
+        if let Some(tail) = output_tail(stdout) {
+            return format!(
+                "{}\n\u{2500}\u{2500} stdout (tail) \u{2500}\u{2500}\n{}",
+                headline, tail
+            );
+        }
+    }
+    headline
 }
 
 // [eval-command-succeeds]
@@ -90,7 +145,7 @@ pub(super) fn eval_command_succeeds(gate: &GateConfig, ctx: &GateContext) -> Gat
     let start = Instant::now();
 
     match run_shell_output_with_timeout(&cmd, &ctx.working_dir, timeout_secs) {
-        Ok(CommandOutputOutcome::Completed(stdout, _stderr, status)) => {
+        Ok(CommandOutputOutcome::Completed(stdout, stderr, status)) => {
             let wall_time_ms = start.elapsed().as_millis() as u64;
             let passed = status.success();
             let attestation = if passed && should_attest {
@@ -114,10 +169,15 @@ pub(super) fn eval_command_succeeds(gate: &GateConfig, ctx: &GateContext) -> Gat
                 reason: if passed {
                     None
                 } else {
-                    Some(format!(
-                        "command '{}' exited with status {}",
-                        cmd,
-                        status.code().unwrap_or(-1)
+                    Some(annotate_failure(
+                        format!(
+                            "command '{}' exited with status {}",
+                            cmd,
+                            status.code().unwrap_or(-1)
+                        ),
+                        &stdout,
+                        &stderr,
+                        true,
                     ))
                 },
                 intent: None,
@@ -212,7 +272,7 @@ pub(super) fn eval_command_output(gate: &GateConfig, ctx: &GateContext) -> GateR
     let start = Instant::now();
 
     match run_shell_output_with_timeout(&cmd, &ctx.working_dir, timeout_secs) {
-        Ok(CommandOutputOutcome::Completed(stdout, _stderr, status)) => {
+        Ok(CommandOutputOutcome::Completed(stdout, stderr, status)) => {
             let wall_time_ms = start.elapsed().as_millis() as u64;
             let trimmed = stdout.trim().to_string();
             let passed = trimmed == expect;
@@ -237,7 +297,12 @@ pub(super) fn eval_command_output(gate: &GateConfig, ctx: &GateContext) -> GateR
                 reason: if passed {
                     None
                 } else {
-                    Some(format!("expected '{}', got '{}'", expect, trimmed))
+                    Some(annotate_failure(
+                        format!("expected '{}', got '{}'", expect, trimmed),
+                        &stdout,
+                        &stderr,
+                        false,
+                    ))
                 },
                 intent: None,
                 attestation,

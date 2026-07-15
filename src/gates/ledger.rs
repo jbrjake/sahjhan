@@ -124,6 +124,19 @@ pub(super) fn eval_ledger_has_event_since(gate: &GateConfig, ctx: &GateContext) 
         .map(|n| n.max(1) as u64)
         .unwrap_or(1);
 
+    // Optional field filter on the counted `event` (same semantics as
+    // ledger_has_event) — e.g. only count events for the current perspective.
+    let filter: HashMap<String, String> = gate
+        .params
+        .get("filter")
+        .and_then(|v| v.as_table())
+        .map(|tbl| {
+            tbl.iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                .collect()
+        })
+        .unwrap_or_default();
+
     // Resolve the baseline event type from `since`.
     let baseline_type = if since == "last_transition" {
         "state_transition"
@@ -149,6 +162,7 @@ pub(super) fn eval_ledger_has_event_since(gate: &GateConfig, ctx: &GateContext) 
         .entries()
         .iter()
         .filter(|e| e.event_type == event && e.seq > threshold_seq)
+        .filter(|e| entry_matches_filter(e, &filter))
         .count() as u64;
     let found = matching >= min_count;
 

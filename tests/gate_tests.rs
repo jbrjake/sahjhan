@@ -918,6 +918,59 @@ fn test_ledger_has_event_since_honors_min_count() {
 }
 
 #[test]
+fn test_ledger_has_event_since_honors_field_filter() {
+    // The live holtz `set complete perspective` gate counts `lens_sweep_started`
+    // events since the last set_member_complete, filtered to the current
+    // perspective. A sweep for a DIFFERENT perspective must not satisfy it.
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    ledger
+        .append("set_member_complete", BTreeMap::new())
+        .unwrap();
+    let mut other = BTreeMap::new();
+    other.insert("perspective".to_string(), "security".to_string());
+    ledger.append("lens_sweep_started", other).unwrap();
+
+    let gate = make_gate(
+        "ledger_has_event_since",
+        vec![
+            (
+                "event",
+                toml::Value::String("lens_sweep_started".to_string()),
+            ),
+            (
+                "since",
+                toml::Value::String("last_event_of_type:set_member_complete".to_string()),
+            ),
+            (
+                "filter",
+                toml::Value::Table({
+                    let mut t = toml::map::Map::new();
+                    t.insert(
+                        "perspective".to_string(),
+                        toml::Value::String("integration".to_string()),
+                    );
+                    t
+                }),
+            ),
+        ],
+    );
+    let ctx = _since_ctx(&ledger, &config, dir.path());
+    // Only a `security` sweep exists — the `integration` filter must fail it.
+    assert!(!evaluate_gate(&gate, &ctx).passed);
+
+    // Now add the matching-perspective sweep → passes.
+    let mut mine = BTreeMap::new();
+    mine.insert("perspective".to_string(), "integration".to_string());
+    ledger.append("lens_sweep_started", mine).unwrap();
+    let ctx2 = _since_ctx(&ledger, &config, dir.path());
+    assert!(evaluate_gate(&gate, &ctx2).passed);
+}
+
+#[test]
 fn test_ledger_has_event_since_missing_baseline_counts_from_start() {
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();

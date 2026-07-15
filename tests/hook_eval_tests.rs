@@ -350,6 +350,7 @@ fn test_hook_eval_monitor_warning() {
         trigger: MonitorTrigger {
             trigger_type: "event_count_since_last_transition".to_string(),
             threshold: 3,
+            event_types: None,
         },
     });
 
@@ -428,6 +429,7 @@ fn test_hook_eval_stop_output_pattern() {
                 "let me skip".to_string(),
                 "skipping".to_string(),
             ]),
+            event_types: None,
         }),
         auto_record: None,
         filter: None,
@@ -615,6 +617,7 @@ fn test_hook_eval_event_count_check() {
             compare: Some("gte".to_string()),
             threshold: Some(5),
             patterns: None,
+            event_types: None,
         }),
         auto_record: None,
         filter: None,

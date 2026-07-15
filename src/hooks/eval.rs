@@ -147,7 +147,10 @@ pub fn evaluate_hooks(
             eval_hook_condition(hook, config, ledger, &current_state, request, working_dir);
         if should_fire {
             let action = hook.action.as_deref().unwrap_or("warn").to_string();
-            let count = count_events_since_last_transition(ledger);
+            // Interpolate {count} with the same event-type filter that fired
+            // the hook, so the message reflects what it counted.
+            let count_filter = hook.check.as_ref().and_then(|c| c.event_types.as_deref());
+            let count = count_events_since_last_transition(ledger, count_filter);
             let msg = hook
                 .message
                 .as_deref()
@@ -391,7 +394,8 @@ fn eval_hook_condition(
                 return false;
             }
             "event_count_since_last_transition" => {
-                let count = count_events_since_last_transition(ledger);
+                let count =
+                    count_events_since_last_transition(ledger, check.event_types.as_deref());
                 let threshold = check.threshold.unwrap_or(0);
                 let compare = check.compare.as_deref().unwrap_or("gte");
                 return compare_threshold(count as i64, threshold, compare);
@@ -408,7 +412,13 @@ fn eval_hook_condition(
 }
 
 /// Count events since the last state_transition in the ledger.
-fn count_events_since_last_transition(ledger: &Ledger) -> usize {
+///
+/// When `event_types` is `Some(non-empty)`, only events whose type is in that
+/// list are counted (e.g. only `source_edit`, so the count reflects uncommitted
+/// work rather than every Read/Grep — holtz #70 item 7). `None` or an empty
+/// list counts all events (legacy behavior).
+fn count_events_since_last_transition(ledger: &Ledger, event_types: Option<&[String]>) -> usize {
+    let filter = event_types.filter(|t| !t.is_empty());
     let entries = ledger.entries();
     let mut count = 0;
     for entry in entries.iter().rev() {
@@ -419,7 +429,10 @@ fn count_events_since_last_transition(ledger: &Ledger) -> usize {
         if entry.event_type == "genesis" {
             continue;
         }
-        count += 1;
+        match filter {
+            Some(types) if !types.iter().any(|t| t == &entry.event_type) => continue,
+            _ => count += 1,
+        }
     }
     count
 }
@@ -547,7 +560,8 @@ fn eval_monitors(
 
         // Evaluate trigger
         if monitor.trigger.trigger_type == "event_count_since_last_transition" {
-            let count = count_events_since_last_transition(ledger);
+            let count =
+                count_events_since_last_transition(ledger, monitor.trigger.event_types.as_deref());
             if count as u64 >= monitor.trigger.threshold {
                 let msg = interpolate_message(&monitor.message, current_state, count);
                 warnings.push(MonitorWarning {
@@ -696,6 +710,71 @@ mod tests {
             msgs2.len(),
             0,
             "should NOT block file in sibling directory with shared prefix"
+        );
+    }
+
+    // holtz #70 item 7: event_count_since_last_transition may restrict the
+    // count to specific event types (e.g. only source_edit), so the "N events"
+    // nudge reflects uncommitted work rather than every Read/Grep.
+
+    fn _ledger_with(events: &[&str]) -> (tempfile::TempDir, Ledger) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ledger.jsonl");
+        let mut ledger = Ledger::init(&path, "holtz", "1").unwrap();
+        for ev in events {
+            ledger
+                .append(ev, std::collections::BTreeMap::new())
+                .unwrap();
+        }
+        (dir, ledger)
+    }
+
+    #[test]
+    fn test_count_all_events_since_last_transition() {
+        let (_d, ledger) = _ledger_with(&[
+            "state_transition",
+            "file_read",
+            "source_edit",
+            "file_read",
+            "source_edit",
+            "file_search",
+        ]);
+        assert_eq!(count_events_since_last_transition(&ledger, None), 5);
+        // Empty filter behaves like None (count all).
+        assert_eq!(count_events_since_last_transition(&ledger, Some(&[])), 5);
+    }
+
+    #[test]
+    fn test_count_filtered_to_event_type() {
+        let (_d, ledger) = _ledger_with(&[
+            "state_transition",
+            "file_read",
+            "source_edit",
+            "file_read",
+            "source_edit",
+            "file_search",
+        ]);
+        let only_edits = ["source_edit".to_string()];
+        assert_eq!(
+            count_events_since_last_transition(&ledger, Some(&only_edits)),
+            2
+        );
+    }
+
+    #[test]
+    fn test_count_stops_at_last_transition() {
+        let (_d, ledger) = _ledger_with(&[
+            "source_edit",
+            "state_transition",
+            "file_read",
+            "source_edit",
+        ]);
+        // Only the two events after the most recent state_transition.
+        assert_eq!(count_events_since_last_transition(&ledger, None), 2);
+        let only_edits = ["source_edit".to_string()];
+        assert_eq!(
+            count_events_since_last_transition(&ledger, Some(&only_edits)),
+            1
         );
     }
 }

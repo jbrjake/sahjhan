@@ -762,6 +762,7 @@ fn test_validate_monitor_names_unique() {
         trigger: MonitorTrigger {
             trigger_type: "event_count_since_last_transition".to_string(),
             threshold: 5,
+            event_types: None,
         },
     };
     config.monitors.push(monitor.clone());

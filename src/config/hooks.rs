@@ -80,6 +80,10 @@ pub struct HookCheck {
     pub threshold: Option<i64>,
     #[serde(default)]
     pub patterns: Option<Vec<String>>,
+    /// For event_count_since_last_transition: restrict the count to these
+    /// event types (e.g. only `source_edit`). Empty/absent counts all events.
+    #[serde(default)]
+    pub event_types: Option<Vec<String>>,
 }
 
 /// Auto-record event config.
@@ -107,4 +111,8 @@ pub struct MonitorTrigger {
     #[serde(rename = "type")]
     pub trigger_type: String,
     pub threshold: u64,
+    /// For event_count_since_last_transition: restrict the count to these
+    /// event types (e.g. only `source_edit`). Empty/absent counts all events.
+    #[serde(default)]
+    pub event_types: Option<Vec<String>>,
 }

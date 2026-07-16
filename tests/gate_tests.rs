@@ -1921,6 +1921,7 @@ fn test_transition_args_interpolated_in_gate_command() {
 
     // Add a transition from idle->working with a gate that checks {{item_id}}.
     config.transitions = vec![TransitionConfig {
+        emits: Vec::new(),
         from: "idle".to_string(),
         to: "working".to_string(),
         command: "begin".to_string(),
@@ -1962,6 +1963,7 @@ fn test_transition_args_override_state_params() {
     }]);
 
     config.transitions = vec![TransitionConfig {
+        emits: Vec::new(),
         from: "idle".to_string(),
         to: "working".to_string(),
         command: "begin".to_string(),
@@ -2009,6 +2011,7 @@ fn test_state_param_source_current() {
 
     // Gate: test that {{current_item}} equals 'lint' (the first incomplete member)
     config.transitions = vec![TransitionConfig {
+        emits: Vec::new(),
         from: "idle".to_string(),
         to: "working".to_string(),
         command: "begin".to_string(),
@@ -2057,6 +2060,7 @@ fn test_state_param_source_last_completed() {
     }]);
 
     config.transitions = vec![TransitionConfig {
+        emits: Vec::new(),
         from: "idle".to_string(),
         to: "working".to_string(),
         command: "begin".to_string(),
@@ -2110,6 +2114,7 @@ fn test_state_param_source_default_unchanged() {
     }]);
 
     config.transitions = vec![TransitionConfig {
+        emits: Vec::new(),
         from: "idle".to_string(),
         to: "working".to_string(),
         command: "begin".to_string(),
@@ -2220,6 +2225,7 @@ fn test_positional_arg_mapped_to_declared_transition_arg() {
 
     // Transition declares args = ["item_id"] — first positional arg maps to item_id.
     config.transitions = vec![TransitionConfig {
+        emits: Vec::new(),
         from: "idle".to_string(),
         to: "working".to_string(),
         command: "begin".to_string(),
@@ -2255,6 +2261,7 @@ fn test_positional_arg_mixed_with_key_value() {
     // Transition declares args = ["item_id"].
     // Gate checks both {{item_id}} (positional) and {{severity}} (key=value).
     config.transitions = vec![TransitionConfig {
+        emits: Vec::new(),
         from: "idle".to_string(),
         to: "working".to_string(),
         command: "begin".to_string(),
@@ -2301,6 +2308,7 @@ fn test_positional_arg_overrides_state_param() {
     }]);
 
     config.transitions = vec![TransitionConfig {
+        emits: Vec::new(),
         from: "idle".to_string(),
         to: "working".to_string(),
         command: "begin".to_string(),
@@ -2335,6 +2343,7 @@ fn test_excess_positional_args_ignored() {
 
     // Only one declared arg — extra positional args should be silently ignored.
     config.transitions = vec![TransitionConfig {
+        emits: Vec::new(),
         from: "idle".to_string(),
         to: "working".to_string(),
         command: "begin".to_string(),
@@ -2369,6 +2378,7 @@ fn test_no_declared_args_positional_ignored() {
 
     // No declared args — positional args should be silently ignored (backward compat).
     config.transitions = vec![TransitionConfig {
+        emits: Vec::new(),
         from: "idle".to_string(),
         to: "working".to_string(),
         command: "begin".to_string(),

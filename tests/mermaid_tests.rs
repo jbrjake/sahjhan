@@ -28,6 +28,7 @@ fn test_mermaid_sanitizes_hyphens() {
         },
     );
     config.transitions.push(TransitionConfig {
+        emits: Vec::new(),
         from: "working".to_string(),
         to: "fix-and-retry".to_string(),
         command: "fail".to_string(),
@@ -52,6 +53,7 @@ fn test_mermaid_gate_labels() {
     use sahjhan::config::*;
     let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     config.transitions.push(TransitionConfig {
+        emits: Vec::new(),
         from: "idle".to_string(),
         to: "working".to_string(),
         command: "gated".to_string(),
@@ -130,6 +132,7 @@ fn test_ascii_cycle_detection() {
     let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     config.states.get_mut("done").unwrap().terminal = Some(false);
     config.transitions.push(TransitionConfig {
+        emits: Vec::new(),
         from: "done".to_string(),
         to: "idle".to_string(),
         command: "reset".to_string(),

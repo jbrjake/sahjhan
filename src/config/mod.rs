@@ -197,6 +197,26 @@ impl ProtocolConfig {
                     }
                 }
             }
+
+            // 3b. Emitted events must be defined and must not be restricted.
+            // A transition emit appends directly to the ledger, so allowing it
+            // to write a `restricted` event would bypass the HMAC proof that
+            // `authed-event` requires for those types.
+            for emit in &t.emits {
+                match self.events.get(&emit.event) {
+                    None => errors.push(format!(
+                        "transition '{}' emits unknown event '{}'",
+                        t.command, emit.event
+                    )),
+                    Some(ev) if ev.restricted == Some(true) => errors.push(format!(
+                        "transition '{}' emits restricted event '{}' — restricted \
+                         events require 'authed-event' with an HMAC proof, not a \
+                         transition emit",
+                        t.command, emit.event
+                    )),
+                    _ => {}
+                }
+            }
         }
 
         // 4. Sets referenced in state params exist.

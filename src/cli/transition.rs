@@ -119,6 +119,31 @@ pub fn cmd_transition(
                             eprintln!("error: render: {}", e);
                         }
                     }
+
+                    // Events auto-emitted by this transition (e.g.
+                    // finding_resolved from fix_commit) also drive their
+                    // on_event renders, so views like PUNCHLIST update in the
+                    // same command that recorded the resolution.
+                    for event_type in &outcome.emitted_events {
+                        match engine.render_triggered(
+                            "on_event",
+                            Some(event_type),
+                            machine.ledger(),
+                            &render_dir,
+                            &mut manifest,
+                            ledger_seq,
+                        ) {
+                            Ok(rendered) => {
+                                render_count += rendered.len();
+                                if !rendered.is_empty() {
+                                    let _ = save_manifest(&mut manifest, &data_dir);
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("error: render: {}", e);
+                            }
+                        }
+                    }
                 }
             }
 

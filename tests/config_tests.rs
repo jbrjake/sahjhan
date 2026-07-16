@@ -299,6 +299,7 @@ fn test_validate_catches_invalid_transition_state() {
     use sahjhan::config::*;
     let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     config.transitions.push(TransitionConfig {
+        emits: Vec::new(),
         from: "nonexistent".to_string(),
         to: "also_nonexistent".to_string(),
         command: "bad".to_string(),
@@ -376,6 +377,7 @@ fn test_validate_any_of_empty_gates_is_error() {
     use sahjhan::config::*;
     let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     config.transitions.push(TransitionConfig {
+        emits: Vec::new(),
         from: "idle".to_string(),
         to: "working".to_string(),
         command: "start_empty_any_of".to_string(),
@@ -402,6 +404,7 @@ fn test_validate_not_wrong_child_count_is_error() {
     use sahjhan::config::*;
     let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     config.transitions.push(TransitionConfig {
+        emits: Vec::new(),
         from: "idle".to_string(),
         to: "working".to_string(),
         command: "start_bad_not".to_string(),
@@ -441,6 +444,7 @@ fn test_validate_k_of_n_missing_k_is_error() {
     use sahjhan::config::*;
     let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     config.transitions.push(TransitionConfig {
+        emits: Vec::new(),
         from: "idle".to_string(),
         to: "working".to_string(),
         command: "start_bad_k_of_n".to_string(),
@@ -472,6 +476,7 @@ fn test_validate_composite_validates_children_recursively() {
     use sahjhan::config::*;
     let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     config.transitions.push(TransitionConfig {
+        emits: Vec::new(),
         from: "idle".to_string(),
         to: "working".to_string(),
         command: "start_bad_child".to_string(),
@@ -501,6 +506,7 @@ fn test_validate_branching_no_fallback_warning() {
     use sahjhan::config::*;
     let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     config.transitions.push(TransitionConfig {
+        emits: Vec::new(),
         from: "idle".to_string(),
         to: "working".to_string(),
         command: "go".to_string(),
@@ -515,6 +521,7 @@ fn test_validate_branching_no_fallback_warning() {
         }],
     });
     config.transitions.push(TransitionConfig {
+        emits: Vec::new(),
         from: "idle".to_string(),
         to: "done".to_string(),
         command: "go".to_string(),

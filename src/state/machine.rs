@@ -53,6 +53,9 @@ pub enum StateError {
 
     #[error("unknown set '{0}'")]
     UnknownSet(String),
+
+    #[error("transition emit of event '{event}' failed: {reason}")]
+    EmitFailed { event: String, reason: String },
 }
 
 /// The result of a successful transition, including machine-attested gate evidence.
@@ -64,6 +67,10 @@ pub struct TransitionOutcome {
     pub to: String,
     /// Attestation evidence from command/snapshot gates that passed.
     pub attestations: Vec<GateAttestation>,
+    /// Event types auto-emitted by this transition (see `EmitConfig`), in the
+    /// order appended. Empty for transitions with no `emits`. Callers use this
+    /// to fire `on_event` renders for the emitted events.
+    pub emitted_events: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -207,6 +214,42 @@ impl StateMachine {
             // Without this, our in-memory seq/prev_hash would be stale. (Issue #3)
             self.ledger.reload().map_err(StateError::Ledger)?;
 
+            // Resolve auto-emitted events BEFORE appending anything, so a
+            // misconfigured or failed emit blocks the whole transition
+            // atomically — the ledger is left untouched. Emits let a transition
+            // record the domain-state event it implies (e.g. fix_commit ->
+            // finding_resolved) without a second, redundant agent command.
+            let mut pending_emits: Vec<(String, BTreeMap<String, String>)> =
+                Vec::with_capacity(candidate.emits.len());
+            for emit in &candidate.emits {
+                // Defense in depth: config validation already rejects this, but
+                // never let an emit write a restricted event — that would bypass
+                // the HMAC proof `authed-event` requires for those types.
+                if self
+                    .config
+                    .events
+                    .get(&emit.event)
+                    .and_then(|e| e.restricted)
+                    == Some(true)
+                {
+                    return Err(StateError::EmitFailed {
+                        event: emit.event.clone(),
+                        reason: "restricted events cannot be emitted by a transition".to_string(),
+                    });
+                }
+                let fields = crate::state::emit::resolve_emit(
+                    emit,
+                    &state_params,
+                    &self.ledger,
+                    &self.working_dir,
+                )
+                .map_err(|reason| StateError::EmitFailed {
+                    event: emit.event.clone(),
+                    reason,
+                })?;
+                pending_emits.push((emit.event.clone(), fields));
+            }
+
             // Record the transition event.
             let mut fields = BTreeMap::new();
             fields.insert("from".to_string(), self.current_state.clone());
@@ -238,10 +281,21 @@ impl StateMachine {
                     .map_err(StateError::Ledger)?;
             }
 
+            // Append the pre-resolved emit events (state_transition is now on
+            // the ledger, so these land immediately after it).
+            let mut emitted_events: Vec<String> = Vec::with_capacity(pending_emits.len());
+            for (event_type, event_fields) in pending_emits {
+                self.ledger
+                    .append(&event_type, event_fields)
+                    .map_err(StateError::Ledger)?;
+                emitted_events.push(event_type);
+            }
+
             return Ok(TransitionOutcome {
                 from: from_state,
                 to: self.current_state.clone(),
                 attestations,
+                emitted_events,
             });
         }
 

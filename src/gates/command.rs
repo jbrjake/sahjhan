@@ -25,7 +25,7 @@ use super::types::{build_template_vars, validate_template_fields};
 // ---------------------------------------------------------------------------
 
 /// Outcome of running a shell command with output capture and timeout.
-pub(super) enum CommandOutputOutcome {
+pub(crate) enum CommandOutputOutcome {
     /// Command completed within the timeout, producing this stdout, stderr,
     /// and exit status. stderr is captured so gates can report *why* a command
     /// failed (e.g. `python: command not found`) instead of only its
@@ -339,7 +339,7 @@ pub(super) fn eval_command_output(gate: &GateConfig, ctx: &GateContext) -> GateR
 
 // [run-shell-output-with-timeout]
 /// Run a shell command capturing stdout, with timeout enforcement.
-pub(super) fn run_shell_output_with_timeout(
+pub(crate) fn run_shell_output_with_timeout(
     cmd: &str,
     working_dir: &Path,
     timeout_secs: u64,

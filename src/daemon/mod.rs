@@ -47,7 +47,7 @@ use crate::cli::commands::{
     LedgerTargeting, EXIT_SUCCESS,
 };
 use crate::cli::transition::{record_and_render, validate_event_fields};
-use crate::config::ProtocolConfig;
+use crate::config::{ProtocolConfig, VaultAccess};
 use crate::hooks::eval::derive_current_state;
 use crate::ledger::chain::Ledger;
 use crate::state::machine::StateMachine;
@@ -405,6 +405,9 @@ fn handle_request(
             if name.starts_with('_') {
                 return Response::err("reserved", "vault names starting with '_' are reserved");
             }
+            if let Some(err) = check_vault_policy(config_dir, &name, VaultAccess::Store) {
+                return err;
+            }
             let bytes = match base64::engine::general_purpose::STANDARD.decode(&data) {
                 Ok(b) => b,
                 Err(e) => {
@@ -423,6 +426,9 @@ fn handle_request(
             if name.starts_with('_') {
                 return Response::err("reserved", "vault names starting with '_' are reserved");
             }
+            if let Some(err) = check_vault_policy(config_dir, &name, VaultAccess::Read) {
+                return err;
+            }
             match vault.lock() {
                 Ok(v) => match v.read(&name) {
                     Some(bytes) => {
@@ -437,6 +443,9 @@ fn handle_request(
         Request::VaultDelete { name } => {
             if name.starts_with('_') {
                 return Response::err("reserved", "vault names starting with '_' are reserved");
+            }
+            if let Some(err) = check_vault_policy(config_dir, &name, VaultAccess::Delete) {
+                return err;
             }
             match vault.lock() {
                 Ok(mut v) => {
@@ -719,6 +728,48 @@ fn derive_ledger_state(config_dir: &Path) -> Option<String> {
     let ledger = Ledger::open(&path).ok()?;
     ledger.verify().ok()?;
     Some(derive_current_state(&config, &ledger))
+}
+
+/// Enforce a vault key's declared state-based access policy (`vault.toml`).
+///
+/// Returns `Some(err)` when the op is forbidden in the ledger's current state,
+/// `None` when permitted. `None` also covers the backward-compatible cases:
+/// a key with no policy, or a policy with no whitelist for this op, is
+/// unrestricted — so keys authored before `vault.toml` existed behave exactly
+/// as before.
+///
+/// Fail-soft on config-load failure (returns `None`, i.e. allow): a config
+/// that cannot load already breaks the daemon elsewhere, and this mirrors
+/// `overlay_ledger_state`'s fail-soft handling. But a *policed* key whose
+/// current state cannot be derived is denied — a state-gated secret must not
+/// become reachable just because the ledger is momentarily unresolvable.
+fn check_vault_policy(config_dir: &Path, name: &str, access: VaultAccess) -> Option<Response> {
+    let config = ProtocolConfig::load(config_dir).ok()?;
+    let policy = config.vault_policies.get(name)?;
+    // No whitelist declared for this op → unrestricted.
+    policy.states_for(access).as_ref()?;
+    match derive_ledger_state(config_dir) {
+        Some(state) if policy.permits(access, &state) => None,
+        Some(state) => Some(Response::err_with_reason(
+            "state_forbidden",
+            &format!(
+                "vault '{}' is not {} in state '{}'",
+                name,
+                access.adjective(),
+                state
+            ),
+            "vault_state_policy",
+        )),
+        None => Some(Response::err_with_reason(
+            "state_forbidden",
+            &format!(
+                "vault '{}' is {}-gated but the current state cannot be determined",
+                name,
+                access.adjective()
+            ),
+            "vault_state_policy",
+        )),
+    }
 }
 
 /// Constant-time byte comparison using the `subtle` crate.

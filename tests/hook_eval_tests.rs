@@ -86,6 +86,7 @@ fn base_config() -> ProtocolConfig {
         guards: None,
         hooks: vec![],
         monitors: vec![],
+        vault_policies: std::collections::HashMap::new(),
     }
 }
 

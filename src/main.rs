@@ -232,7 +232,8 @@ enum Commands {
         fields: Vec<String>,
     },
 
-    /// Vault operations (in-memory secret store)
+    /// Vault operations (in-memory secret store; keys may be state-gated via
+    /// vault.toml — see config::vault_policy)
     Vault {
         #[command(subcommand)]
         action: VaultAction,

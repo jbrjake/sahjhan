@@ -8,7 +8,7 @@
 // - [validate-deep]         ProtocolConfig::validate_deep()  — file/alias/gate/render/ledger/branching checks
 // - [validate-gate]         ProtocolConfig::validate_gate()  — recursive gate validator (composite + leaf)
 // - initial_state()         — find the state with initial = true
-// - [compute-config-seals]  compute_config_seals()           — SHA-256 hashes of all seven sealed config files
+// - [compute-config-seals]  compute_config_seals()           — SHA-256 hashes of all eight sealed config files
 
 pub mod events;
 pub mod hooks;
@@ -16,6 +16,7 @@ pub mod protocol;
 pub mod renders;
 pub mod states;
 pub mod transitions;
+pub mod vault_policy;
 
 pub use events::{EventConfig, EventFieldConfig};
 pub use hooks::{
@@ -29,6 +30,7 @@ pub use protocol::{
 pub use renders::RenderConfig;
 pub use states::{StateConfig, StateParam};
 pub use transitions::{GateConfig, TransitionConfig};
+pub use vault_policy::{VaultAccess, VaultPolicy};
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
@@ -49,6 +51,9 @@ pub struct ProtocolConfig {
     pub guards: Option<GuardsConfig>,
     pub hooks: Vec<hooks::HookConfig>,
     pub monitors: Vec<hooks::MonitorConfig>,
+    /// Per-key state-based vault access policies, keyed by vault entry name.
+    /// Empty when no `vault.toml` is present (all keys unrestricted).
+    pub vault_policies: HashMap<String, vault_policy::VaultPolicy>,
 }
 
 impl ProtocolConfig {
@@ -117,6 +122,22 @@ impl ProtocolConfig {
             }
         };
 
+        // --- vault.toml (optional) ---
+        let vault_policies_map = {
+            let vault_path = dir.join("vault.toml");
+            match std::fs::read_to_string(&vault_path) {
+                Ok(src) => {
+                    let vf: vault_policy::VaultPolicyFile = toml::from_str(&src)
+                        .map_err(|e| format!("parse error in {}: {}", vault_path.display(), e))?;
+                    vf.policies
+                        .into_iter()
+                        .map(|p| (p.name.clone(), p))
+                        .collect()
+                }
+                Err(_) => HashMap::new(),
+            }
+        };
+
         Ok(ProtocolConfig {
             protocol: proto_file.protocol,
             paths: proto_file.paths,
@@ -131,6 +152,7 @@ impl ProtocolConfig {
             guards: proto_file.guards,
             hooks: hooks_vec,
             monitors: monitors_vec,
+            vault_policies: vault_policies_map,
         })
     }
 
@@ -652,6 +674,30 @@ impl ProtocolConfig {
             }
         }
 
+        // 17. Vault policy state-name validation. Every state named in a
+        // writable/readable/deletable whitelist must be a real state, else the
+        // op would be silently unreachable (never permitted).
+        for policy in self.vault_policies.values() {
+            for access in [
+                vault_policy::VaultAccess::Store,
+                vault_policy::VaultAccess::Read,
+                vault_policy::VaultAccess::Delete,
+            ] {
+                if let Some(states) = policy.states_for(access) {
+                    for s in states {
+                        if !state_names.contains(s.as_str()) {
+                            errors.push(format!(
+                                "vault.toml: policy '{}' {} references unknown state '{}'",
+                                policy.name,
+                                access.adjective(),
+                                s
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
         (errors, warnings)
     }
 
@@ -746,7 +792,7 @@ impl ProtocolConfig {
     }
 }
 
-/// Compute SHA-256 hashes of all seven sealed config files.
+/// Compute SHA-256 hashes of all eight sealed config files.
 ///
 /// Missing optional files (events.toml, renders.toml, hooks.toml, trusted-callers.toml)
 /// hash as empty bytes. Returns a BTreeMap with keys: config_seal_protocol,
@@ -770,6 +816,7 @@ pub fn compute_config_seals(dir: &Path) -> BTreeMap<String, String> {
         ("config_seal_renders", "renders.toml"),
         ("config_seal_hooks", "hooks.toml"),
         ("config_seal_trusted_callers", "trusted-callers.toml"),
+        ("config_seal_vault", "vault.toml"),
     ];
 
     let mut seals = BTreeMap::new();

@@ -39,7 +39,7 @@ fn test_compute_config_seals_all_files_present() {
 
     let seals = sahjhan::config::compute_config_seals(dir.path());
 
-    assert_eq!(seals.len(), 7);
+    assert_eq!(seals.len(), 8);
     assert!(seals.contains_key("config_seal_protocol"));
     assert!(seals.contains_key("config_seal_states"));
     assert!(seals.contains_key("config_seal_transitions"));
@@ -47,6 +47,7 @@ fn test_compute_config_seals_all_files_present() {
     assert!(seals.contains_key("config_seal_renders"));
     assert!(seals.contains_key("config_seal_hooks"));
     assert!(seals.contains_key("config_seal_trusted_callers"));
+    assert!(seals.contains_key("config_seal_vault"));
 
     // Each value should be a 64-char hex SHA-256
     for hash in seals.values() {
@@ -65,13 +66,14 @@ fn test_compute_config_seals_optional_files_missing() {
 
     let seals = sahjhan::config::compute_config_seals(dir.path());
 
-    assert_eq!(seals.len(), 7);
+    assert_eq!(seals.len(), 8);
     // Missing files should get the SHA-256 of empty bytes
     let empty_hash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
     assert_eq!(seals["config_seal_events"], empty_hash);
     assert_eq!(seals["config_seal_renders"], empty_hash);
     assert_eq!(seals["config_seal_hooks"], empty_hash);
     assert_eq!(seals["config_seal_trusted_callers"], empty_hash);
+    assert_eq!(seals["config_seal_vault"], empty_hash);
     // Present files should NOT be the empty hash
     assert_ne!(seals["config_seal_protocol"], empty_hash);
 }

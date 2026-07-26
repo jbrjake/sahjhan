@@ -29,6 +29,7 @@ fn make_config(managed: Vec<&str>) -> ProtocolConfig {
         guards: None,
         hooks: vec![],
         monitors: vec![],
+        queries: std::collections::HashMap::new(),
         vault_policies: std::collections::HashMap::new(),
     }
 }

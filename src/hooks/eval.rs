@@ -684,6 +684,7 @@ mod tests {
             guards: None,
             hooks: vec![],
             monitors: vec![],
+            queries: HashMap::new(),
             vault_policies: HashMap::new(),
         };
 

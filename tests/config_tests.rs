@@ -825,3 +825,145 @@ fn test_validate_write_gated_states_exist() {
         errors
     );
 }
+
+// ---------------------------------------------------------------------------
+// Named queries ([queries.<name>], issue #32)
+// ---------------------------------------------------------------------------
+
+/// Load examples/minimal and replace its transitions with a single one
+/// carrying `gate`, so validate_deep exercises exactly that gate.
+fn config_with_gate(gate: sahjhan::config::GateConfig) -> sahjhan::config::ProtocolConfig {
+    use sahjhan::config::*;
+    let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    config.transitions = vec![TransitionConfig {
+        from: "idle".to_string(),
+        to: "working".to_string(),
+        command: "begin".to_string(),
+        gates: vec![gate],
+        ..Default::default()
+    }];
+    config
+}
+
+fn query_gate(params: Vec<(&str, &str)>) -> sahjhan::config::GateConfig {
+    sahjhan::config::GateConfig {
+        gate_type: "query".to_string(),
+        intent: None,
+        gates: vec![],
+        params: params
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), toml::Value::String(v.to_string())))
+            .collect(),
+    }
+}
+
+#[test]
+fn test_named_queries_parse_from_protocol_toml() {
+    let toml_str = r#"
+[protocol]
+name = "t"
+version = "1.0.0"
+description = "t"
+
+[paths]
+managed = []
+data_dir = ".data"
+render_dir = "."
+
+[queries.budget_exhausted]
+sql = "SELECT count(*) >= 3 as result FROM events"
+intent = "3 fixes is the budget"
+
+[queries.no_intent]
+sql = "SELECT 1"
+"#;
+    let pf: sahjhan::config::protocol::ProtocolFile = toml::from_str(toml_str).unwrap();
+    assert_eq!(pf.queries.len(), 2);
+    assert_eq!(
+        pf.queries["budget_exhausted"].intent.as_deref(),
+        Some("3 fixes is the budget")
+    );
+    assert!(pf.queries["no_intent"].intent.is_none());
+}
+
+#[test]
+fn test_validate_query_gate_with_named_reference_is_valid() {
+    let mut config = config_with_gate(query_gate(vec![("query", "budget")]));
+    config.queries.insert(
+        "budget".to_string(),
+        sahjhan::config::NamedQuery {
+            sql: "SELECT 1".to_string(),
+            intent: None,
+        },
+    );
+    let (errors, _) = config.validate_deep(Path::new("examples/minimal"));
+    assert!(
+        !errors.iter().any(|e| e.contains("query")),
+        "declared named query should validate cleanly: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_validate_query_gate_undeclared_named_query_is_error() {
+    let config = config_with_gate(query_gate(vec![("query", "missing")]));
+    let (errors, _) = config.validate_deep(Path::new("examples/minimal"));
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("undeclared query 'missing'")),
+        "Expected error about undeclared query: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_validate_query_gate_both_sql_and_query_is_error() {
+    let mut config = config_with_gate(query_gate(vec![("query", "budget"), ("sql", "SELECT 1")]));
+    config.queries.insert(
+        "budget".to_string(),
+        sahjhan::config::NamedQuery {
+            sql: "SELECT 1".to_string(),
+            intent: None,
+        },
+    );
+    let (errors, _) = config.validate_deep(Path::new("examples/minimal"));
+    assert!(
+        errors.iter().any(|e| e.contains("both 'sql' and 'query'")),
+        "Expected error about both forms: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_validate_query_gate_neither_sql_nor_query_is_error() {
+    let config = config_with_gate(query_gate(vec![]));
+    let (errors, _) = config.validate_deep(Path::new("examples/minimal"));
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("missing required parameter 'sql' or 'query'")),
+        "Expected error about missing predicate: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_validate_named_query_with_empty_sql_is_error() {
+    let mut config = sahjhan::config::ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    config.queries.insert(
+        "blank".to_string(),
+        sahjhan::config::NamedQuery {
+            sql: "   ".to_string(),
+            intent: None,
+        },
+    );
+    let (errors, _) = config.validate_deep(Path::new("examples/minimal"));
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("query 'blank'") && e.contains("empty sql")),
+        "Expected error about empty sql: {:?}",
+        errors
+    );
+}

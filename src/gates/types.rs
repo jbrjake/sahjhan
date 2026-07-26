@@ -171,12 +171,25 @@ pub fn eval(gate: &GateConfig, ctx: &GateContext) -> GateResult {
             attestation: None,
         },
     };
+    // Intent precedence: the gate's own `intent`, then the `intent` of the
+    // named query it references (a named predicate carries its "why" once,
+    // for every gate that uses it), then the per-type default.
     result.intent = Some(
         gate.intent
             .clone()
+            .or_else(|| named_query_intent(gate, ctx))
             .unwrap_or_else(|| super::evaluator::default_intent(&gate.gate_type).to_string()),
     );
     result
+}
+
+/// The `intent` of the `[queries.<name>]` entry a query gate references, if any.
+fn named_query_intent(gate: &GateConfig, ctx: &GateContext) -> Option<String> {
+    if gate.gate_type != "query" {
+        return None;
+    }
+    let name = gate.params.get("query").and_then(|v| v.as_str())?;
+    ctx.config.queries.get(name)?.intent.clone()
 }
 
 // ---------------------------------------------------------------------------

@@ -3,7 +3,7 @@
 // Deserialization structs for protocol.toml.
 //
 // ## Index
-// - ProtocolFile            — top-level wrapper (protocol, paths, sets, aliases, checkpoints, ledgers, guards)
+// - ProtocolFile            — top-level wrapper (protocol, paths, sets, aliases, checkpoints, ledgers, guards, queries)
 // - ProtocolMeta            — name, version, description
 // - PathsConfig             — managed, data_dir, render_dir
 // - SetConfig               — description + ordered values
@@ -11,6 +11,7 @@
 // - LedgerTemplateConfig     — ledger declaration (path or path_template)
 // - GuardsConfig            — write_gated paths
 // - WriteGatedConfig        — path whose writability is gated by protocol state
+// - NamedQuery              — a reusable, named SQL predicate ([queries.<name>])
 
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -29,6 +30,33 @@ pub struct ProtocolFile {
     #[serde(default)]
     pub ledgers: HashMap<String, LedgerTemplateConfig>,
     pub guards: Option<GuardsConfig>,
+    #[serde(default)]
+    pub queries: HashMap<String, NamedQuery>,
+}
+
+/// A named SQL predicate declared once and referenced by many gates.
+///
+/// ```toml
+/// [queries.pattern_analysis_overdue]
+/// sql    = "SELECT count(*) < 3 FROM events WHERE event_type = 'fix'"
+/// intent = "3+ fixes since the last pattern analysis"
+/// ```
+///
+/// A gate references it by name instead of carrying a copy of the SQL:
+///
+/// ```toml
+/// { type = "query", query = "pattern_analysis_overdue" }
+/// ```
+///
+/// Two gates that must agree on a fact become the same object rather than two
+/// strings hoped to be equal — the drift that `lint` check L6 looks for cannot
+/// happen once a predicate has a name. `intent` (if present) becomes the gate's
+/// intent when the gate does not declare one of its own.
+#[derive(Debug, Deserialize, Clone)]
+pub struct NamedQuery {
+    pub sql: String,
+    #[serde(default)]
+    pub intent: Option<String>,
 }
 
 /// Configuration for the `[guards]` section of protocol.toml.

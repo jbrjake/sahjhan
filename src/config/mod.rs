@@ -24,8 +24,8 @@ pub use hooks::{
     MonitorTrigger,
 };
 pub use protocol::{
-    CheckpointConfig, GuardsConfig, LedgerTemplateConfig, PathsConfig, ProtocolMeta, SetConfig,
-    WriteGatedConfig,
+    CheckpointConfig, GuardsConfig, LedgerTemplateConfig, NamedQuery, PathsConfig, ProtocolMeta,
+    SetConfig, WriteGatedConfig,
 };
 pub use renders::RenderConfig;
 pub use states::{StateConfig, StateParam};
@@ -49,6 +49,9 @@ pub struct ProtocolConfig {
     pub checkpoints: CheckpointConfig,
     pub ledgers: HashMap<String, LedgerTemplateConfig>,
     pub guards: Option<GuardsConfig>,
+    /// Named SQL predicates (`[queries.<name>]`), referenced by query gates as
+    /// `query = "<name>"`. Empty when none are declared.
+    pub queries: HashMap<String, protocol::NamedQuery>,
     pub hooks: Vec<hooks::HookConfig>,
     pub monitors: Vec<hooks::MonitorConfig>,
     /// Per-key state-based vault access policies, keyed by vault entry name.
@@ -150,6 +153,7 @@ impl ProtocolConfig {
             checkpoints: proto_file.checkpoints,
             ledgers: proto_file.ledgers,
             guards: proto_file.guards,
+            queries: proto_file.queries,
             hooks: hooks_vec,
             monitors: monitors_vec,
             vault_policies: vault_policies_map,
@@ -327,13 +331,22 @@ impl ProtocolConfig {
             ("no_violations", vec![]),
             ("field_not_empty", vec!["field"]),
             ("snapshot_compare", vec!["cmd", "extract", "reference"]),
-            ("query", vec!["sql"]),
+            // `query` takes exactly one of `sql` / `query` — checked in
+            // validate_gate rather than by the required-params list.
+            ("query", vec![]),
         ]);
+
+        // 5b. Named queries must carry a non-empty predicate.
+        for (name, q) in &self.queries {
+            if q.sql.trim().is_empty() {
+                errors.push(format!("protocol.toml: query '{}' has empty sql", name));
+            }
+        }
 
         // 6. Gate type validation (recursive for composite gates).
         for t in &self.transitions {
             for gate in &t.gates {
-                Self::validate_gate(gate, &t.command, &known_gates, &mut errors);
+                self.validate_gate(gate, &t.command, &known_gates, &mut errors);
             }
         }
 
@@ -591,7 +604,7 @@ impl ProtocolConfig {
 
             // gate validated through recursive validator.
             if let Some(ref gate) = hook.gate {
-                Self::validate_gate(gate, &format!("hook[{}]", idx), &known_gates, &mut errors);
+                self.validate_gate(gate, &format!("hook[{}]", idx), &known_gates, &mut errors);
             }
 
             // check.type must be a known check type.
@@ -705,9 +718,12 @@ impl ProtocolConfig {
     ///
     /// Composite gates (any_of, all_of, not, k_of_n) have structural
     /// requirements checked here; leaf gates are validated against the
-    /// `known_gates` map for type and required params.
+    /// `known_gates` map for type and required params. `query` gates are a
+    /// special case: they take exactly one of `sql` (inline) or `query` (a
+    /// reference into `[queries]`), and a named reference must resolve.
     // [validate-gate]
     fn validate_gate(
+        &self,
         gate: &GateConfig,
         transition_command: &str,
         known_gates: &HashMap<&str, Vec<&str>>,
@@ -722,7 +738,7 @@ impl ProtocolConfig {
                     ));
                 }
                 for child in &gate.gates {
-                    Self::validate_gate(child, transition_command, known_gates, errors);
+                    self.validate_gate(child, transition_command, known_gates, errors);
                 }
             }
             "not" => {
@@ -734,7 +750,7 @@ impl ProtocolConfig {
                     ));
                 }
                 for child in &gate.gates {
-                    Self::validate_gate(child, transition_command, known_gates, errors);
+                    self.validate_gate(child, transition_command, known_gates, errors);
                 }
             }
             "k_of_n" => {
@@ -764,7 +780,27 @@ impl ProtocolConfig {
                     }
                 }
                 for child in &gate.gates {
-                    Self::validate_gate(child, transition_command, known_gates, errors);
+                    self.validate_gate(child, transition_command, known_gates, errors);
+                }
+            }
+            "query" => {
+                // Exactly one of `sql` (inline) or `query` (named reference).
+                let inline = gate.params.get("sql").and_then(|v| v.as_str());
+                let named = gate.params.get("query").and_then(|v| v.as_str());
+                match (inline, named) {
+                    (Some(_), Some(_)) => errors.push(format!(
+                        "transitions.toml: gate 'query' in transition '{}' has both 'sql' and 'query' — use one",
+                        transition_command
+                    )),
+                    (None, None) => errors.push(format!(
+                        "transitions.toml: gate 'query' in transition '{}' missing required parameter 'sql' or 'query'",
+                        transition_command
+                    )),
+                    (None, Some(name)) if !self.queries.contains_key(name) => errors.push(format!(
+                        "transitions.toml: gate 'query' in transition '{}' references undeclared query '{}' (declare [queries.{}] in protocol.toml)",
+                        transition_command, name, name
+                    )),
+                    _ => {}
                 }
             }
             _ => {

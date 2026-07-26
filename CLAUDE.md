@@ -58,11 +58,12 @@ Sahjhan is a protocol enforcement engine. It has:
 |---------|------|-------------|---------|
 | Unified config | `config/mod.rs` | `ProtocolConfig` | Loads all TOML, holds full config (includes hooks, monitors) |
 | Config validation | `config/mod.rs` | `[validate]` | Basic structural validation |
-| Deep validation | `config/mod.rs` | `[validate-deep]` | File existence, gate types, aliases, ledger template, hooks, monitors, write_gated checks |
+| Deep validation | `config/mod.rs` | `[validate-deep]` | File existence, gate types, aliases, ledger template, hooks, monitors, write_gated, named-query checks |
 | Recursive gate validator | `config/mod.rs` | `[validate-gate]` | Validates composite (any_of, all_of, not, k_of_n) and leaf gates recursively |
 | Protocol metadata | `config/protocol.rs` | `ProtocolMeta`, `PathsConfig`, `SetConfig` | protocol.toml structures |
 | Ledger template | `config/protocol.rs` | `LedgerTemplateConfig` | `[ledgers]` section; path or path_template for template-based ledger creation |
 | Guards config | `config/protocol.rs` | `GuardsConfig` | `[guards]` section; `write_gated` lists state-gated writable paths |
+| Named query | `config/protocol.rs` | `NamedQuery` | `[queries.<name>]` reusable SQL predicate (`sql` + optional `intent`); referenced by query gates as `query = "<name>"` (#32) |
 | Write-gated config | `config/protocol.rs` | `WriteGatedConfig` | A path whose writability is gated by protocol state (path, writable_in, message) |
 | Hooks file | `config/hooks.rs` | `HooksFile` | Top-level hooks.toml wrapper (hooks + monitors) |
 | Hook config | `config/hooks.rs` | `HookConfig` | Single hook rule (event, tools, states, gate, check, auto_record, filter) |
@@ -104,6 +105,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | No violations gate | `gates/ledger.rs` | `[eval-no-violations]` | No unresolved violations |
 | Field not empty | `gates/ledger.rs` | `[eval-field-not-empty]` | Named event field non-empty |
 | SQL query gate | `gates/query.rs` | `[eval-query-gate]` | DataFusion SQL, pass if result matches |
+| Query predicate resolution | `gates/query.rs` | `[resolve-gate-sql]` | Resolve a query gate's SQL from `sql` (inline) or `query` (named, from `[queries]`) |
 | Snapshot compare | `gates/snapshot.rs` | `[eval-snapshot-compare]` | Run command, extract JSON, compare |
 | Snapshot reference | `gates/snapshot.rs` | `[resolve-snapshot-reference]` | Look up snapshot:key in ledger |
 | Template resolution | `gates/template.rs` | `[resolve-template]` | `{{var}}` → shell-escaped value |
@@ -361,7 +363,7 @@ gates/types.rs [eval] matches gate_type:
   "no_violations"       → gates/ledger.rs   [eval-no-violations]
   "field_not_empty"     → gates/ledger.rs   [eval-field-not-empty]
   "snapshot_compare"    → gates/snapshot.rs  [eval-snapshot-compare]
-  "query"               → gates/query.rs    [eval-query-gate]
+  "query"               → gates/query.rs    [eval-query-gate]   — sql = "..." inline, or query = "<name>" from [queries]
   "any_of"              → gates/types.rs    [eval] (inline) — pass if any child passes
   "all_of"              → gates/types.rs    [eval] (inline) — pass if all children pass
   "not"                 → gates/types.rs    [eval] (inline) — invert single child result

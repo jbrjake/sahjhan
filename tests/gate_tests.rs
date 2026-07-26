@@ -3496,3 +3496,186 @@ fn test_ledger_has_event_since_custom_event_fallback() {
          before the last transition still counts"
     );
 }
+
+// ---------------------------------------------------------------------------
+// query gate — named queries ([queries.<name>], issue #32)
+// ---------------------------------------------------------------------------
+
+/// Build a config from examples/minimal with one named query declared.
+fn config_with_query(name: &str, sql: &str, intent: Option<&str>) -> ProtocolConfig {
+    let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    config.queries.insert(
+        name.to_string(),
+        sahjhan::config::NamedQuery {
+            sql: sql.to_string(),
+            intent: intent.map(|s| s.to_string()),
+        },
+    );
+    config
+}
+
+#[test]
+fn test_query_gate_named_reference_resolves() {
+    let dir = tempdir().unwrap();
+    let config = config_with_query(
+        "few_events",
+        "SELECT count(*) < 10 as result FROM events",
+        None,
+    );
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+    for _ in 0..3 {
+        ledger.append("some_event", BTreeMap::new()).unwrap();
+    }
+
+    let gate = make_gate(
+        "query",
+        vec![
+            ("query", toml::Value::String("few_events".to_string())),
+            ("expect", toml::Value::String("true".to_string())),
+        ],
+    );
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(
+        result.passed,
+        "named query should resolve and pass: {:?}",
+        result.reason
+    );
+    assert!(
+        result.description.contains("few_events"),
+        "description should name the query: {}",
+        result.description
+    );
+}
+
+#[test]
+fn test_query_gate_named_intent_used_as_gate_intent() {
+    let dir = tempdir().unwrap();
+    let config = config_with_query(
+        "few_events",
+        "SELECT count(*) < 10 as result FROM events",
+        Some("the run must stay under the event budget"),
+    );
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let gate = make_gate(
+        "query",
+        vec![("query", toml::Value::String("few_events".to_string()))],
+    );
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert_eq!(
+        result.intent.as_deref(),
+        Some("the run must stay under the event budget"),
+        "named query intent should become the gate intent"
+    );
+}
+
+#[test]
+fn test_query_gate_own_intent_beats_named_query_intent() {
+    let dir = tempdir().unwrap();
+    let config = config_with_query(
+        "few_events",
+        "SELECT count(*) < 10 as result FROM events",
+        Some("named intent"),
+    );
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let mut gate = make_gate(
+        "query",
+        vec![("query", toml::Value::String("few_events".to_string()))],
+    );
+    gate.intent = Some("gate intent".to_string());
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    assert_eq!(
+        evaluate_gate(&gate, &ctx).intent.as_deref(),
+        Some("gate intent")
+    );
+}
+
+#[test]
+fn test_query_gate_unknown_named_query_fails() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let gate = make_gate(
+        "query",
+        vec![("query", toml::Value::String("nope".to_string()))],
+    );
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(!result.passed);
+    assert!(
+        result
+            .reason
+            .as_ref()
+            .unwrap()
+            .contains("undeclared query 'nope'"),
+        "reason should name the missing query: {:?}",
+        result.reason
+    );
+}
+
+#[test]
+fn test_query_gate_sql_and_named_query_conflict_fails() {
+    let dir = tempdir().unwrap();
+    let config = config_with_query("few_events", "SELECT 1", None);
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    let gate = make_gate(
+        "query",
+        vec![
+            ("query", toml::Value::String("few_events".to_string())),
+            ("sql", toml::Value::String("SELECT 2".to_string())),
+        ],
+    );
+    let ctx = GateContext {
+        ledger: &ledger,
+        config: &config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: dir.path().to_path_buf(),
+        event_fields: None,
+    };
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(!result.passed, "a gate may not carry both forms");
+    assert!(
+        result.reason.as_ref().unwrap().contains("both"),
+        "reason should explain the conflict: {:?}",
+        result.reason
+    );
+}

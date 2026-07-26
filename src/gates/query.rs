@@ -2,28 +2,61 @@
 //
 // ## Index
 // - [eval-query-gate]  eval_query_gate()  — run a SQL query via DataFusion against the ledger; pass if result matches expected
+// - [resolve-gate-sql] resolve_gate_sql() — resolve a query gate's predicate from `sql` (inline) or `query` (named)
 
-use crate::config::GateConfig;
+use crate::config::{GateConfig, ProtocolConfig};
 
 use super::evaluator::{GateContext, GateResult};
 use super::template::{find_unresolved_vars, resolve_template_plain};
 use super::types::{build_template_vars, validate_template_fields};
 
+// [resolve-gate-sql]
+/// Resolve a query gate's SQL from either `sql` (inline) or `query` (a name
+/// declared in `[queries]`).
+///
+/// Exactly one form may be present. Returns `Err(reason)` describing the defect
+/// otherwise — the same conditions `validate_deep` rejects statically, repeated
+/// here because a gate can also arrive from a hook config at runtime.
+pub(crate) fn resolve_gate_sql(
+    gate: &GateConfig,
+    config: &ProtocolConfig,
+) -> Result<String, String> {
+    let inline = gate.params.get("sql").and_then(|v| v.as_str());
+    let named = gate.params.get("query").and_then(|v| v.as_str());
+    match (inline, named) {
+        (Some(_), Some(_)) => Err("gate has both 'sql' and 'query' params — use one".to_string()),
+        (Some(sql), None) => Ok(sql.to_string()),
+        (None, Some(name)) => match config.queries.get(name) {
+            Some(q) => Ok(q.sql.clone()),
+            None => Err(format!("gate references undeclared query '{}'", name)),
+        },
+        (None, None) => Err("gate missing required 'sql' or 'query' param".to_string()),
+    }
+}
+
 // [eval-query-gate]
 pub(super) fn eval_query_gate(gate: &GateConfig, ctx: &GateContext) -> GateResult {
-    let raw_sql = match gate.params.get("sql").and_then(|v| v.as_str()) {
-        Some(s) => s.to_string(),
-        None => {
+    let raw_sql = match resolve_gate_sql(gate, ctx.config) {
+        Ok(s) => s,
+        Err(reason) => {
             return GateResult {
                 passed: false,
                 evaluable: true,
                 gate_type: "query".to_string(),
                 description: "SQL query against ledger".to_string(),
-                reason: Some("gate missing required 'sql' param".to_string()),
+                reason: Some(reason),
                 intent: None,
                 attestation: None,
             }
         }
+    };
+
+    // A named query keeps its name in the description so `gate check` output
+    // names the predicate rather than dumping a wall of SQL twice.
+    let query_name = gate.params.get("query").and_then(|v| v.as_str());
+    let describe = |sql: &str| match query_name {
+        Some(name) => format!("query '{}': {}", name, sql),
+        None => format!("SQL: {}", sql),
     };
 
     // Validate template fields before interpolation.
@@ -32,7 +65,7 @@ pub(super) fn eval_query_gate(gate: &GateConfig, ctx: &GateContext) -> GateResul
             passed: false,
             evaluable: true,
             gate_type: "query".to_string(),
-            description: format!("SQL: {}", raw_sql),
+            description: describe(&raw_sql),
             reason: Some(reason),
             intent: None,
             attestation: None,
@@ -49,7 +82,7 @@ pub(super) fn eval_query_gate(gate: &GateConfig, ctx: &GateContext) -> GateResul
             passed: false,
             evaluable: false,
             gate_type: "query".to_string(),
-            description: format!("SQL: {}", raw_sql),
+            description: describe(&raw_sql),
             reason: Some(format!(
                 "unevaluable (requires arg: {})",
                 unresolved.join(", ")
@@ -66,7 +99,7 @@ pub(super) fn eval_query_gate(gate: &GateConfig, ctx: &GateContext) -> GateResul
         .unwrap_or("true")
         .to_string();
 
-    let description = format!("SQL: {}", sql);
+    let description = describe(&sql);
 
     // Build a minimal single-threaded tokio runtime — gates are sync but
     // DataFusion is async.

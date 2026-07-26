@@ -38,6 +38,10 @@ pub const CHECKS: &[(&str, &str)] = &[
         "every event a gate requires has at least one producer",
     ),
     (
+        "L2",
+        "a required event's producers can run before the gate that needs them",
+    ),
+    (
         "L3",
         "no path reaches a boundary's target without crossing the boundary",
     ),
@@ -124,8 +128,8 @@ pub struct Analysis<'a> {
     pub graph: graph::Graph,
     pub producers: index::ProducerIndex,
     pub consumed: HashSet<String>,
-    /// Transition index -> why it can never fire. Filled in by L1 (and later
-    /// L2); read by L4, which needs to know whether a state's exits are real.
+    /// Transition index -> why it can never fire. Filled in by L1 and L2;
+    /// read by L4, which needs to know whether a state's exits are real.
     pub unsatisfiable: HashMap<usize, String>,
 }
 
@@ -165,6 +169,7 @@ pub fn run(config: &ProtocolConfig, opts: &LintOptions) -> Vec<LintFinding> {
 
     // L1 populates `analysis.unsatisfiable`, which L4 reads.
     findings.extend(checks::l1_unsatisfiable_gates(&mut analysis));
+    findings.extend(checks::l2_temporally_unsatisfiable(&mut analysis));
     findings.extend(checks::l3_boundary_route_around(&analysis));
     findings.extend(checks::l4_dead_end_states(&analysis));
     findings.extend(checks::l5_dead_vocabulary(&analysis));

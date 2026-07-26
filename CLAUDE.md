@@ -143,6 +143,7 @@ Config-only analysis: no ledger is opened, no gate command runs. Answers "is thi
 | Consumed events | `lint/index.rs` | `[consumed-events]` | Every event any config surface reads |
 | SQL event mentions | `lint/index.rs` | `[sql-event-mentions]` | Declared event names quoted in a predicate |
 | L1 unsatisfiable gate | `lint/checks.rs` | `[check-l1]` | Required event with no producer (error if restricted or `require_producers`) |
+| L2 temporal unsatisfiability | `lint/checks.rs` | `[check-l2]` | Producer windows vs `ancestors(from) ∪ {from}`; a producer with no window is unconstrained |
 | L3 boundary route-around | `lint/checks.rs` | `[check-l3]` | Delete tagged edges, re-test reachability; prints the surviving bypass path |
 | L4 dead-end state | `lint/checks.rs` | `[check-l4]` | Non-terminal state with no exit, or all exits unsatisfiable |
 | L5 dead vocabulary | `lint/checks.rs` | `[check-l5]` | Declared event nothing produces or consumes |
@@ -450,6 +451,7 @@ main.rs [cli-main] → Commands::Lint
         → lint/index.rs [build-producers] ← declared producers + emits + hook auto_record + engine built-ins
         → lint/index.rs [consumed-events] ← gates, renders, hook checks, named queries
       → lint/checks.rs [check-l1]         ← required event with no producer; fills Analysis.unsatisfiable
+      → lint/checks.rs [check-l2]         ← graph.ancestors_of(t.from) ∪ {t.from} vs producer available_in_states
       → lint/checks.rs [check-l3]         ← graph.build_filtered() drops boundary-tagged edges, then path_between()
       → lint/checks.rs [check-l4]         ← reads Analysis.unsatisfiable: is any exit from this state real?
       → lint/checks.rs [check-l5]         ← declared event nothing produces or consumes
@@ -458,8 +460,8 @@ main.rs [cli-main] → Commands::Lint
 ```
 
 Check ordering is a dependency, not a preference: L4 asks whether a state's exits
-are usable, which is only answerable after L1 has marked the transitions that can
-never fire. `--only` filters the *findings*, never the run.
+are usable, which is only answerable after L1 and L2 have marked the transitions
+that can never fire. `--only` filters the *findings*, never the run.
 
 ### Flow: Config Loading
 
@@ -564,7 +566,7 @@ main.rs [cli-main]
 | `tests/render_filter_tests.rs` | Custom Tera filters (where_eq, unique_by) |
 | `tests/json_output_tests.rs` | JSON envelope serialization, per-command data structs, CLI --json integration |
 | `tests/horizons1_tests.rs` | HORIZONS-1 mission protocol: status, transitions, gates, sets with --json |
-| `tests/lint_tests.rs` | Static analysis: L1 producer closure (restricted/require_producers/emits/auto_record/polarity), L3 boundary route-arounds, L4 dead ends, L5 dead vocabulary, check selection, CLI exit codes + JSON |
+| `tests/lint_tests.rs` | Static analysis: L1 producer closure (restricted/require_producers/emits/auto_record/polarity), L2 producer windows vs reachability, L3 boundary route-arounds, L4 dead ends, L5 dead vocabulary, check selection, CLI exit codes + JSON |
 | `tests/hook_eval_tests.rs` | Hook evaluation engine: gate/check/filter/state/monitor/write-gated/managed-path/CLI eval |
 | `tests/concurrent_append_tests.rs` | Concurrent ledger append stress tests (issue #21 TOCTOU race) |
 | `tests/daemon_platform_tests.rs` | Platform API smoke tests: preload env, exe path, cmdline, parent PID, mlock |

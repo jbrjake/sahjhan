@@ -5,6 +5,7 @@
 //
 // ## Index
 // - [check-l1]  l1_unsatisfiable_gates()  — a required event nothing can produce
+// - [check-l2]  l2_temporally_unsatisfiable() — a producer that can never run before the gate needing it
 // - [check-l3]  l3_boundary_route_around() — a path that reaches a boundary's target without crossing it
 // - [check-l4]  l4_dead_end_states()      — a non-terminal state with no usable exit
 // - [check-l5]  l5_dead_vocabulary()      — a declared event nothing produces or consumes
@@ -180,6 +181,121 @@ fn finding_for(location: &str, r: &EventRef, defect: &Defect) -> LintFinding {
         LintFinding::warning("L1", location.to_string(), defect.message.clone())
             .with_hint(&defect.hint)
     }
+}
+
+// [check-l2]
+/// L2 — a required event's producers must be able to run *before* the gate that
+/// needs them.
+///
+/// A gate on a transition out of state `S` reads events recorded at any earlier
+/// point in the run, so its producers must be able to run somewhere in
+/// `ancestors(S) ∪ {S}`. When every declared producer of a required event has
+/// an `available_in_states` window and none of those windows intersects that
+/// set, the gate is unsatisfiable — not because nothing can record the event,
+/// but because nothing can record it *in time*. The agent will read the intent,
+/// find the producer, and discover it only runs in a state the run has already
+/// left, or has not reached and cannot reach without passing this gate.
+///
+/// This is the check that has to live in the engine. A consumer can grep its own
+/// config for producers and windows; it cannot compute "which states can precede
+/// S" without reimplementing the state machine. That reachability relation is
+/// the engine's alone.
+///
+/// A producer with no declared window is unconstrained, so one such producer is
+/// enough to silence the check: the engine makes no temporal claim it cannot
+/// support. Records blocked transitions in `analysis.unsatisfiable` for L4.
+pub fn l2_temporally_unsatisfiable(analysis: &mut Analysis) -> Vec<LintFinding> {
+    let config = analysis.config;
+    let mut findings = Vec::new();
+    let mut blocked: Vec<(usize, String)> = Vec::new();
+
+    for (idx, t) in config.transitions.iter().enumerate() {
+        // States from which this gate could be evaluated: everything that can
+        // reach `t.from`, plus `t.from` itself (events recorded while sitting
+        // in that state precede the transition out of it).
+        let mut reachable_before = analysis.graph.ancestors_of(&t.from);
+        reachable_before.insert(t.from.as_str());
+
+        let location = analysis.transition_location(idx);
+
+        for gate in &t.gates {
+            for r in gate_event_refs(gate, config) {
+                if !r.required || is_engine_event(&r.event) {
+                    continue;
+                }
+                let producers = analysis.producers.producers_of(&r.event);
+                if producers.is_empty() {
+                    // L1's business, not this check's.
+                    continue;
+                }
+                // Any producer without a window can run anywhere.
+                if producers.iter().any(|p| p.available_in_states.is_none()) {
+                    continue;
+                }
+                let usable = producers.iter().any(|p| {
+                    p.available_in_states
+                        .as_ref()
+                        .map(|states| states.iter().any(|s| reachable_before.contains(s.as_str())))
+                        .unwrap_or(true)
+                });
+                if usable {
+                    continue;
+                }
+
+                let windows: Vec<String> = producers
+                    .iter()
+                    .map(|p| {
+                        format!(
+                            "{} (in {})",
+                            p.id,
+                            p.available_in_states
+                                .as_ref()
+                                .map(|s| if s.is_empty() {
+                                    "no state".to_string()
+                                } else {
+                                    s.join(", ")
+                                })
+                                .unwrap_or_else(|| "any state".to_string())
+                        )
+                    })
+                    .collect();
+
+                let message = format!(
+                    "gate '{}' requires event '{}', but every producer runs only in states that cannot precede '{}' — {}",
+                    r.gate_type, r.event, t.from, windows.join("; ")
+                );
+
+                if r.disjunctive {
+                    findings.push(
+                        LintFinding::warning(
+                            "L2",
+                            location.clone(),
+                            format!(
+                                "{} (one branch of an any_of/k_of_n — the gate may still pass by another)",
+                                message
+                            ),
+                        )
+                        .with_hint(
+                            "widen the producer's available_in_states, or move the gate to a transition the producer can precede",
+                        ),
+                    );
+                } else {
+                    blocked.push((idx, message.clone()));
+                    findings.push(
+                        LintFinding::error("L2", location.clone(), message).with_hint(
+                            "widen the producer's available_in_states, or move the gate to a transition the producer can precede",
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
+    for (idx, reason) in blocked {
+        analysis.unsatisfiable.entry(idx).or_insert(reason);
+    }
+
+    findings
 }
 
 // [check-l3]

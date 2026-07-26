@@ -695,6 +695,29 @@ impl ProtocolConfig {
             }
         }
 
+        // 16a. Declared event producers.
+        for (event_name, event) in &self.events {
+            let mut producer_ids: HashSet<&str> = HashSet::new();
+            for p in &event.producers {
+                if !producer_ids.insert(p.id.as_str()) {
+                    errors.push(format!(
+                        "events.toml: event '{}' declares producer '{}' twice",
+                        event_name, p.id
+                    ));
+                }
+                if let Some(ref states) = p.available_in_states {
+                    for s in states {
+                        if !state_names.contains(s.as_str()) {
+                            errors.push(format!(
+                                "events.toml: event '{}' producer '{}' available_in_states references unknown state '{}'",
+                                event_name, p.id, s
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
         // 16b. Boundary declarations and transition tags must agree.
         {
             let mut boundary_names: HashSet<&str> = HashSet::new();

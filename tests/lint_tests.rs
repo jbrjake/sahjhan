@@ -965,3 +965,252 @@ gates = []
         errors
     );
 }
+
+// ---------------------------------------------------------------------------
+// L2 — temporally unsatisfiable gates (the holtz #73 shape)
+// ---------------------------------------------------------------------------
+
+/// A linear protocol: early -> middle -> late, plus a `producer_state` branch
+/// off whichever state `branch_from` names.
+fn temporal_fixture(producer_states: &str, branch_from: &str) -> Fixture {
+    Fixture::new()
+        .states(
+            r#"
+[states.early]
+label = "Early"
+initial = true
+
+[states.middle]
+label = "Middle"
+
+[states.late]
+label = "Late"
+
+[states.side]
+label = "Side"
+terminal = true
+"#,
+        )
+        .transitions(&format!(
+            r#"
+[[transitions]]
+from = "early"
+to = "middle"
+command = "advance"
+gates = []
+
+[[transitions]]
+from = "middle"
+to = "late"
+command = "finish"
+gates = [{{ type = "ledger_has_event", event = "signed_off" }}]
+
+[[transitions]]
+from = "{}"
+to = "side"
+command = "branch"
+gates = []
+"#,
+            branch_from
+        ))
+        .events(&format!(
+            r#"
+[events.signed_off]
+description = "someone signed off"
+fields = []
+
+[[events.signed_off.producers]]
+id = "hook:sign-off"
+available_in_states = [{}]
+"#,
+            producer_states
+        ))
+}
+
+#[test]
+fn test_l2_producer_in_a_preceding_state_is_clean() {
+    // The producer runs in `early`, which precedes `middle`.
+    let f = temporal_fixture(r#""early""#, "late");
+    let findings = f.lint();
+    assert!(
+        findings_for(&findings, "L2").is_empty(),
+        "a producer that can run before the gate is fine: {:?}",
+        findings
+    );
+}
+
+#[test]
+fn test_l2_producer_in_the_gates_own_state_is_clean() {
+    // Events recorded while sitting in `middle` precede the transition out of it.
+    let f = temporal_fixture(r#""middle""#, "late");
+    assert!(findings_for(&f.lint(), "L2").is_empty());
+}
+
+#[test]
+fn test_l2_producer_only_in_an_unreachable_state_is_error() {
+    // The producer runs only in `late` — the state on the far side of the gate
+    // that needs its event. This is holtz #73 exactly.
+    let f = temporal_fixture(r#""late""#, "late");
+    let findings = f.lint();
+    let l2 = findings_for(&findings, "L2");
+    assert_eq!(l2.len(), 1, "expected one L2 finding: {:?}", findings);
+    assert_eq!(l2[0].severity, Severity::Error);
+    assert!(
+        l2[0].message.contains("cannot precede 'middle'"),
+        "message should name the consuming state: {}",
+        l2[0].message
+    );
+    assert!(
+        l2[0].message.contains("hook:sign-off"),
+        "message should name the producer: {}",
+        l2[0].message
+    );
+}
+
+#[test]
+fn test_l2_producer_with_no_window_is_unconstrained() {
+    let f = Fixture::new()
+        .states(
+            r#"
+[states.early]
+label = "Early"
+initial = true
+
+[states.late]
+label = "Late"
+terminal = true
+"#,
+        )
+        .transitions(
+            r#"
+[[transitions]]
+from = "early"
+to = "late"
+command = "finish"
+gates = [{ type = "ledger_has_event", event = "signed_off" }]
+"#,
+        )
+        .events(
+            r#"
+[events.signed_off]
+description = "someone signed off"
+fields = []
+
+[[events.signed_off.producers]]
+id = "hook:sign-off"
+"#,
+        );
+    assert!(
+        findings_for(&f.lint(), "L2").is_empty(),
+        "a producer with no declared window makes no temporal claim"
+    );
+}
+
+#[test]
+fn test_l2_one_usable_producer_is_enough() {
+    let f = temporal_fixture(r#""late""#, "late").events(
+        r#"
+[[events.signed_off.producers]]
+id = "hook:early-sign-off"
+available_in_states = ["early"]
+"#,
+    );
+    assert!(
+        findings_for(&f.lint(), "L2").is_empty(),
+        "one producer that can run in time silences the check"
+    );
+}
+
+#[test]
+fn test_l2_producer_reachable_through_a_cycle_is_clean() {
+    // `middle` can be re-entered from `retry`, so a producer scoped to `retry`
+    // precedes the gate on the second pass.
+    let f = Fixture::new()
+        .states(
+            r#"
+[states.early]
+label = "Early"
+initial = true
+
+[states.middle]
+label = "Middle"
+
+[states.retry]
+label = "Retry"
+
+[states.late]
+label = "Late"
+terminal = true
+"#,
+        )
+        .transitions(
+            r#"
+[[transitions]]
+from = "early"
+to = "middle"
+command = "advance"
+gates = []
+
+[[transitions]]
+from = "middle"
+to = "retry"
+command = "bounce"
+gates = []
+
+[[transitions]]
+from = "retry"
+to = "middle"
+command = "resume"
+gates = []
+
+[[transitions]]
+from = "middle"
+to = "late"
+command = "finish"
+gates = [{ type = "ledger_has_event", event = "signed_off" }]
+"#,
+        )
+        .events(
+            r#"
+[events.signed_off]
+description = "someone signed off"
+fields = []
+
+[[events.signed_off.producers]]
+id = "hook:sign-off"
+available_in_states = ["retry"]
+"#,
+        );
+    assert!(
+        findings_for(&f.lint(), "L2").is_empty(),
+        "a state reachable through a cycle can still precede the gate"
+    );
+}
+
+#[test]
+fn test_l2_blocked_transition_feeds_l4() {
+    // `middle`'s only exit is temporally unsatisfiable, so the state is a trap.
+    let f = temporal_fixture(r#""late""#, "late");
+    let findings = f.lint();
+    assert!(
+        findings_for(&findings, "L4")
+            .iter()
+            .any(|f| f.message.contains("every exit") && f.message.contains("'middle'")),
+        "L4 should see L2's verdict: {:?}",
+        findings
+    );
+}
+
+#[test]
+fn test_producer_available_in_unknown_state_fails_validation() {
+    let f = temporal_fixture(r#""nowhere""#, "late");
+    let config = f.load();
+    let (errors, _) = config.validate_deep(f.write());
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("available_in_states") && e.contains("nowhere")),
+        "expected validation error for the unknown state: {:?}",
+        errors
+    );
+}

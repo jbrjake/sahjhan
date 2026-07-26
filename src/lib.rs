@@ -4,6 +4,7 @@ pub mod config;
 pub mod gates;
 pub mod hooks;
 pub mod ledger;
+pub mod lint;
 pub mod manifest;
 pub mod mermaid;
 pub mod query;

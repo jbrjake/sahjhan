@@ -413,6 +413,7 @@ fn test_validate_rejects_restricted_emit_event() {
     config.events.insert(
         "secret".to_string(),
         EventConfig {
+            producers: vec![],
             description: "restricted".to_string(),
             restricted: Some(true),
             fields: Vec::<EventFieldConfig>::new(),

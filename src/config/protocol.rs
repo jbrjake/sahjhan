@@ -12,6 +12,7 @@
 // - GuardsConfig            — write_gated paths
 // - WriteGatedConfig        — path whose writability is gated by protocol state
 // - NamedQuery              — a reusable, named SQL predicate ([queries.<name>])
+// - LintConfig              — [lint] section; static-analysis strictness knobs
 
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -32,6 +33,31 @@ pub struct ProtocolFile {
     pub guards: Option<GuardsConfig>,
     #[serde(default)]
     pub queries: HashMap<String, NamedQuery>,
+    #[serde(default)]
+    pub lint: LintConfig,
+}
+
+/// The `[lint]` section — how strict `sahjhan lint` is about this protocol.
+///
+/// ```toml
+/// [lint]
+/// require_producers = true      # every required event must name a producer
+/// disabled_checks   = ["L6"]
+/// ```
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct LintConfig {
+    /// Treat "no visible producer" as an error for *every* required event, not
+    /// just restricted ones.
+    ///
+    /// Off by default because `sahjhan event` can record any declared,
+    /// non-restricted event — so without this flag the engine cannot claim such
+    /// a gate is unsatisfiable. Turn it on once producers are declared, and L1
+    /// becomes a closure check over the whole vocabulary.
+    #[serde(default)]
+    pub require_producers: bool,
+    /// Check ids (`"L1"`, `"L6"`, …) to skip entirely.
+    #[serde(default)]
+    pub disabled_checks: Vec<String>,
 }
 
 /// A named SQL predicate declared once and referenced by many gates.

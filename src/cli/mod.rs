@@ -7,6 +7,7 @@ pub mod daemon_cmd;
 pub mod hooks_cmd;
 pub mod init;
 pub mod ledger;
+pub mod lint;
 pub mod log;
 pub mod manifest_cmd;
 pub mod mermaid;

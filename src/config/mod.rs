@@ -18,14 +18,14 @@ pub mod states;
 pub mod transitions;
 pub mod vault_policy;
 
-pub use events::{EventConfig, EventFieldConfig};
+pub use events::{EventConfig, EventFieldConfig, ProducerConfig};
 pub use hooks::{
     AutoRecordConfig, HookCheck, HookConfig, HookEvent, HookFilter, HooksFile, MonitorConfig,
     MonitorTrigger,
 };
 pub use protocol::{
-    CheckpointConfig, GuardsConfig, LedgerTemplateConfig, NamedQuery, PathsConfig, ProtocolMeta,
-    SetConfig, WriteGatedConfig,
+    CheckpointConfig, GuardsConfig, LedgerTemplateConfig, LintConfig, NamedQuery, PathsConfig,
+    ProtocolMeta, SetConfig, WriteGatedConfig,
 };
 pub use renders::RenderConfig;
 pub use states::{StateConfig, StateParam};
@@ -52,6 +52,9 @@ pub struct ProtocolConfig {
     /// Named SQL predicates (`[queries.<name>]`), referenced by query gates as
     /// `query = "<name>"`. Empty when none are declared.
     pub queries: HashMap<String, protocol::NamedQuery>,
+    /// The `[lint]` section — strictness knobs for static analysis. Defaults
+    /// apply when the section is absent.
+    pub lint: LintConfig,
     pub hooks: Vec<hooks::HookConfig>,
     pub monitors: Vec<hooks::MonitorConfig>,
     /// Per-key state-based vault access policies, keyed by vault entry name.
@@ -154,6 +157,7 @@ impl ProtocolConfig {
             ledgers: proto_file.ledgers,
             guards: proto_file.guards,
             queries: proto_file.queries,
+            lint: proto_file.lint,
             hooks: hooks_vec,
             monitors: monitors_vec,
             vault_policies: vault_policies_map,

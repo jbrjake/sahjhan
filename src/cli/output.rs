@@ -26,6 +26,7 @@
 // - HookMonitorWarning          — monitor warning
 // - LedgerActivateData          — ledger activate output
 // - LedgerDeactivateData        — ledger deactivate output
+// - LintData                    — lint findings + counts
 
 use std::collections::BTreeMap;
 use std::fmt::Display;
@@ -145,12 +146,13 @@ impl<T: Serialize + Display> CommandOutput for CommandResult<T> {
     }
 
     fn to_text(&self) -> String {
-        if self.ok {
-            if let Some(ref data) = self.data {
-                data.to_string()
-            } else {
-                String::new()
-            }
+        // Data wins over ok-ness: a command can fail *with* a report (lint
+        // findings, a blocked gate check, a dirty manifest), and that report is
+        // the whole point of running it.
+        if let Some(ref data) = self.data {
+            data.to_string()
+        } else if self.ok {
+            String::new()
         } else if let Some(ref error) = self.error {
             format!("error: {}\n", error.message)
         } else {
@@ -751,6 +753,56 @@ impl Display for LedgerDeactivateData {
             write!(f, "Deactivated active ledger")
         } else {
             write!(f, "No active ledger to deactivate")
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// LintData
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+pub struct LintData {
+    /// Findings, most structural first (ordered by check id then location).
+    pub findings: Vec<crate::lint::LintFinding>,
+    pub error_count: usize,
+    pub warning_count: usize,
+    /// Check ids that actually ran, so a caller can tell "clean" from "skipped".
+    pub checks_run: Vec<String>,
+}
+
+impl Display for LintData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for finding in &self.findings {
+            writeln!(
+                f,
+                "{} {}: {}",
+                finding.check,
+                finding.severity.as_str(),
+                finding.location
+            )?;
+            writeln!(f, "    {}", finding.message)?;
+            if let Some(ref hint) = finding.hint {
+                writeln!(f, "    hint: {}", hint)?;
+            }
+        }
+
+        if self.findings.is_empty() {
+            writeln!(
+                f,
+                "clean. {} check(s) run: {}",
+                self.checks_run.len(),
+                self.checks_run.join(", ")
+            )
+        } else {
+            writeln!(
+                f,
+                "{} error(s), {} warning(s) from {} check(s): {}",
+                self.error_count,
+                self.warning_count,
+                self.checks_run.len(),
+                self.checks_run.join(", ")
+            )
         }
     }
 }

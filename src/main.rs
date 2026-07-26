@@ -23,6 +23,7 @@ use sahjhan::cli::daemon_cmd;
 use sahjhan::cli::hooks_cmd;
 use sahjhan::cli::init;
 use sahjhan::cli::ledger;
+use sahjhan::cli::lint as lint_cmd;
 use sahjhan::cli::log;
 use sahjhan::cli::manifest_cmd;
 use sahjhan::cli::mermaid as mermaid_cmd;
@@ -65,6 +66,17 @@ struct Cli {
 enum Commands {
     /// Validate protocol config without initializing a run
     Validate,
+
+    /// Statically analyze the protocol graph for integrity defects
+    Lint {
+        /// Run only these checks (e.g. --only L1 --only L3)
+        #[arg(long, value_name = "CHECK")]
+        only: Vec<String>,
+
+        /// Exit non-zero on warnings as well as errors
+        #[arg(long)]
+        strict: bool,
+    },
 
     /// Initialize ledger, manifest, genesis block
     Init,
@@ -520,6 +532,7 @@ fn main() {
                 Box::new(LegacyResult::new("set_complete", code))
             }
         },
+        Commands::Lint { only, strict } => lint_cmd::cmd_lint(&cli.config_dir, &only, strict),
         Commands::Gate { action } => match action {
             GateAction::Check { transition, args } => {
                 transition::cmd_gate_check(&cli.config_dir, &transition, &args, &targeting)

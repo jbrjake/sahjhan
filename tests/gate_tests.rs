@@ -1644,6 +1644,7 @@ fn test_field_validation_rejects_invalid_pattern() {
     config.events.insert(
         "test_event".to_string(),
         EventConfig {
+            producers: vec![],
             description: "test".to_string(),
             restricted: None,
             fields: vec![EventFieldConfig {
@@ -1698,6 +1699,7 @@ fn test_field_validation_accepts_valid_pattern() {
     config.events.insert(
         "test_event".to_string(),
         EventConfig {
+            producers: vec![],
             description: "test".to_string(),
             restricted: None,
             fields: vec![EventFieldConfig {

@@ -23,7 +23,8 @@ When you modify any source file in this repository, you MUST update documentatio
 cargo build                    # Build
 cargo test                     # Run all tests (419+ tests)
 cargo test <test_name>         # Run one test
-cargo clippy -- -D warnings    # Lint
+cargo clippy -- -D warnings    # Lint (Rust)
+sahjhan lint                   # Lint (protocol graph — static integrity checks)
 cargo fmt                      # Format
 cargo fmt --all -- --check     # CI format check (run before every commit)
 ```
@@ -63,6 +64,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | Protocol metadata | `config/protocol.rs` | `ProtocolMeta`, `PathsConfig`, `SetConfig` | protocol.toml structures |
 | Ledger template | `config/protocol.rs` | `LedgerTemplateConfig` | `[ledgers]` section; path or path_template for template-based ledger creation |
 | Guards config | `config/protocol.rs` | `GuardsConfig` | `[guards]` section; `write_gated` lists state-gated writable paths |
+| Lint config | `config/protocol.rs` | `LintConfig` | `[lint]` section; `require_producers`, `disabled_checks` (#32) |
 | Named query | `config/protocol.rs` | `NamedQuery` | `[queries.<name>]` reusable SQL predicate (`sql` + optional `intent`); referenced by query gates as `query = "<name>"` (#32) |
 | Write-gated config | `config/protocol.rs` | `WriteGatedConfig` | A path whose writability is gated by protocol state (path, writable_in, message) |
 | Hooks file | `config/hooks.rs` | `HooksFile` | Top-level hooks.toml wrapper (hooks + monitors) |
@@ -76,6 +78,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | State definitions | `config/states.rs` | `StateConfig`, `StateParam` | states.toml; `StateParam.source` controls set derivation |
 | Transition defs | `config/transitions.rs` | `TransitionConfig`, `GateConfig` | transitions.toml; `args` declares positional params; `intent` is optional per-gate "why"; `gates` holds nested child gates for composite types (any_of, all_of, not, k_of_n); remaining fields are `#[serde(flatten)]` into params |
 | Event definitions | `config/events.rs` | `EventConfig`, `EventFieldConfig` | events.toml; field patterns for validation; `restricted` marks HMAC-only events; `optional` marks non-required fields |
+| Event producers | `config/events.rs` | `ProducerConfig` | `[[events.X.producers]]`; opaque `id` + optional `available_in_states`; consumed by lint L1/L2 (#32) |
 | Render definitions | `config/renders.rs` | `RenderConfig` | renders.toml; trigger/template/target/ledger/ledger_template |
 | Config seal hashing | `config/mod.rs` | `compute_config_seals()` | SHA-256 hash all 7 sealed config files (incl. `trusted-callers.toml`, holtz #30) |
 
@@ -116,6 +119,31 @@ Sahjhan is a protocol enforcement engine. It has:
 | all_of gate | `gates/types.rs` | `[eval]` (inline) | Composite: pass if all child gates pass |
 | not gate | `gates/types.rs` | `[eval]` (inline) | Composite: invert result of single child gate |
 | k_of_n gate | `gates/types.rs` | `[eval]` (inline) | Composite: pass if >= k of n child gates pass |
+
+### lint/ — Static Integrity Analysis (`sahjhan lint`, #32)
+
+Config-only analysis: no ledger is opened, no gate command runs. Answers "is this protocol *coherent*" where `validate` answers "is this config well-formed."
+
+| Concept | File | Anchor/Item | Purpose |
+|---------|------|-------------|---------|
+| Check registry | `lint/mod.rs` | `CHECKS` | Id + description of every implemented check |
+| Finding | `lint/mod.rs` | `LintFinding`, `Severity` | check id, severity, location, message, hint |
+| Options | `lint/mod.rs` | `LintOptions` | `--only` check selection |
+| Shared analysis | `lint/mod.rs` | `Analysis` | Graph + producer index + consumed set + `unsatisfiable` map (L1 writes, L4 reads) |
+| Run all checks | `lint/mod.rs` | `[lint-run]` | Runs checks in dependency order, filters by selection, sorts |
+| Transition graph | `lint/graph.rs` | `Graph`, `Edge` | Adjacency over transitions |
+| Build graph | `lint/graph.rs` | `[graph-build]` | `build()` / `build_filtered()` (drop edges to test route-arounds) |
+| Forward closure | `lint/graph.rs` | `[graph-reachable]` | States reachable from a state |
+| Reverse closure | `lint/graph.rs` | `[graph-ancestors]` | States that can precede a state |
+| Example path | `lint/graph.rs` | `[graph-path]` | Shortest path, for diagnostics |
+| Engine events | `lint/index.rs` | `ENGINE_EVENTS`, `is_engine_event` | Event types the engine writes itself |
+| Producer index | `lint/index.rs` | `ProducerIndex`, `[build-producers]` | declared + emits + hook auto_record + engine |
+| Gate event refs | `lint/index.rs` | `EventRef`, `[gate-event-refs]` | Recursive walk; `not` flips polarity, `any_of`/`k_of_n` mark disjunctive |
+| Consumed events | `lint/index.rs` | `[consumed-events]` | Every event any config surface reads |
+| SQL event mentions | `lint/index.rs` | `[sql-event-mentions]` | Declared event names quoted in a predicate |
+| L1 unsatisfiable gate | `lint/checks.rs` | `[check-l1]` | Required event with no producer (error if restricted or `require_producers`) |
+| L4 dead-end state | `lint/checks.rs` | `[check-l4]` | Non-terminal state with no exit, or all exits unsatisfiable |
+| L5 dead vocabulary | `lint/checks.rs` | `[check-l5]` | Declared event nothing produces or consumes |
 
 ### state/ — State Machine
 
@@ -261,6 +289,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | Alias resolution | `cli/aliases.rs` | `[resolve-alias]` | Rewrite CLI args via protocol aliases |
 | JSON output types | `cli/output.rs` | `CommandOutput`, `CommandResult<T>`, data structs | Structured output with JSON envelope (`schema_version: 1`) |
 | Shared helpers | `cli/commands.rs` | (see file index) | Exit codes, ledger targeting, config loading, active-ledger marker, `[compute-registry-path]`, `[status-cache-path]`, `[write-status-cache]` |
+| Lint | `cli/lint.rs` | `[cmd-lint]` | Static integrity analysis; `--only <CHECK>`, `--strict`; exit 3 on errors |
 | Init/validate/reset | `cli/init.rs` | `[cmd-init]`, `[cmd-validate]`, `[cmd-reset]` | Lifecycle commands; init writes status-cache.json; reset requires HMAC proof via daemon (#26) |
 | Transition/gate/event | `cli/transition.rs` | `[cmd-transition]`, `[cmd-gate-check]`, `[record-and-render]`, `validate_event_fields`, `[cmd-event]` | State machine commands; transition updates status-cache.json |
 | Status/sets | `cli/status.rs` | `[cmd-status]`, `[cmd-set-status]`, `[cmd-set-complete]` | Status display + set management; status warns on missing cache; `--no-gates` skips transition gate evaluation (fast, side-effect-free for hook callers) |
@@ -404,6 +433,31 @@ There is deliberately no write path for `state`: an agent-invoked CLI cannot
 authenticate to the daemon, and trusting the binary itself would let agents
 mint HMAC proofs via `sahjhan sign`.
 
+### Flow: Lint (static integrity analysis)
+
+How `sahjhan lint` decides a protocol is incoherent — config only, no ledger, no gate execution:
+
+```
+main.rs [cli-main] → Commands::Lint
+  → cli/lint.rs [cmd-lint]
+    → lint::unknown_check_ids()          ← reject --only L99 rather than silently running nothing
+    → config/mod.rs ProtocolConfig::load  ← NOT load_config: a structurally invalid protocol is still lintable
+    → lint/mod.rs [lint-run]
+      → lint/mod.rs Analysis::new
+        → lint/graph.rs [graph-build]     ← transition adjacency (forward + reverse)
+        → lint/index.rs [build-producers] ← declared producers + emits + hook auto_record + engine built-ins
+        → lint/index.rs [consumed-events] ← gates, renders, hook checks, named queries
+      → lint/checks.rs [check-l1]         ← required event with no producer; fills Analysis.unsatisfiable
+      → lint/checks.rs [check-l4]         ← reads Analysis.unsatisfiable: is any exit from this state real?
+      → lint/checks.rs [check-l5]         ← declared event nothing produces or consumes
+      → filter by --only / [lint] disabled_checks, sort by (check, location, message)
+    → exit 3 if any error-severity finding (or any warning under --strict)
+```
+
+Check ordering is a dependency, not a preference: L4 asks whether a state's exits
+are usable, which is only answerable after L1 has marked the transitions that can
+never fire. `--only` filters the *findings*, never the run.
+
 ### Flow: Config Loading
 
 ```
@@ -507,6 +561,7 @@ main.rs [cli-main]
 | `tests/render_filter_tests.rs` | Custom Tera filters (where_eq, unique_by) |
 | `tests/json_output_tests.rs` | JSON envelope serialization, per-command data structs, CLI --json integration |
 | `tests/horizons1_tests.rs` | HORIZONS-1 mission protocol: status, transitions, gates, sets with --json |
+| `tests/lint_tests.rs` | Static analysis: L1 producer closure (restricted/require_producers/emits/auto_record/polarity), L4 dead ends, L5 dead vocabulary, check selection, CLI exit codes + JSON |
 | `tests/hook_eval_tests.rs` | Hook evaluation engine: gate/check/filter/state/monitor/write-gated/managed-path/CLI eval |
 | `tests/concurrent_append_tests.rs` | Concurrent ledger append stress tests (issue #21 TOCTOU race) |
 | `tests/daemon_platform_tests.rs` | Platform API smoke tests: preload env, exe path, cmdline, parent PID, mlock |

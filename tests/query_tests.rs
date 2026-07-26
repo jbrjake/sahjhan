@@ -11,6 +11,7 @@ fn test_events() -> HashMap<String, EventConfig> {
     events.insert(
         "finding".to_string(),
         EventConfig {
+            producers: vec![],
             description: "A finding".to_string(),
             restricted: None,
             fields: vec![

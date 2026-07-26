@@ -87,6 +87,7 @@ fn base_config() -> ProtocolConfig {
         hooks: vec![],
         monitors: vec![],
         queries: std::collections::HashMap::new(),
+        lint: Default::default(),
         vault_policies: std::collections::HashMap::new(),
     }
 }
@@ -495,6 +496,7 @@ fn test_hook_eval_auto_record() {
     config.events.insert(
         "tool_usage".to_string(),
         sahjhan::config::EventConfig {
+            producers: vec![],
             description: "Tool usage event".to_string(),
             fields: vec![sahjhan::config::EventFieldConfig {
                 name: "file_path".to_string(),

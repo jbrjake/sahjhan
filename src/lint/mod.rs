@@ -185,26 +185,7 @@ pub fn run(config: &ProtocolConfig, opts: &LintOptions) -> Vec<LintFinding> {
     findings.extend(checks::l6_predicate_drift(&analysis));
     findings.extend(checks::l7_forgeable_evidence(&analysis));
 
-    let selected: HashSet<&str> = if opts.only.is_empty() {
-        CHECKS
-            .iter()
-            .map(|(id, _)| *id)
-            .filter(|id| {
-                !config
-                    .lint
-                    .disabled_checks
-                    .iter()
-                    .any(|d| d.eq_ignore_ascii_case(id))
-            })
-            .collect()
-    } else {
-        CHECKS
-            .iter()
-            .map(|(id, _)| *id)
-            .filter(|id| opts.only.iter().any(|o| o.eq_ignore_ascii_case(id)))
-            .collect()
-    };
-
+    let selected: HashSet<String> = selected_checks(config, opts).into_iter().collect();
     findings.retain(|f| selected.contains(f.check.as_str()));
     findings.sort_by(|a, b| {
         a.check
@@ -213,6 +194,31 @@ pub fn run(config: &ProtocolConfig, opts: &LintOptions) -> Vec<LintFinding> {
             .then_with(|| a.message.cmp(&b.message))
     });
     findings
+}
+
+// [selected-checks]
+/// Check ids whose findings will be reported, in registry order.
+///
+/// An explicit `--only` selection overrides `[lint] disabled_checks` — asking
+/// for a check by name should run it, not silently drop it. Shared with the CLI
+/// so that what it reports as "checks run" is the same set that filtered the
+/// findings.
+pub fn selected_checks(config: &ProtocolConfig, opts: &LintOptions) -> Vec<String> {
+    CHECKS
+        .iter()
+        .map(|(id, _)| (*id).to_string())
+        .filter(|id| {
+            if opts.only.is_empty() {
+                !config
+                    .lint
+                    .disabled_checks
+                    .iter()
+                    .any(|d| d.eq_ignore_ascii_case(id))
+            } else {
+                opts.only.iter().any(|o| o.eq_ignore_ascii_case(id))
+            }
+        })
+        .collect()
 }
 
 /// Check ids in `only` that name no implemented check.

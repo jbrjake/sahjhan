@@ -4,3 +4,9 @@ fields = [
     { name = "set", type = "string" },
     { name = "member", type = "string" },
 ]
+
+# Read by the PreToolUse hook in hooks.toml, which blocks edits in the `working`
+# state until one of these is recorded since the last transition.
+[events.check_done]
+description = "A check was completed"
+fields = []

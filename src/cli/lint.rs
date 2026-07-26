@@ -60,21 +60,7 @@ pub fn cmd_lint(config_dir: &str, only: &[String], strict: bool) -> Box<dyn Comm
         .count();
     let warning_count = findings.len() - error_count;
 
-    let checks_run: Vec<String> = lint::CHECKS
-        .iter()
-        .map(|(id, _)| (*id).to_string())
-        .filter(|id| {
-            if only.is_empty() {
-                !config
-                    .lint
-                    .disabled_checks
-                    .iter()
-                    .any(|d| d.eq_ignore_ascii_case(id))
-            } else {
-                only.iter().any(|o| o.eq_ignore_ascii_case(id))
-            }
-        })
-        .collect();
+    let checks_run = lint::selected_checks(&config, &opts);
 
     let exit_code = if error_count > 0 || (strict && warning_count > 0) {
         EXIT_CONFIG_ERROR

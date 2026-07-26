@@ -254,7 +254,8 @@ fn test_load_minimal_protocol() {
     assert_eq!(config.protocol.name, "minimal");
     assert_eq!(config.states.len(), 3);
     assert_eq!(config.transitions.len(), 2);
-    assert_eq!(config.events.len(), 1);
+    // set_member_complete + check_done (the event the hooks.toml gate reads)
+    assert_eq!(config.events.len(), 2);
     assert!(config.sets.contains_key("check"));
     assert_eq!(config.sets["check"].values.len(), 2);
 }

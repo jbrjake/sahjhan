@@ -1214,3 +1214,222 @@ fn test_producer_available_in_unknown_state_fails_validation() {
         errors
     );
 }
+
+// ---------------------------------------------------------------------------
+// L6 — predicate mirror drift (the holtz #77 shape)
+// ---------------------------------------------------------------------------
+
+/// Two transitions out of `idle`, each carrying its own query gate.
+fn two_predicate_fixture(sql_a: &str, sql_b: &str) -> Fixture {
+    Fixture::new()
+        .states(
+            r#"
+[states.idle]
+label = "Idle"
+initial = true
+
+[states.blocked]
+label = "Blocked"
+terminal = true
+
+[states.done]
+label = "Done"
+terminal = true
+"#,
+        )
+        .transitions(&format!(
+            r#"
+[[transitions]]
+from = "idle"
+to = "done"
+command = "finish"
+gates = [{{ type = "query", sql = "{}" }}]
+
+[[transitions]]
+from = "idle"
+to = "blocked"
+command = "escape"
+gates = [{{ type = "query", sql = "{}" }}]
+"#,
+            sql_a, sql_b
+        ))
+}
+
+#[test]
+fn test_l6_identical_inline_predicates_are_reported() {
+    let sql = "SELECT count(*) < 3 as result FROM events WHERE event_type = 'fix'";
+    let f = two_predicate_fixture(sql, sql);
+    let findings = f.lint();
+    let l6 = findings_for(&findings, "L6");
+    assert_eq!(l6.len(), 1, "expected one L6 finding: {:?}", findings);
+    assert!(
+        l6[0].message.contains("duplicated verbatim"),
+        "message should call out the duplication: {}",
+        l6[0].message
+    );
+}
+
+#[test]
+fn test_l6_drifted_predicates_are_reported() {
+    // The blocking condition counts 3; its escape hatch counts 2. This is the
+    // deadlock shape: the block is strictly stronger than its own escape.
+    let f = two_predicate_fixture(
+        "SELECT count(*) < 3 as result FROM events WHERE event_type = 'fix'",
+        "SELECT count(*) < 2 as result FROM events WHERE event_type = 'fix'",
+    );
+    let findings = f.lint();
+    let l6 = findings_for(&findings, "L6");
+    assert_eq!(l6.len(), 1, "expected one L6 finding: {:?}", findings);
+    assert!(
+        l6[0].message.contains("but not the same"),
+        "message should call out the drift: {}",
+        l6[0].message
+    );
+}
+
+#[test]
+fn test_l6_unrelated_predicates_are_not_reported() {
+    let f = two_predicate_fixture(
+        "SELECT count(*) < 3 as result FROM events WHERE event_type = 'fix'",
+        "SELECT max(seq) > 100 as result FROM events",
+    );
+    assert!(
+        findings_for(&f.lint(), "L6").is_empty(),
+        "two genuinely different predicates are not drift"
+    );
+}
+
+#[test]
+fn test_l6_reformatting_does_not_hide_duplication() {
+    let f = two_predicate_fixture(
+        "SELECT count(*) < 3 as result FROM events WHERE event_type = 'fix'",
+        "select  COUNT( * )  <  3  as result   from events where event_type = 'fix' ;",
+    );
+    let findings = f.lint();
+    let l6 = findings_for(&findings, "L6");
+    assert_eq!(l6.len(), 1, "expected one L6 finding: {:?}", findings);
+    assert!(
+        l6[0].message.contains("duplicated verbatim"),
+        "normalization should see through formatting: {}",
+        l6[0].message
+    );
+}
+
+#[test]
+fn test_l6_inline_copy_of_named_query_is_reported() {
+    let f = two_predicate_fixture(
+        "SELECT count(*) < 3 as result FROM events WHERE event_type = 'fix'",
+        "SELECT max(seq) > 100 as result FROM events",
+    )
+    .protocol(
+        r#"
+[queries.fix_budget]
+sql = "SELECT count(*) < 3 as result FROM events WHERE event_type = 'fix'"
+"#,
+    );
+    let findings = f.lint();
+    let l6 = findings_for(&findings, "L6");
+    assert_eq!(l6.len(), 1, "expected one L6 finding: {:?}", findings);
+    assert!(
+        l6[0].message.contains("exact copy of [queries.fix_budget]"),
+        "message should name the query to reference: {}",
+        l6[0].message
+    );
+    assert!(l6[0]
+        .hint
+        .as_ref()
+        .unwrap()
+        .contains("query = \"fix_budget\""));
+}
+
+#[test]
+fn test_l6_gates_referencing_the_named_query_are_clean() {
+    let f = Fixture::new()
+        .protocol(
+            r#"
+[queries.fix_budget]
+sql = "SELECT count(*) < 3 as result FROM events WHERE event_type = 'fix'"
+intent = "3 fixes is the budget"
+"#,
+        )
+        .states(
+            r#"
+[states.idle]
+label = "Idle"
+initial = true
+
+[states.blocked]
+label = "Blocked"
+terminal = true
+
+[states.done]
+label = "Done"
+terminal = true
+"#,
+        )
+        .transitions(
+            r#"
+[[transitions]]
+from = "idle"
+to = "done"
+command = "finish"
+gates = [{ type = "query", query = "fix_budget" }]
+
+[[transitions]]
+from = "idle"
+to = "blocked"
+command = "escape"
+gates = [{ type = "query", query = "fix_budget" }]
+"#,
+        );
+    assert!(
+        findings_for(&f.lint(), "L6").is_empty(),
+        "one named predicate referenced twice cannot drift"
+    );
+}
+
+#[test]
+fn test_l6_similarity_threshold_is_configurable() {
+    let f = two_predicate_fixture(
+        "SELECT count(*) < 3 as result FROM events WHERE event_type = 'fix'",
+        "SELECT count(*) < 3 as result FROM events WHERE event_type = 'review' AND seq > 10",
+    );
+    assert!(
+        findings_for(&f.lint(), "L6").is_empty(),
+        "below the default threshold"
+    );
+
+    let loosened = two_predicate_fixture(
+        "SELECT count(*) < 3 as result FROM events WHERE event_type = 'fix'",
+        "SELECT count(*) < 3 as result FROM events WHERE event_type = 'review' AND seq > 10",
+    )
+    .protocol("\n[lint]\nsimilarity_threshold = 0.5\n");
+    assert!(
+        !findings_for(&loosened.lint(), "L6").is_empty(),
+        "a lower threshold should catch it"
+    );
+}
+
+#[test]
+fn test_similarity_scoring() {
+    use sahjhan::lint::similarity::{normalize_sql, similarity};
+
+    let a = normalize_sql("SELECT count(*) < 3 FROM events");
+    let b = normalize_sql("select COUNT( * ) < 3 from events;");
+    assert_eq!(a, b, "normalization should erase case and spacing");
+    assert_eq!(similarity(&a, &b), 1.0);
+
+    let c = normalize_sql("SELECT count(*) < 9 FROM events");
+    let score = similarity(&a, &c);
+    assert!(
+        score > 0.85 && score < 1.0,
+        "one changed token should be near-identical but not equal: {}",
+        score
+    );
+
+    let d = normalize_sql("SELECT max(seq) FROM other_table WHERE x = 1");
+    assert!(
+        similarity(&a, &d) < 0.85,
+        "unrelated predicates should score low"
+    );
+}

@@ -24,6 +24,7 @@
 pub mod checks;
 pub mod graph;
 pub mod index;
+pub mod similarity;
 
 use std::collections::{HashMap, HashSet};
 
@@ -50,6 +51,10 @@ pub const CHECKS: &[(&str, &str)] = &[
         "every non-terminal state has at least one usable exit",
     ),
     ("L5", "every declared event is produced or consumed"),
+    (
+        "L6",
+        "a predicate that decides a fact is declared once, not copied",
+    ),
 ];
 
 /// How serious a finding is.
@@ -173,6 +178,7 @@ pub fn run(config: &ProtocolConfig, opts: &LintOptions) -> Vec<LintFinding> {
     findings.extend(checks::l3_boundary_route_around(&analysis));
     findings.extend(checks::l4_dead_end_states(&analysis));
     findings.extend(checks::l5_dead_vocabulary(&analysis));
+    findings.extend(checks::l6_predicate_drift(&analysis));
 
     let selected: HashSet<&str> = if opts.only.is_empty() {
         CHECKS

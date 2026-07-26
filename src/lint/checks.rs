@@ -9,10 +9,13 @@
 // - [check-l3]  l3_boundary_route_around() — a path that reaches a boundary's target without crossing it
 // - [check-l4]  l4_dead_end_states()      — a non-terminal state with no usable exit
 // - [check-l5]  l5_dead_vocabulary()      — a declared event nothing produces or consumes
+// - [check-l6]  l6_predicate_drift()      — inline predicates near-identical to a named query or to each other
+// - [inline-predicates] inline_query_predicates() — every inline query gate SQL, with its location
 
 use crate::config::GateConfig;
 
 use super::index::{gate_event_refs, is_engine_event, EventRef};
+use super::similarity;
 use super::{Analysis, LintFinding};
 
 // [check-l1]
@@ -522,8 +525,148 @@ pub fn l5_dead_vocabulary(analysis: &Analysis) -> Vec<LintFinding> {
     findings
 }
 
-/// Whether a gate tree contains a gate of the given type (helper for later checks).
-#[allow(dead_code)]
-pub(crate) fn gate_tree_contains(gate: &GateConfig, gate_type: &str) -> bool {
-    gate.gate_type == gate_type || gate.gates.iter().any(|g| gate_tree_contains(g, gate_type))
+// [check-l6]
+/// L6 — a predicate that decides a fact should exist once, not twice.
+///
+/// Two gates that must agree about the same fact, each carrying its own copy of
+/// the SQL, are two strings hoped to be equal. They stay equal exactly as long
+/// as nobody edits one of them. holtz #77 is what happens when someone does:
+/// a blocking condition and the escape hatch it printed drifted apart until the
+/// block was strictly stronger than its own escape, and the run deadlocked
+/// while telling the agent exactly which impossible thing to do.
+///
+/// The check is textual on purpose. Two predicates that mean the same thing but
+/// read differently are not lint's business; two that read *almost* the same
+/// are, because that is what one predicate looks like after someone edited a
+/// copy of it. Reported as warnings — duplication is a maintainability defect,
+/// not a protocol that is provably broken today.
+///
+/// The fix in both cases is `[queries.<name>]`: give the fact a name and let
+/// both gates reference it, so they are the same object rather than two strings.
+pub fn l6_predicate_drift(analysis: &Analysis) -> Vec<LintFinding> {
+    let config = analysis.config;
+    let mut findings = Vec::new();
+
+    let threshold = config
+        .lint
+        .similarity_threshold
+        .unwrap_or(similarity::DEFAULT_THRESHOLD);
+
+    let inline = inline_query_predicates(config);
+    let normalized: Vec<String> = inline
+        .iter()
+        .map(|(_, sql)| similarity::normalize_sql(sql))
+        .collect();
+
+    let named: Vec<(&String, String)> = {
+        let mut v: Vec<(&String, String)> = config
+            .queries
+            .iter()
+            .map(|(name, q)| (name, similarity::normalize_sql(&q.sql)))
+            .collect();
+        v.sort_by(|a, b| a.0.cmp(b.0));
+        v
+    };
+
+    // 1. Inline predicate vs. named query.
+    let mut matched_named: Vec<Option<&str>> = vec![None; inline.len()];
+    for (i, (location, _)) in inline.iter().enumerate() {
+        for (name, named_sql) in &named {
+            let score = similarity::similarity(&normalized[i], named_sql);
+            if score < threshold {
+                continue;
+            }
+            matched_named[i] = Some(name.as_str());
+            let message = if &normalized[i] == named_sql {
+                format!(
+                    "inline predicate is an exact copy of [queries.{}] — the copy will not follow the original",
+                    name
+                )
+            } else {
+                format!(
+                    "inline predicate is {:.0}% identical to [queries.{}] but not the same — one of them has already drifted",
+                    score * 100.0,
+                    name
+                )
+            };
+            findings.push(
+                LintFinding::warning("L6", location.clone(), message)
+                    .with_hint(format!("replace the inline sql with query = \"{}\"", name)),
+            );
+            break;
+        }
+    }
+
+    // 2. Inline predicate vs. inline predicate.
+    for i in 0..inline.len() {
+        for j in (i + 1)..inline.len() {
+            // Both already pointed at the same named query — same fix, said once.
+            if matched_named[i].is_some() && matched_named[i] == matched_named[j] {
+                continue;
+            }
+            let score = similarity::similarity(&normalized[i], &normalized[j]);
+            if score < threshold {
+                continue;
+            }
+            let message = if normalized[i] == normalized[j] {
+                format!(
+                    "predicate is duplicated verbatim at {} — two copies of one fact",
+                    inline[j].0
+                )
+            } else {
+                format!(
+                    "predicate is {:.0}% identical to the one at {} but not the same — they decide the same fact two ways",
+                    score * 100.0,
+                    inline[j].0
+                )
+            };
+            findings.push(
+                LintFinding::warning("L6", inline[i].0.clone(), message).with_hint(
+                    "declare it once as [queries.<name>] and reference it from both gates with query = \"<name>\"",
+                ),
+            );
+        }
+    }
+
+    findings
+}
+
+// [inline-predicates]
+/// Every query gate carrying inline `sql`, paired with a human-readable
+/// location. Gates that reference a named query are already single-sourced and
+/// are skipped.
+fn inline_query_predicates(config: &crate::config::ProtocolConfig) -> Vec<(String, String)> {
+    fn walk(gate: &GateConfig, location: &str, out: &mut Vec<(String, String)>) {
+        if gate.gate_type == "query" {
+            if let Some(sql) = gate.params.get("sql").and_then(|v| v.as_str()) {
+                out.push((location.to_string(), sql.to_string()));
+            }
+        }
+        for child in &gate.gates {
+            walk(child, location, out);
+        }
+    }
+
+    let mut out = Vec::new();
+    for t in &config.transitions {
+        let location = format!(
+            "transitions.toml: transition '{}' ({} \u{2192} {})",
+            t.command, t.from, t.to
+        );
+        for gate in &t.gates {
+            walk(gate, &location, &mut out);
+        }
+    }
+    for (idx, hook) in config.hooks.iter().enumerate() {
+        let location = format!("hooks.toml: hook[{}]", idx);
+        if let Some(ref gate) = hook.gate {
+            walk(gate, &location, &mut out);
+        }
+        if let Some(ref check) = hook.check {
+            if let Some(ref sql) = check.sql {
+                out.push((location, sql.clone()));
+            }
+        }
+    }
+    out
 }

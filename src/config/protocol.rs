@@ -98,6 +98,10 @@ pub struct LintConfig {
     /// Check ids (`"L1"`, `"L6"`, …) to skip entirely.
     #[serde(default)]
     pub disabled_checks: Vec<String>,
+    /// How alike two predicates must be before L6 calls them near-identical
+    /// (`0.0`..=`1.0`). Defaults to `lint::similarity::DEFAULT_THRESHOLD`.
+    #[serde(default)]
+    pub similarity_threshold: Option<f64>,
 }
 
 /// A named SQL predicate declared once and referenced by many gates.

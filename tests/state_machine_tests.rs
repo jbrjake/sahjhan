@@ -128,6 +128,7 @@ fn test_branching_fallback_transition() {
     //   2. idle→done with no gates (fallback)
     config.transitions = vec![
         TransitionConfig {
+            integrity: None,
             boundary: None,
             emits: Vec::new(),
             from: "idle".to_string(),
@@ -137,6 +138,7 @@ fn test_branching_fallback_transition() {
             gates: vec![file_exists_gate("/nonexistent_file_that_does_not_exist")],
         },
         TransitionConfig {
+            integrity: None,
             boundary: None,
             emits: Vec::new(),
             from: "idle".to_string(),
@@ -172,6 +174,7 @@ fn test_branching_first_candidate_wins() {
     let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     config.transitions = vec![
         TransitionConfig {
+            integrity: None,
             boundary: None,
             emits: Vec::new(),
             from: "idle".to_string(),
@@ -181,6 +184,7 @@ fn test_branching_first_candidate_wins() {
             gates: vec![file_exists_gate(gate_file.to_str().unwrap())],
         },
         TransitionConfig {
+            integrity: None,
             boundary: None,
             emits: Vec::new(),
             from: "idle".to_string(),
@@ -205,6 +209,7 @@ fn test_branching_all_candidates_blocked() {
     let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     config.transitions = vec![
         TransitionConfig {
+            integrity: None,
             boundary: None,
             emits: Vec::new(),
             from: "idle".to_string(),
@@ -214,6 +219,7 @@ fn test_branching_all_candidates_blocked() {
             gates: vec![file_exists_gate("/nonexistent_a")],
         },
         TransitionConfig {
+            integrity: None,
             boundary: None,
             emits: Vec::new(),
             from: "idle".to_string(),
@@ -286,6 +292,7 @@ fn emit_cfg(event: &str, fields: &[(&str, &str)], commands: &[(&str, &str)]) -> 
 fn test_transition_emits_event_with_resolved_fields() {
     let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     config.transitions = vec![TransitionConfig {
+        integrity: None,
         boundary: None,
         from: "idle".to_string(),
         to: "working".to_string(),
@@ -345,6 +352,7 @@ fn test_transition_emits_event_with_resolved_fields() {
 fn test_emit_with_unresolved_var_blocks_transition_atomically() {
     let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     config.transitions = vec![TransitionConfig {
+        integrity: None,
         boundary: None,
         from: "idle".to_string(),
         to: "working".to_string(),
@@ -380,6 +388,7 @@ fn test_emit_with_unresolved_var_blocks_transition_atomically() {
 fn test_emit_with_failing_command_blocks_transition_atomically() {
     let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     config.transitions = vec![TransitionConfig {
+        integrity: None,
         boundary: None,
         from: "idle".to_string(),
         to: "working".to_string(),
@@ -422,6 +431,7 @@ fn test_validate_rejects_restricted_emit_event() {
     config.events.insert(
         "secret".to_string(),
         EventConfig {
+            attestation: None,
             producers: vec![],
             description: "restricted".to_string(),
             restricted: Some(true),

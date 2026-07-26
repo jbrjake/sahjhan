@@ -387,6 +387,7 @@ mod tests {
             monitors: vec![],
             queries: HashMap::new(),
             boundaries: Vec::new(),
+            attestation: Default::default(),
             lint: Default::default(),
             vault_policies: HashMap::new(),
         }

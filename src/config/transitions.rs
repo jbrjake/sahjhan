@@ -4,7 +4,8 @@
 //
 // ## Index
 // - TransitionsFile         — top-level wrapper
-// - TransitionConfig        — from, to, command, args (positional params), gates, emits, boundary
+// - TransitionConfig        — from, to, command, args (positional params), gates, emits, boundary, integrity
+// - IntegrityConfig         — per-transition evidence requirements (requires_attestation)
 // - GateConfig              — gate_type + optional intent + nested gates (composite) + flattened params
 
 use serde::Deserialize;
@@ -39,6 +40,16 @@ pub struct TransitionConfig {
     /// unreachable from its source.
     #[serde(default)]
     pub boundary: Option<String>,
+    /// Integrity requirements this transition places on its own evidence.
+    ///
+    /// ```toml
+    /// [[transitions]]
+    /// command = "resume"
+    ///   [transitions.integrity]
+    ///   requires_attestation = "host"
+    /// ```
+    #[serde(default)]
+    pub integrity: Option<IntegrityConfig>,
     /// Events appended automatically when this transition's gates all pass.
     ///
     /// Lets a transition record the domain-state event it implies — e.g.
@@ -47,6 +58,22 @@ pub struct TransitionConfig {
     /// restates the same fact. See [`EmitConfig`].
     #[serde(default)]
     pub emits: Vec<EmitConfig>,
+}
+
+/// Integrity requirements a transition places on the evidence its gates read.
+///
+/// `requires_attestation` names a level from `[attestation] levels`. Lint check
+/// L7 then compares it against the declared attestation of every event the
+/// transition's gates require, and reports evidence weaker than the transition
+/// relies on — a gate demanding host-level proof, satisfied by an event the
+/// agent can write itself, enforces nothing.
+///
+/// A gate may also carry `requires_attestation` directly, which overrides the
+/// transition-level requirement for that gate.
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct IntegrityConfig {
+    #[serde(default)]
+    pub requires_attestation: Option<String>,
 }
 
 /// An event emitted automatically on a successful transition.

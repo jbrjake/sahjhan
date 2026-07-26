@@ -1433,3 +1433,341 @@ fn test_similarity_scoring() {
         "unrelated predicates should score low"
     );
 }
+
+// ---------------------------------------------------------------------------
+// L7 — forgeable evidence (the holtz #79 shape)
+// ---------------------------------------------------------------------------
+
+/// A single gated transition whose integrity block requires `requires`, reading
+/// an event declared at strength `event_level`.
+fn attestation_fixture(requires: &str, event_level: Option<&str>) -> Fixture {
+    let attestation_line = match event_level {
+        Some(level) => format!("attestation = \"{}\"\n", level),
+        None => String::new(),
+    };
+    Fixture::new()
+        .protocol(
+            r#"
+[attestation]
+levels = ["agent", "tool", "ambient", "host"]
+"#,
+        )
+        .states(
+            r#"
+[states.idle]
+label = "Idle"
+initial = true
+
+[states.done]
+label = "Done"
+terminal = true
+"#,
+        )
+        .transitions(&format!(
+            r#"
+[[transitions]]
+from = "idle"
+to = "done"
+command = "resume"
+gates = [{{ type = "ledger_has_event", event = "context_reset" }}]
+
+[transitions.integrity]
+requires_attestation = "{}"
+"#,
+            requires
+        ))
+        .events(&format!(
+            r#"
+[events.context_reset]
+description = "context was reset"
+{}fields = []
+
+[[events.context_reset.producers]]
+id = "hook:session-start"
+"#,
+            attestation_line
+        ))
+}
+
+#[test]
+fn test_l7_event_at_the_required_level_is_clean() {
+    let f = attestation_fixture("host", Some("host"));
+    assert!(
+        findings_for(&f.lint(), "L7").is_empty(),
+        "evidence at the required strength is fine"
+    );
+}
+
+#[test]
+fn test_l7_stronger_event_than_required_is_clean() {
+    let f = attestation_fixture("tool", Some("host"));
+    assert!(
+        findings_for(&f.lint(), "L7").is_empty(),
+        "stronger evidence than required is fine"
+    );
+}
+
+#[test]
+fn test_l7_weaker_event_than_required_is_error() {
+    let f = attestation_fixture("host", Some("agent"));
+    let findings = f.lint();
+    let l7 = findings_for(&findings, "L7");
+    assert_eq!(l7.len(), 1, "expected one L7 finding: {:?}", findings);
+    assert_eq!(l7[0].severity, Severity::Error);
+    assert!(
+        l7[0].message.contains("only supplies 'agent'"),
+        "message should name both levels: {}",
+        l7[0].message
+    );
+}
+
+#[test]
+fn test_l7_event_without_attestation_is_warning() {
+    let f = attestation_fixture("host", None);
+    let findings = f.lint();
+    let l7 = findings_for(&findings, "L7");
+    assert_eq!(l7.len(), 1, "expected one L7 finding: {:?}", findings);
+    assert_eq!(l7[0].severity, Severity::Warning);
+    assert!(l7[0].message.contains("declares none"));
+}
+
+#[test]
+fn test_l7_is_silent_without_a_declared_lattice() {
+    let f = Fixture::new()
+        .states(
+            r#"
+[states.idle]
+label = "Idle"
+initial = true
+
+[states.done]
+label = "Done"
+terminal = true
+"#,
+        )
+        .transitions(
+            r#"
+[[transitions]]
+from = "idle"
+to = "done"
+command = "resume"
+gates = [{ type = "ledger_has_event", event = "context_reset" }]
+
+[transitions.integrity]
+requires_attestation = "host"
+"#,
+        )
+        .events(
+            r#"
+[events.context_reset]
+description = "context was reset"
+fields = []
+
+[[events.context_reset.producers]]
+id = "hook:session-start"
+"#,
+        );
+    assert!(
+        findings_for(&f.lint(), "L7").is_empty(),
+        "with no [attestation] ordering there is nothing to compare"
+    );
+}
+
+#[test]
+fn test_l7_gate_level_requirement_overrides_the_transition() {
+    // The transition asks for "agent"; the gate itself asks for "host".
+    let f = Fixture::new()
+        .protocol(
+            r#"
+[attestation]
+levels = ["agent", "tool", "ambient", "host"]
+"#,
+        )
+        .states(
+            r#"
+[states.idle]
+label = "Idle"
+initial = true
+
+[states.done]
+label = "Done"
+terminal = true
+"#,
+        )
+        .transitions(
+            r#"
+[[transitions]]
+from = "idle"
+to = "done"
+command = "resume"
+gates = [{ type = "ledger_has_event", event = "context_reset", requires_attestation = "host" }]
+
+[transitions.integrity]
+requires_attestation = "agent"
+"#,
+        )
+        .events(
+            r#"
+[events.context_reset]
+description = "context was reset"
+attestation = "tool"
+fields = []
+
+[[events.context_reset.producers]]
+id = "hook:session-start"
+"#,
+        );
+    let findings = f.lint();
+    let l7 = findings_for(&findings, "L7");
+    assert_eq!(l7.len(), 1, "expected one L7 finding: {:?}", findings);
+    assert!(
+        l7[0].message.contains("requires attestation 'host'"),
+        "the gate's own requirement should win: {}",
+        l7[0].message
+    );
+}
+
+#[test]
+fn test_l7_negated_reference_carries_no_evidentiary_weight() {
+    let f = Fixture::new()
+        .protocol(
+            r#"
+[attestation]
+levels = ["agent", "host"]
+"#,
+        )
+        .states(
+            r#"
+[states.idle]
+label = "Idle"
+initial = true
+
+[states.done]
+label = "Done"
+terminal = true
+"#,
+        )
+        .transitions(
+            r#"
+[[transitions]]
+from = "idle"
+to = "done"
+command = "resume"
+gates = [{ type = "not", gates = [{ type = "ledger_has_event", event = "context_reset" }] }]
+
+[transitions.integrity]
+requires_attestation = "host"
+"#,
+        )
+        .events(
+            r#"
+[events.context_reset]
+description = "context was reset"
+attestation = "agent"
+fields = []
+"#,
+        );
+    assert!(
+        findings_for(&f.lint(), "L7").is_empty(),
+        "an event required to be ABSENT is not evidence"
+    );
+}
+
+#[test]
+fn test_l7_composite_gate_reports_each_leaf_once() {
+    let f = Fixture::new()
+        .protocol(
+            r#"
+[attestation]
+levels = ["agent", "host"]
+"#,
+        )
+        .states(
+            r#"
+[states.idle]
+label = "Idle"
+initial = true
+
+[states.done]
+label = "Done"
+terminal = true
+"#,
+        )
+        .transitions(
+            r#"
+[[transitions]]
+from = "idle"
+to = "done"
+command = "resume"
+gates = [{ type = "all_of", gates = [
+    { type = "ledger_has_event", event = "weak_a" },
+    { type = "ledger_has_event", event = "weak_b" },
+] }]
+
+[transitions.integrity]
+requires_attestation = "host"
+"#,
+        )
+        .events(
+            r#"
+[events.weak_a]
+description = "weak"
+attestation = "agent"
+fields = []
+
+[events.weak_b]
+description = "weak"
+attestation = "agent"
+fields = []
+"#,
+        );
+    let findings = f.lint();
+    let l7 = findings_for(&findings, "L7");
+    assert_eq!(
+        l7.len(),
+        2,
+        "each leaf should be reported exactly once: {:?}",
+        findings
+    );
+}
+
+#[test]
+fn test_undeclared_attestation_level_fails_validation() {
+    let f = attestation_fixture("host", Some("nonsense"));
+    let config = f.load();
+    let (errors, _) = config.validate_deep(f.write());
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("nonsense") && e.contains("[attestation] levels")),
+        "expected validation error for the unknown level: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_duplicate_attestation_levels_fail_validation() {
+    let f = Fixture::new()
+        .protocol(
+            r#"
+[attestation]
+levels = ["agent", "host", "agent"]
+"#,
+        )
+        .states(
+            r#"
+[states.idle]
+label = "Idle"
+initial = true
+terminal = true
+"#,
+        )
+        .transitions("transitions = []\n");
+    let config = f.load();
+    let (errors, _) = config.validate_deep(f.write());
+    assert!(
+        errors.iter().any(|e| e.contains("twice")),
+        "a repeated level makes the ordering ambiguous: {:?}",
+        errors
+    );
+}

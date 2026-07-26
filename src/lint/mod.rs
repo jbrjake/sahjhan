@@ -55,6 +55,10 @@ pub const CHECKS: &[(&str, &str)] = &[
         "L6",
         "a predicate that decides a fact is declared once, not copied",
     ),
+    (
+        "L7",
+        "evidence is at least as strong as the gate relying on it",
+    ),
 ];
 
 /// How serious a finding is.
@@ -179,6 +183,7 @@ pub fn run(config: &ProtocolConfig, opts: &LintOptions) -> Vec<LintFinding> {
     findings.extend(checks::l4_dead_end_states(&analysis));
     findings.extend(checks::l5_dead_vocabulary(&analysis));
     findings.extend(checks::l6_predicate_drift(&analysis));
+    findings.extend(checks::l7_forgeable_evidence(&analysis));
 
     let selected: HashSet<&str> = if opts.only.is_empty() {
         CHECKS

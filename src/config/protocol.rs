@@ -15,6 +15,7 @@
 // - LintConfig              — [lint] section; static-analysis strictness knobs
 // - BoundaryConfig          — [[boundaries]]; an edge that must not be routed around
 // - BoundaryEdge            — the from/to pair a boundary protects
+// - AttestationConfig       — [attestation]; consumer-declared evidence-strength ordering
 
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -38,7 +39,43 @@ pub struct ProtocolFile {
     #[serde(default)]
     pub boundaries: Vec<BoundaryConfig>,
     #[serde(default)]
+    pub attestation: AttestationConfig,
+    #[serde(default)]
     pub lint: LintConfig,
+}
+
+/// The `[attestation]` section — a consumer-declared ordering the engine only
+/// compares.
+///
+/// ```toml
+/// [attestation]
+/// levels = ["agent", "tool", "ambient", "host"]   # weakest → strongest
+/// ```
+///
+/// The engine must not learn what "host" or "agent" means, and does not: the
+/// levels are opaque strings whose only property is their position in this
+/// list. Lint check L7 compares an event's declared level against the level a
+/// transition or gate requires, and reports evidence weaker than the thing
+/// relying on it. Same shape as `write_gated` and the vault policies — the
+/// engine enforces a policy it does not interpret.
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct AttestationConfig {
+    /// Levels from weakest to strongest. Empty means no lattice is declared and
+    /// L7 has nothing to compare.
+    #[serde(default)]
+    pub levels: Vec<String>,
+}
+
+impl AttestationConfig {
+    /// Position of `level` in the ordering, or `None` if it was never declared.
+    pub fn rank(&self, level: &str) -> Option<usize> {
+        self.levels.iter().position(|l| l == level)
+    }
+
+    /// Whether any ordering is declared.
+    pub fn is_empty(&self) -> bool {
+        self.levels.is_empty()
+    }
 }
 
 /// An edge in the transition graph that must not be bypassed.

@@ -10,6 +10,7 @@
 // - [check-l4]  l4_dead_end_states()      — a non-terminal state with no usable exit
 // - [check-l5]  l5_dead_vocabulary()      — a declared event nothing produces or consumes
 // - [check-l6]  l6_predicate_drift()      — inline predicates near-identical to a named query or to each other
+// - [check-l7]  l7_forgeable_evidence()   — a gate requiring evidence stronger than its producer supplies
 // - [inline-predicates] inline_query_predicates() — every inline query gate SQL, with its location
 
 use crate::config::GateConfig;
@@ -629,6 +630,205 @@ pub fn l6_predicate_drift(analysis: &Analysis) -> Vec<LintFinding> {
     }
 
     findings
+}
+
+// [check-l7]
+/// L7 — evidence must be at least as strong as the gate relying on it.
+///
+/// A transition can declare how much it trusts its own evidence:
+///
+/// ```toml
+/// [transitions.integrity]
+/// requires_attestation = "host"
+/// ```
+///
+/// and each event declares how strong it is (`attestation = "host"`). Both are
+/// positions in the consumer's `[attestation] levels` ordering; the engine
+/// compares them and knows nothing else about them. If a gate demands
+/// host-level proof but is satisfied by an event the agent can write itself,
+/// the gate enforces nothing — it reads as a strong check and behaves as a
+/// weak one, which is worse than no check at all because it stops anyone
+/// looking. That is holtz #79.
+///
+/// A gate may carry `requires_attestation` directly, overriding its
+/// transition's requirement for that gate alone.
+///
+/// Silent unless the protocol declares an ordering: with no `[attestation]`
+/// section there is nothing to compare, and the check has no opinion.
+pub fn l7_forgeable_evidence(analysis: &Analysis) -> Vec<LintFinding> {
+    let config = analysis.config;
+    let mut findings = Vec::new();
+
+    if config.attestation.is_empty() {
+        return findings;
+    }
+
+    for (idx, t) in config.transitions.iter().enumerate() {
+        let transition_level = t
+            .integrity
+            .as_ref()
+            .and_then(|i| i.requires_attestation.as_deref());
+        let location = analysis.transition_location(idx);
+
+        // Undeclared level names are reported once per transition rather than
+        // once per leaf that inherits them.
+        let mut levels_in_force: Vec<&str> = Vec::new();
+        if let Some(level) = transition_level {
+            levels_in_force.push(level);
+        }
+        for gate in &t.gates {
+            collect_required_levels(gate, &mut levels_in_force);
+        }
+        levels_in_force.sort_unstable();
+        levels_in_force.dedup();
+        for level in &levels_in_force {
+            if config.attestation.rank(level).is_none() {
+                findings.push(
+                    LintFinding::error(
+                        "L7",
+                        location.clone(),
+                        format!(
+                            "requires_attestation '{}' is not one of [attestation] levels ({})",
+                            level,
+                            config.attestation.levels.join(", ")
+                        ),
+                    )
+                    .with_hint("use a declared level, or add it to [attestation] levels"),
+                );
+            }
+        }
+
+        for gate in &t.gates {
+            collect_attested_refs(
+                gate,
+                config,
+                transition_level,
+                true,
+                &location,
+                &mut findings,
+            );
+        }
+    }
+
+    findings
+}
+
+/// Every `requires_attestation` value named anywhere in a gate tree.
+fn collect_required_levels<'a>(gate: &'a GateConfig, out: &mut Vec<&'a str>) {
+    if let Some(level) = gate
+        .params
+        .get("requires_attestation")
+        .and_then(|v| v.as_str())
+    {
+        out.push(level);
+    }
+    for child in &gate.gates {
+        collect_required_levels(child, out);
+    }
+}
+
+/// Walk a gate tree comparing each required event's attestation against the
+/// level in force (the gate's own `requires_attestation`, else the one
+/// inherited from its parent gate or the transition).
+///
+/// Composite gates only recurse — their leaves carry the event references —
+/// and `not` flips polarity, since an event a gate requires to be *absent*
+/// carries no evidentiary weight.
+fn collect_attested_refs(
+    gate: &GateConfig,
+    config: &crate::config::ProtocolConfig,
+    inherited: Option<&str>,
+    positive: bool,
+    location: &str,
+    findings: &mut Vec<LintFinding>,
+) {
+    let required = gate
+        .params
+        .get("requires_attestation")
+        .and_then(|v| v.as_str())
+        .or(inherited);
+
+    if matches!(
+        gate.gate_type.as_str(),
+        "any_of" | "all_of" | "not" | "k_of_n"
+    ) {
+        let child_positive = if gate.gate_type == "not" {
+            !positive
+        } else {
+            positive
+        };
+        for child in &gate.gates {
+            collect_attested_refs(child, config, required, child_positive, location, findings);
+        }
+        return;
+    }
+
+    if !positive {
+        return;
+    }
+    let Some(required) = required else {
+        return;
+    };
+    // Undeclared levels are reported once per transition by the caller.
+    let Some(required_rank) = config.attestation.rank(required) else {
+        return;
+    };
+
+    for r in gate_event_refs(gate, config) {
+        if !r.required || is_engine_event(&r.event) {
+            continue;
+        }
+        let Some(event) = config.events.get(&r.event) else {
+            continue;
+        };
+
+        match event.attestation.as_deref() {
+            None => findings.push(
+                LintFinding::warning(
+                    "L7",
+                    location.to_string(),
+                    format!(
+                        "gate requires attestation '{}' but event '{}' declares none — its strength is unknown",
+                        required, r.event
+                    ),
+                )
+                .with_hint(format!(
+                    "declare attestation on [events.{}] so the requirement can be checked",
+                    r.event
+                )),
+            ),
+            Some(level) => match config.attestation.rank(level) {
+                None => findings.push(
+                    LintFinding::error(
+                        "L7",
+                        location.to_string(),
+                        format!(
+                            "event '{}' declares attestation '{}', which is not one of [attestation] levels ({})",
+                            r.event,
+                            level,
+                            config.attestation.levels.join(", ")
+                        ),
+                    )
+                    .with_hint("use a declared level, or add it to [attestation] levels"),
+                ),
+                Some(rank) if rank < required_rank => findings.push(
+                    LintFinding::error(
+                        "L7",
+                        location.to_string(),
+                        format!(
+                            "gate requires attestation '{}' but event '{}' only supplies '{}' — the gate reads as a strong check and enforces a weak one",
+                            required, r.event, level
+                        ),
+                    )
+                    .with_hint(format!(
+                        "raise [events.{}] to '{}' and make its producer supply that, or lower the requirement",
+                        r.event, required
+                    )),
+                ),
+                Some(_) => {}
+            },
+        }
+    }
 }
 
 // [inline-predicates]

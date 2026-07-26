@@ -4,7 +4,7 @@
 //
 // ## Index
 // - EventsFile              — top-level wrapper
-// - EventConfig             — single event type definition; `restricted` marks HMAC-only events
+// - EventConfig             — single event type definition; `restricted` marks HMAC-only events; `attestation` names its evidence strength
 // - EventFieldConfig        — field name, type, pattern, allowed values, optional flag
 // - ProducerConfig          — a declared producer of an event, with an optional state window
 
@@ -28,6 +28,11 @@ pub struct EventConfig {
     /// Consumed by `lint` checks L1 and L2 — see [`ProducerConfig`].
     #[serde(default)]
     pub producers: Vec<ProducerConfig>,
+    /// How strong this event's evidence is, as a level from the consumer's
+    /// `[attestation] levels` ordering. Opaque to the engine: lint check L7 only
+    /// compares it against what a transition or gate requires.
+    #[serde(default)]
+    pub attestation: Option<String>,
     pub fields: Vec<EventFieldConfig>,
 }
 

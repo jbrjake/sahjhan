@@ -24,12 +24,13 @@ pub use hooks::{
     MonitorTrigger,
 };
 pub use protocol::{
-    BoundaryConfig, BoundaryEdge, CheckpointConfig, GuardsConfig, LedgerTemplateConfig, LintConfig,
-    NamedQuery, PathsConfig, ProtocolMeta, SetConfig, WriteGatedConfig,
+    AttestationConfig, BoundaryConfig, BoundaryEdge, CheckpointConfig, GuardsConfig,
+    LedgerTemplateConfig, LintConfig, NamedQuery, PathsConfig, ProtocolMeta, SetConfig,
+    WriteGatedConfig,
 };
 pub use renders::RenderConfig;
 pub use states::{StateConfig, StateParam};
-pub use transitions::{GateConfig, TransitionConfig};
+pub use transitions::{GateConfig, IntegrityConfig, TransitionConfig};
 pub use vault_policy::{VaultAccess, VaultPolicy};
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -55,6 +56,9 @@ pub struct ProtocolConfig {
     /// Edges that must not be routed around (`[[boundaries]]`), checked by
     /// lint L3. Empty when none are declared.
     pub boundaries: Vec<BoundaryConfig>,
+    /// Consumer-declared evidence-strength ordering (`[attestation] levels`),
+    /// compared but never interpreted by the engine. Checked by lint L7.
+    pub attestation: AttestationConfig,
     /// The `[lint]` section — strictness knobs for static analysis. Defaults
     /// apply when the section is absent.
     pub lint: LintConfig,
@@ -161,6 +165,7 @@ impl ProtocolConfig {
             guards: proto_file.guards,
             queries: proto_file.queries,
             boundaries: proto_file.boundaries,
+            attestation: proto_file.attestation,
             lint: proto_file.lint,
             hooks: hooks_vec,
             monitors: monitors_vec,
@@ -689,6 +694,53 @@ impl ProtocolConfig {
                         errors.push(format!(
                             "protocol.toml: write_gated path '{}' references unknown state '{}'",
                             wg.path, s
+                        ));
+                    }
+                }
+            }
+        }
+
+        // 15b. Attestation lattice: levels must be distinct, and every level
+        // named by an event or a transition must be one of them. A typo here
+        // would otherwise make a requirement silently unenforceable.
+        {
+            let mut seen_levels: HashSet<&str> = HashSet::new();
+            for level in &self.attestation.levels {
+                if !seen_levels.insert(level.as_str()) {
+                    errors.push(format!(
+                        "protocol.toml: [attestation] levels contains '{}' twice — the ordering must be unambiguous",
+                        level
+                    ));
+                }
+            }
+
+            let known_level = |level: &str| self.attestation.rank(level).is_some();
+
+            for (event_name, event) in &self.events {
+                if let Some(ref level) = event.attestation {
+                    if !known_level(level) {
+                        errors.push(format!(
+                            "events.toml: event '{}' declares attestation '{}' which is not in [attestation] levels ({})",
+                            event_name,
+                            level,
+                            self.attestation.levels.join(", ")
+                        ));
+                    }
+                }
+            }
+
+            for t in &self.transitions {
+                if let Some(level) = t
+                    .integrity
+                    .as_ref()
+                    .and_then(|i| i.requires_attestation.as_deref())
+                {
+                    if !known_level(level) {
+                        errors.push(format!(
+                            "transitions.toml: transition '{}' requires attestation '{}' which is not in [attestation] levels ({})",
+                            t.command,
+                            level,
+                            self.attestation.levels.join(", ")
                         ));
                     }
                 }

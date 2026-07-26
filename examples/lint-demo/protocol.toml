@@ -1,0 +1,45 @@
+# A small protocol that exercises everything `sahjhan lint` knows how to check
+# (issue #32), and passes all seven checks. Break any one declaration here and
+# lint will tell you which one and why.
+
+[protocol]
+name = "lint-demo"
+version = "1.0.0"
+description = "Fix loop with a context-reset boundary — a worked example for sahjhan lint"
+
+[paths]
+managed = []
+data_dir = "output/.sahjhan"
+render_dir = "output"
+
+# --- Named queries -----------------------------------------------------------
+# One predicate, one name. Both gates that care about the fix budget reference
+# this rather than carrying a copy of the SQL, so the two cannot drift apart
+# (lint L6 reports the copies that do).
+
+[queries.fix_budget]
+sql    = "SELECT count(*) < 3 as result FROM events WHERE event_type = 'fix_commit'"
+intent = "three fixes is the budget for one merge"
+
+# --- Boundaries --------------------------------------------------------------
+# Returning to the fix loop after a merge must pass through the context reset.
+# lint L3 proves it by deleting every edge tagged `context-reset` and checking
+# that fix_loop is then unreachable from merge_done.
+
+[[boundaries]]
+name = "context-reset"
+must_traverse = { from = "merge_done", to = "fix_loop" }
+
+# --- Attestation -------------------------------------------------------------
+# A consumer-declared ordering. The engine never learns what these mean; it only
+# compares positions (lint L7).
+
+[attestation]
+levels = ["agent", "tool", "ambient", "host"]
+
+# --- Lint --------------------------------------------------------------------
+
+[lint]
+# Producers are declared for everything here, so hold the protocol to full
+# closure rather than only flagging unproduced restricted events.
+require_producers = true

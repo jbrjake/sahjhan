@@ -1,0 +1,26 @@
+[events.fix_commit]
+description = "A fix was committed during the fix loop"
+attestation = "agent"
+fields = [
+    { name = "sha", type = "string", pattern = "^[0-9a-f]{7,40}$" },
+]
+
+# Recorded by the agent through `sahjhan event`, which is a producer with no
+# state window: it can run whenever.
+[[events.fix_commit.producers]]
+id = "cli:event"
+
+[events.context_reset]
+description = "The agent's context was cleared by the harness"
+# Restricted: only `authed-event` with an HMAC proof can record it, so the agent
+# cannot manufacture its own evidence of a reset.
+restricted = true
+attestation = "host"
+fields = []
+
+# Declared producer, with the window lint L2 checks against reachability: the
+# hook runs while the run sits in awaiting_clear, which is exactly where the
+# gate that needs it is evaluated.
+[[events.context_reset.producers]]
+id = "hook:session-start"
+available_in_states = ["awaiting_clear"]

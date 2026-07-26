@@ -1,0 +1,50 @@
+[[transitions]]
+from = "fix_loop"
+to = "merge_done"
+command = "merge"
+gates = [
+    { type = "query", query = "fix_budget" },
+]
+
+[[transitions]]
+from = "merge_done"
+to = "awaiting_clear"
+command = "clear"
+gates = []
+
+# The boundary edge. Tagging it is what makes "the context reset happens here"
+# checkable rather than conventional.
+[[transitions]]
+from = "awaiting_clear"
+to = "fix_loop"
+command = "resume"
+boundary = "context-reset"
+gates = [
+    { type = "ledger_has_event", event = "context_reset", intent = "the context must actually have been cleared" },
+]
+
+  # This transition trusts host-level evidence and says so. lint L7 checks that
+  # `context_reset` really is declared that strong.
+  [transitions.integrity]
+  requires_attestation = "host"
+
+[[transitions]]
+from = "merge_done"
+to = "paused"
+command = "pause"
+gates = []
+
+# A second `resume`, from the pause state. It rejoins BEFORE the boundary, so it
+# is not a bypass — route it straight to fix_loop instead and lint L3 will print
+# the path it just opened.
+[[transitions]]
+from = "paused"
+to = "awaiting_clear"
+command = "resume"
+gates = []
+
+[[transitions]]
+from = "merge_done"
+to = "shipped"
+command = "ship"
+gates = []

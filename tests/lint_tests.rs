@@ -1771,3 +1771,54 @@ terminal = true
         errors
     );
 }
+
+// ---------------------------------------------------------------------------
+// The worked example
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_lint_demo_example_validates_and_lints_clean() {
+    let dir = std::path::Path::new("examples/lint-demo");
+    let config = ProtocolConfig::load(dir).unwrap();
+
+    let (errors, _) = config.validate_deep(dir);
+    assert!(errors.is_empty(), "example should validate: {:?}", errors);
+
+    let findings = lint::run(&config, &LintOptions::default());
+    assert!(
+        findings.is_empty(),
+        "the worked example must pass every check: {:?}",
+        findings
+    );
+}
+
+#[test]
+fn test_lint_demo_example_rerouted_pause_opens_a_bypass() {
+    // The example's second `resume` rejoins before the boundary on purpose.
+    // Pointing it straight at fix_loop is the mistake L3 exists to catch, and
+    // the example's comment says so — this test keeps that claim honest.
+    let dir = std::path::Path::new("examples/lint-demo");
+    let tmp = TempDir::new().unwrap();
+    for file in ["protocol.toml", "states.toml", "events.toml"] {
+        std::fs::copy(dir.join(file), tmp.path().join(file)).unwrap();
+    }
+    let transitions = std::fs::read_to_string(dir.join("transitions.toml"))
+        .unwrap()
+        .replace(
+            "from = \"paused\"\nto = \"awaiting_clear\"",
+            "from = \"paused\"\nto = \"fix_loop\"",
+        );
+    std::fs::write(tmp.path().join("transitions.toml"), transitions).unwrap();
+
+    let config = ProtocolConfig::load(tmp.path()).unwrap();
+    let findings = lint::run(&config, &LintOptions::default());
+    let l3 = findings_for(&findings, "L3");
+    assert_eq!(l3.len(), 1, "expected one L3 finding: {:?}", findings);
+    assert!(
+        l3[0]
+            .message
+            .contains("merge_done -(pause)-> paused -(resume)-> fix_loop"),
+        "the finding should print the bypass it found: {}",
+        l3[0].message
+    );
+}

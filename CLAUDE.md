@@ -10,6 +10,7 @@ When you modify any source file in this repository, you MUST update documentatio
 2. **If you add a new source file:** Add a `// ## Index` header to it AND add it to the relevant module table below.
 3. **If you change a cross-cutting flow** (e.g., how template variables propagate, how gates are evaluated): Update the Flow Maps section below.
 4. **If you add a new gate type:** Add it to the Gates table, the `known_gates` map in `validate_deep`, AND the Gate Types section below.
+5. **If you add a new lint check:** Add it to `CHECKS` in `lint/mod.rs`, call it from `[lint-run]` in dependency order, add a row to the lint table below and the Lint flow map, AND document it in the README's static-analysis section.
 
 **Why:** An agent that reads stale docs will make wrong assumptions, write wrong code, and waste time. Every minute spent updating docs saves ten minutes of context-building for the next reader. Stale docs are worse than no docs — they actively mislead.
 
@@ -31,7 +32,7 @@ cargo fmt --all -- --check     # CI format check (run before every commit)
 
 **Config dir:** Protocol TOML files (protocol.toml, states.toml, transitions.toml, events.toml, renders.toml, hooks.toml)
 **Data dir:** Runtime state (ledger.jsonl, manifest.json, ledgers.toml registry, active-ledger marker)
-**Example config:** `examples/minimal/`
+**Example config:** `examples/minimal/` (smallest working protocol), `examples/lint-demo/` (every lint-checked surface: named queries, boundaries, producers, attestation)
 
 ---
 
@@ -575,7 +576,7 @@ main.rs [cli-main]
 | `tests/render_filter_tests.rs` | Custom Tera filters (where_eq, unique_by) |
 | `tests/json_output_tests.rs` | JSON envelope serialization, per-command data structs, CLI --json integration |
 | `tests/horizons1_tests.rs` | HORIZONS-1 mission protocol: status, transitions, gates, sets with --json |
-| `tests/lint_tests.rs` | Static analysis: L1 producer closure (restricted/require_producers/emits/auto_record/polarity), L2 producer windows vs reachability, L3 boundary route-arounds, L4 dead ends, L5 dead vocabulary, L6 predicate drift + similarity scoring, L7 attestation lattice, check selection, CLI exit codes + JSON |
+| `tests/lint_tests.rs` | Static analysis (incl. `examples/lint-demo` lints clean): L1 producer closure (restricted/require_producers/emits/auto_record/polarity), L2 producer windows vs reachability, L3 boundary route-arounds, L4 dead ends, L5 dead vocabulary, L6 predicate drift + similarity scoring, L7 attestation lattice, check selection, CLI exit codes + JSON |
 | `tests/hook_eval_tests.rs` | Hook evaluation engine: gate/check/filter/state/monitor/write-gated/managed-path/CLI eval |
 | `tests/concurrent_append_tests.rs` | Concurrent ledger append stress tests (issue #21 TOCTOU race) |
 | `tests/daemon_platform_tests.rs` | Platform API smoke tests: preload env, exe path, cmdline, parent PID, mlock |

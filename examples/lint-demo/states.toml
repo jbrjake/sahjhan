@@ -1,0 +1,16 @@
+[states.fix_loop]
+label = "Fixing"
+initial = true
+
+[states.merge_done]
+label = "Merged"
+
+[states.awaiting_clear]
+label = "Awaiting context clear"
+
+[states.paused]
+label = "Paused"
+
+[states.shipped]
+label = "Shipped"
+terminal = true

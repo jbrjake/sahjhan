@@ -586,6 +586,8 @@ You can also use SQL as a gate condition:
 
 The agent accumulates too many findings, it can't advance. The SQL runs inside the gate evaluator against the live ledger every time the transition is attempted.
 
+If the same predicate guards more than one transition, declare it once under `[queries]` and reference it by name instead of copying the SQL — see [static analysis](#static-analysis-sahjhan-lint).
+
 ## Multiple ledgers
 
 Not every log needs a state machine. Sometimes you just want an append-only accumulator, a project-level event stream that lives alongside the per-run protocol.
@@ -681,7 +683,7 @@ Hooks handle the perimeter. PreToolUse evaluates gate conditions, write guards, 
 | `no_violations` | (none) | Clean record. No tampering. |
 | `field_not_empty` | `field` | Named field not blank. No empty check-ins. |
 | `snapshot_compare` | `cmd`, `extract`, `compare`, `reference` | Compare a live value against a recorded baseline. |
-| `query` | `sql`, `expect` | SQL against the ledger. DataFusion evaluates it. The agent can't argue with a COUNT(*). |
+| `query` | `sql` *or* `query`, `expect` | SQL against the ledger. DataFusion evaluates it. The agent can't argue with a COUNT(*). `query = "<name>"` references a predicate declared once in `[queries]` — see [static analysis](#static-analysis-sahjhan-lint). |
 
 All gate types accept an optional `intent` parameter — a human-readable string explaining why the gate exists. When a gate blocks, Sahjhan prints the intent alongside the failure so the agent knows what to fix, not just that something failed.
 
@@ -778,6 +780,120 @@ sahjhan gate check "set complete perspective"
 ```
 
 `?` means the gate can't be evaluated without the missing arg. `✓` and `✗` still mean pass and fail. Gates without template variables evaluate normally regardless.
+
+## Static analysis: `sahjhan lint`
+
+`sahjhan validate` answers "is this config well-formed" — do the states exist, do the gates name real types, do the template files resolve. `sahjhan lint` answers the next question, which is the one that actually bites: **is this protocol coherent?**
+
+A gate can be perfectly well-formed and still be a wall. It can wait for an event nothing is able to record. It can wait for one whose only producer runs in a state the run has already left. Two gates that must agree about the same fact can drift apart until the blocking condition is strictly stronger than the escape hatch it prints, and the agent deadlocks while being told exactly which impossible thing to do. None of that is a parse error. All of it is decidable at rest from config the engine already has.
+
+```bash
+sahjhan lint
+# L2 error: transitions.toml: transition 'finish' (middle → late)
+#     gate 'ledger_has_event' requires event 'signed_off', but every producer runs only
+#     in states that cannot precede 'middle' — hook:sign-off (in late)
+#     hint: widen the producer's available_in_states, or move the gate to a transition
+#           the producer can precede
+# L4 error: states.toml: state 'anomaly'
+#     non-terminal state 'anomaly' has no outgoing transition — a run that reaches it cannot continue
+#     hint: add a transition out of it, or mark the state terminal = true
+# 2 error(s), 0 warning(s) from 7 check(s): L1, L2, L3, L4, L5, L6, L7
+```
+
+| Check | What it catches |
+|-------|-----------------|
+| `L1` | A gate requires an event nothing can produce. The agent reads the intent, does the work, stays blocked. |
+| `L2` | A gate requires an event whose producers can only run in states that cannot precede it. Satisfiable on paper, unsatisfiable in every actual run. |
+| `L3` | A path reaches a boundary's target without crossing the boundary. The route-around nobody noticed. |
+| `L4` | A non-terminal state with no exit, or whose every exit is blocked by an unsatisfiable gate. |
+| `L5` | A declared event nothing produces or consumes. Dead vocabulary that reads as load-bearing. |
+| `L6` | Two copies of one predicate — inline SQL duplicating a named query, or each other. Drift waiting to happen. |
+| `L7` | A gate demanding evidence stronger than the event supplying it. Reads as a strong check, enforces a weak one. |
+
+Errors mean the protocol is provably broken given what the engine can see. Warnings mean it is suspicious but a legitimate reading exists. `--strict` makes warnings fail too, `--only L1 --only L3` narrows the run, `--json` emits the usual envelope. Exit code 3 on errors.
+
+Nothing here opens a ledger or runs a gate command — it is config in, findings out, which makes it cheap enough for a pre-commit hook:
+
+```bash
+sahjhan --config-dir tdd-protocol lint --strict || exit 1
+```
+
+### Named queries
+
+A predicate that decides a fact should exist once. Declare it, then reference it:
+
+```toml
+[queries.fix_budget]
+sql    = "SELECT count(*) < 3 as result FROM events WHERE type = 'fix_commit'"
+intent = "three fixes is the budget"
+```
+
+```toml
+{ type = "query", query = "fix_budget" }
+```
+
+Two gates that must agree are now the same object rather than two strings hoped to be equal, and `intent` travels with the predicate instead of being restated at every use. L6 flags the inline copies you haven't converted yet.
+
+### Boundaries
+
+Some edges exist to make something happen, and the protocol is only sound if every route crosses them:
+
+```toml
+[[boundaries]]
+name = "context-reset"
+must_traverse = { from = "merge_done", to = "fix_loop" }
+```
+
+```toml
+[[transitions]]
+from = "awaiting_clear"
+to   = "fix_loop"
+command = "resume"
+boundary = "context-reset"
+```
+
+L3 deletes every tagged edge and asks whether the target is still reachable. If it is, the surviving path is printed as the bypass. This is the check that most repays living in the engine: you can grep your own config for the tag, but you cannot see that a second `resume` transition added six months later, from an unrelated pause state, quietly became a way around.
+
+### Producers
+
+L1 and L2 need to know who can record an event. The engine infers what it can — transition `emits`, hook `auto_record`, its own built-ins — and you declare the rest:
+
+```toml
+[[events.context_reset.producers]]
+id = "hook:session-start"
+available_in_states = ["awaiting_clear"]
+```
+
+`id` is opaque; the engine only reports it. `available_in_states` is the window L2 checks against the reachability relation. A producer with no window makes no temporal claim, so L2 says nothing about it.
+
+By default L1 only errors on *restricted* events with no producer — `sahjhan event` can record any declared non-restricted type, so the engine would be claiming more than it knows. Once your producers are declared, opt into full closure:
+
+```toml
+[lint]
+require_producers = true
+disabled_checks   = []      # e.g. ["L6"] while you migrate to named queries
+```
+
+### Attestation
+
+Evidence has strength, and the engine compares it without knowing what it means:
+
+```toml
+[attestation]
+levels = ["agent", "tool", "ambient", "host"]   # weakest → strongest
+```
+
+```toml
+[events.context_reset]
+attestation = "host"
+
+[[transitions]]
+command = "resume"
+  [transitions.integrity]
+  requires_attestation = "host"
+```
+
+The levels are opaque strings whose only property is their position in your list — the same shape as `write_gated` and the vault policies, where the engine enforces a policy it does not interpret. L7 compares them and reports a gate that demands host-level proof but accepts something the agent can write itself. With no `[attestation]` section, there is nothing to compare and the check has no opinion.
 
 ## Violations
 
@@ -930,6 +1046,7 @@ All commands accept `--config-dir <path>` (default: `enforcement`), `--ledger <n
 ```
 sahjhan init                              Initialize ledger, registry, manifest, genesis
 sahjhan validate                          Check protocol config (gates, sets, templates)
+sahjhan lint [--only <CHECK>] [--strict]  Static integrity analysis of the protocol graph
 sahjhan status                            Current state, set progress, gate status
 sahjhan transition <command> [args...]     Execute a named transition (runs gates)
 sahjhan event <type> [--field KEY=VALUE]   Record a protocol event (rejects restricted types)

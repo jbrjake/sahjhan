@@ -742,3 +742,226 @@ fn test_cli_lint_unknown_check_id_is_usage_error() {
         .code(4)
         .stderr(predicates::str::contains("unknown check id"));
 }
+
+// ---------------------------------------------------------------------------
+// L3 — boundary route-arounds
+// ---------------------------------------------------------------------------
+
+/// A protocol shaped like the one L3 exists for: work → merge_done, then back
+/// into fix_loop, with a pause state offering a second `resume` command.
+fn boundary_fixture(second_resume_target: Option<&str>) -> Fixture {
+    let mut transitions = r#"
+[[transitions]]
+from = "fix_loop"
+to = "merge_done"
+command = "merge"
+gates = []
+
+[[transitions]]
+from = "merge_done"
+to = "awaiting_clear"
+command = "clear"
+gates = []
+
+[[transitions]]
+from = "awaiting_clear"
+to = "fix_loop"
+command = "resume"
+boundary = "context-reset"
+gates = []
+
+[[transitions]]
+from = "merge_done"
+to = "paused"
+command = "pause"
+gates = []
+"#
+    .to_string();
+
+    if let Some(target) = second_resume_target {
+        transitions.push_str(&format!(
+            r#"
+[[transitions]]
+from = "paused"
+to = "{}"
+command = "resume"
+gates = []
+"#,
+            target
+        ));
+    }
+
+    Fixture::new()
+        .protocol(
+            r#"
+[[boundaries]]
+name = "context-reset"
+must_traverse = { from = "merge_done", to = "fix_loop" }
+"#,
+        )
+        .states(
+            r#"
+[states.fix_loop]
+label = "Fix loop"
+initial = true
+
+[states.merge_done]
+label = "Merge done"
+
+[states.awaiting_clear]
+label = "Awaiting clear"
+
+[states.paused]
+label = "Paused"
+"#,
+        )
+        .transitions(&transitions)
+}
+
+#[test]
+fn test_l3_boundary_with_only_tagged_route_is_clean() {
+    let f = boundary_fixture(None);
+    let findings = f.lint();
+    assert!(
+        findings_for(&findings, "L3").is_empty(),
+        "the only route from merge_done to fix_loop crosses the tagged edge: {:?}",
+        findings
+    );
+}
+
+#[test]
+fn test_l3_untagged_second_route_is_a_bypass() {
+    // The pause state's `resume` lands straight back in fix_loop, skipping the
+    // context reset — the exact shape a hand-written test cannot generalize.
+    let f = boundary_fixture(Some("fix_loop"));
+    let findings = f.lint();
+    let l3 = findings_for(&findings, "L3");
+    assert_eq!(l3.len(), 1, "expected one L3 finding: {:?}", findings);
+    assert_eq!(l3[0].severity, Severity::Error);
+    assert!(
+        l3[0].message.contains("routed around"),
+        "message should say it can be routed around: {}",
+        l3[0].message
+    );
+    assert!(
+        l3[0]
+            .message
+            .contains("merge_done -(pause)-> paused -(resume)-> fix_loop"),
+        "message should print the bypass path: {}",
+        l3[0].message
+    );
+}
+
+#[test]
+fn test_l3_second_route_through_the_boundary_is_clean() {
+    // Routing the pause state back through awaiting_clear keeps the boundary.
+    let f = boundary_fixture(Some("awaiting_clear"));
+    assert!(
+        findings_for(&f.lint(), "L3").is_empty(),
+        "a path that rejoins before the tagged edge still crosses it"
+    );
+}
+
+#[test]
+fn test_l3_untagged_boundary_is_error() {
+    let f = Fixture::new()
+        .protocol(
+            r#"
+[[boundaries]]
+name = "context-reset"
+must_traverse = { from = "a", to = "b" }
+"#,
+        )
+        .states(
+            r#"
+[states.a]
+label = "A"
+initial = true
+
+[states.b]
+label = "B"
+terminal = true
+"#,
+        )
+        .transitions(
+            r#"
+[[transitions]]
+from = "a"
+to = "b"
+command = "go"
+gates = []
+"#,
+        );
+    let findings = f.lint();
+    let l3 = findings_for(&findings, "L3");
+    assert!(
+        l3.iter()
+            .any(|f| f.message.contains("no transition carries")),
+        "an untagged boundary enforces nothing: {:?}",
+        findings
+    );
+}
+
+#[test]
+fn test_l3_unknown_state_in_boundary_is_error() {
+    let f = Fixture::new()
+        .protocol(
+            r#"
+[[boundaries]]
+name = "b"
+must_traverse = { from = "a", to = "nowhere" }
+"#,
+        )
+        .states(
+            r#"
+[states.a]
+label = "A"
+initial = true
+terminal = true
+"#,
+        )
+        .transitions("transitions = []\n");
+    let findings = f.lint();
+    assert!(
+        findings_for(&findings, "L3")
+            .iter()
+            .any(|f| f.message.contains("unknown state 'nowhere'")),
+        "expected unknown-state finding: {:?}",
+        findings
+    );
+}
+
+#[test]
+fn test_boundary_tag_referencing_undeclared_boundary_fails_validation() {
+    let f = Fixture::new()
+        .states(
+            r#"
+[states.a]
+label = "A"
+initial = true
+
+[states.b]
+label = "B"
+terminal = true
+"#,
+        )
+        .transitions(
+            r#"
+[[transitions]]
+from = "a"
+to = "b"
+command = "go"
+boundary = "never-declared"
+gates = []
+"#,
+        );
+    let config = f.load();
+    let (errors, _) = config.validate_deep(f.write());
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("never-declared") && e.contains("not declared")),
+        "expected validation error for the dangling tag: {:?}",
+        errors
+    );
+}

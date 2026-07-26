@@ -24,8 +24,8 @@ pub use hooks::{
     MonitorTrigger,
 };
 pub use protocol::{
-    CheckpointConfig, GuardsConfig, LedgerTemplateConfig, LintConfig, NamedQuery, PathsConfig,
-    ProtocolMeta, SetConfig, WriteGatedConfig,
+    BoundaryConfig, BoundaryEdge, CheckpointConfig, GuardsConfig, LedgerTemplateConfig, LintConfig,
+    NamedQuery, PathsConfig, ProtocolMeta, SetConfig, WriteGatedConfig,
 };
 pub use renders::RenderConfig;
 pub use states::{StateConfig, StateParam};
@@ -52,6 +52,9 @@ pub struct ProtocolConfig {
     /// Named SQL predicates (`[queries.<name>]`), referenced by query gates as
     /// `query = "<name>"`. Empty when none are declared.
     pub queries: HashMap<String, protocol::NamedQuery>,
+    /// Edges that must not be routed around (`[[boundaries]]`), checked by
+    /// lint L3. Empty when none are declared.
+    pub boundaries: Vec<BoundaryConfig>,
     /// The `[lint]` section — strictness knobs for static analysis. Defaults
     /// apply when the section is absent.
     pub lint: LintConfig,
@@ -157,6 +160,7 @@ impl ProtocolConfig {
             ledgers: proto_file.ledgers,
             guards: proto_file.guards,
             queries: proto_file.queries,
+            boundaries: proto_file.boundaries,
             lint: proto_file.lint,
             hooks: hooks_vec,
             monitors: monitors_vec,
@@ -685,6 +689,37 @@ impl ProtocolConfig {
                         errors.push(format!(
                             "protocol.toml: write_gated path '{}' references unknown state '{}'",
                             wg.path, s
+                        ));
+                    }
+                }
+            }
+        }
+
+        // 16b. Boundary declarations and transition tags must agree.
+        {
+            let mut boundary_names: HashSet<&str> = HashSet::new();
+            for b in &self.boundaries {
+                if !boundary_names.insert(b.name.as_str()) {
+                    errors.push(format!(
+                        "protocol.toml: duplicate boundary name '{}'",
+                        b.name
+                    ));
+                }
+                for state in [&b.must_traverse.from, &b.must_traverse.to] {
+                    if !state_names.contains(state.as_str()) {
+                        errors.push(format!(
+                            "protocol.toml: boundary '{}' must_traverse references unknown state '{}'",
+                            b.name, state
+                        ));
+                    }
+                }
+            }
+            for t in &self.transitions {
+                if let Some(ref tag) = t.boundary {
+                    if !boundary_names.contains(tag.as_str()) {
+                        errors.push(format!(
+                            "transitions.toml: transition '{}' is tagged boundary = \"{}\" which is not declared in protocol.toml [[boundaries]]",
+                            t.command, tag
                         ));
                     }
                 }

@@ -13,6 +13,8 @@
 // - WriteGatedConfig        — path whose writability is gated by protocol state
 // - NamedQuery              — a reusable, named SQL predicate ([queries.<name>])
 // - LintConfig              — [lint] section; static-analysis strictness knobs
+// - BoundaryConfig          — [[boundaries]]; an edge that must not be routed around
+// - BoundaryEdge            — the from/to pair a boundary protects
 
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -34,7 +36,45 @@ pub struct ProtocolFile {
     #[serde(default)]
     pub queries: HashMap<String, NamedQuery>,
     #[serde(default)]
+    pub boundaries: Vec<BoundaryConfig>,
+    #[serde(default)]
     pub lint: LintConfig,
+}
+
+/// An edge in the transition graph that must not be bypassed.
+///
+/// ```toml
+/// [[boundaries]]
+/// name = "context-reset"
+/// must_traverse = { from = "merge_done", to = "fix_loop" }
+/// ```
+///
+/// with the participating edges tagged:
+///
+/// ```toml
+/// [[transitions]]
+/// from = "awaiting_clear"
+/// to   = "fix_loop"
+/// command = "resume"
+/// boundary = "context-reset"
+/// ```
+///
+/// Lint check L3 then asserts the graph property: *every* path from
+/// `merge_done` to `fix_loop` crosses an edge tagged `context-reset`. That is
+/// something a hand-written test can only spot-check — a second transition
+/// sharing a command name, added later for an unrelated reason, becomes a
+/// bypass the moment anything routes into it.
+#[derive(Debug, Deserialize, Clone)]
+pub struct BoundaryConfig {
+    pub name: String,
+    pub must_traverse: BoundaryEdge,
+}
+
+/// The `from` → `to` pair a boundary protects.
+#[derive(Debug, Deserialize, Clone)]
+pub struct BoundaryEdge {
+    pub from: String,
+    pub to: String,
 }
 
 /// The `[lint]` section — how strict `sahjhan lint` is about this protocol.

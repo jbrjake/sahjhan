@@ -4,7 +4,7 @@
 //
 // ## Index
 // - TransitionsFile         — top-level wrapper
-// - TransitionConfig        — from, to, command, args (positional params), gates
+// - TransitionConfig        — from, to, command, args (positional params), gates, emits, boundary
 // - GateConfig              — gate_type + optional intent + nested gates (composite) + flattened params
 
 use serde::Deserialize;
@@ -31,6 +31,14 @@ pub struct TransitionConfig {
     pub args: Vec<String>,
     #[serde(default)]
     pub gates: Vec<GateConfig>,
+    /// Names the `[[boundaries]]` entry this edge satisfies.
+    ///
+    /// Tagging is what turns "the context reset happens on this edge" from a
+    /// convention into a checkable graph property: lint check L3 removes every
+    /// edge carrying the tag and asserts the boundary's target is then
+    /// unreachable from its source.
+    #[serde(default)]
+    pub boundary: Option<String>,
     /// Events appended automatically when this transition's gates all pass.
     ///
     /// Lets a transition record the domain-state event it implies — e.g.

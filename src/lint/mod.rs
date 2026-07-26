@@ -38,6 +38,10 @@ pub const CHECKS: &[(&str, &str)] = &[
         "every event a gate requires has at least one producer",
     ),
     (
+        "L3",
+        "no path reaches a boundary's target without crossing the boundary",
+    ),
+    (
         "L4",
         "every non-terminal state has at least one usable exit",
     ),
@@ -161,6 +165,7 @@ pub fn run(config: &ProtocolConfig, opts: &LintOptions) -> Vec<LintFinding> {
 
     // L1 populates `analysis.unsatisfiable`, which L4 reads.
     findings.extend(checks::l1_unsatisfiable_gates(&mut analysis));
+    findings.extend(checks::l3_boundary_route_around(&analysis));
     findings.extend(checks::l4_dead_end_states(&analysis));
     findings.extend(checks::l5_dead_vocabulary(&analysis));
 

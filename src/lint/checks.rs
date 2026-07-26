@@ -5,6 +5,7 @@
 //
 // ## Index
 // - [check-l1]  l1_unsatisfiable_gates()  — a required event nothing can produce
+// - [check-l3]  l3_boundary_route_around() — a path that reaches a boundary's target without crossing it
 // - [check-l4]  l4_dead_end_states()      — a non-terminal state with no usable exit
 // - [check-l5]  l5_dead_vocabulary()      — a declared event nothing produces or consumes
 
@@ -179,6 +180,104 @@ fn finding_for(location: &str, r: &EventRef, defect: &Defect) -> LintFinding {
         LintFinding::warning("L1", location.to_string(), defect.message.clone())
             .with_hint(&defect.hint)
     }
+}
+
+// [check-l3]
+/// L3 — a boundary edge must not be routable around.
+///
+/// A `[[boundaries]]` entry declares that every path from `must_traverse.from`
+/// to `must_traverse.to` crosses an edge tagged with the boundary's name. The
+/// check is one graph operation: delete every tagged edge, then ask whether the
+/// target is still reachable from the source. If it is, that surviving path is
+/// the bypass, and it is printed verbatim.
+///
+/// This is the check that most repays being in the engine. A consumer can grep
+/// its own transitions.toml for the tag; it cannot see that a second transition
+/// added months later — sharing a command name, deliberately ungated, meant for
+/// an unrelated pause state — now offers a way around. That is a property of
+/// the graph, not of any one declaration.
+pub fn l3_boundary_route_around(analysis: &Analysis) -> Vec<LintFinding> {
+    let config = analysis.config;
+    let mut findings = Vec::new();
+
+    for boundary in &config.boundaries {
+        let location = format!("protocol.toml: boundary '{}'", boundary.name);
+        let from = boundary.must_traverse.from.as_str();
+        let to = boundary.must_traverse.to.as_str();
+
+        // Unknown states make the boundary vacuous rather than satisfied.
+        for state in [from, to] {
+            if !config.states.contains_key(state) {
+                findings.push(
+                    LintFinding::error(
+                        "L3",
+                        location.clone(),
+                        format!(
+                            "boundary '{}' names unknown state '{}' in must_traverse",
+                            boundary.name, state
+                        ),
+                    )
+                    .with_hint("must_traverse.from and .to must be declared states"),
+                );
+            }
+        }
+        if !config.states.contains_key(from) || !config.states.contains_key(to) {
+            continue;
+        }
+
+        let tagged: Vec<&str> = config
+            .transitions
+            .iter()
+            .filter(|t| t.boundary.as_deref() == Some(boundary.name.as_str()))
+            .map(|t| t.command.as_str())
+            .collect();
+
+        if tagged.is_empty() {
+            findings.push(
+                LintFinding::error(
+                    "L3",
+                    location.clone(),
+                    format!(
+                        "boundary '{}' is declared but no transition carries boundary = \"{}\" — nothing enforces it",
+                        boundary.name, boundary.name
+                    ),
+                )
+                .with_hint(format!(
+                    "tag the transition that performs the boundary with boundary = \"{}\"",
+                    boundary.name
+                )),
+            );
+            continue;
+        }
+
+        // Reachability with every tagged edge removed: what survives is a bypass.
+        let name = boundary.name.as_str();
+        let pruned =
+            super::graph::Graph::build_filtered(config, |t| t.boundary.as_deref() != Some(name));
+
+        if let Some(path) = pruned.path_between(from, to) {
+            findings.push(
+                LintFinding::error(
+                    "L3",
+                    location,
+                    format!(
+                        "boundary '{}' can be routed around: {} reaches {} without crossing it \u{2014} {}",
+                        boundary.name,
+                        from,
+                        to,
+                        super::graph::format_path(&path)
+                    ),
+                )
+                .with_hint(format!(
+                    "tag that path's edge with boundary = \"{}\", or remove the route (tagged today: {})",
+                    boundary.name,
+                    tagged.join(", ")
+                )),
+            );
+        }
+    }
+
+    findings
 }
 
 // [check-l4]

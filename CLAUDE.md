@@ -64,6 +64,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | Protocol metadata | `config/protocol.rs` | `ProtocolMeta`, `PathsConfig`, `SetConfig` | protocol.toml structures |
 | Ledger template | `config/protocol.rs` | `LedgerTemplateConfig` | `[ledgers]` section; path or path_template for template-based ledger creation |
 | Guards config | `config/protocol.rs` | `GuardsConfig` | `[guards]` section; `write_gated` lists state-gated writable paths |
+| Boundary | `config/protocol.rs` | `BoundaryConfig`, `BoundaryEdge` | `[[boundaries]]`; an edge that must not be routed around (`name` + `must_traverse = {from, to}`), checked by lint L3 (#32) |
 | Lint config | `config/protocol.rs` | `LintConfig` | `[lint]` section; `require_producers`, `disabled_checks` (#32) |
 | Named query | `config/protocol.rs` | `NamedQuery` | `[queries.<name>]` reusable SQL predicate (`sql` + optional `intent`); referenced by query gates as `query = "<name>"` (#32) |
 | Write-gated config | `config/protocol.rs` | `WriteGatedConfig` | A path whose writability is gated by protocol state (path, writable_in, message) |
@@ -76,7 +77,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | Monitor config | `config/hooks.rs` | `MonitorConfig` | Monitor rule (name, states, action, message, trigger) |
 | Monitor trigger | `config/hooks.rs` | `MonitorTrigger` | Monitor trigger condition (type, threshold) |
 | State definitions | `config/states.rs` | `StateConfig`, `StateParam` | states.toml; `StateParam.source` controls set derivation |
-| Transition defs | `config/transitions.rs` | `TransitionConfig`, `GateConfig` | transitions.toml; `args` declares positional params; `intent` is optional per-gate "why"; `gates` holds nested child gates for composite types (any_of, all_of, not, k_of_n); remaining fields are `#[serde(flatten)]` into params |
+| Transition defs | `config/transitions.rs` | `TransitionConfig`, `GateConfig` | transitions.toml; `args` declares positional params; `boundary` tags the edge as satisfying a `[[boundaries]]` entry; `intent` is optional per-gate "why"; `gates` holds nested child gates for composite types (any_of, all_of, not, k_of_n); remaining fields are `#[serde(flatten)]` into params |
 | Event definitions | `config/events.rs` | `EventConfig`, `EventFieldConfig` | events.toml; field patterns for validation; `restricted` marks HMAC-only events; `optional` marks non-required fields |
 | Event producers | `config/events.rs` | `ProducerConfig` | `[[events.X.producers]]`; opaque `id` + optional `available_in_states`; consumed by lint L1/L2 (#32) |
 | Render definitions | `config/renders.rs` | `RenderConfig` | renders.toml; trigger/template/target/ledger/ledger_template |
@@ -142,6 +143,7 @@ Config-only analysis: no ledger is opened, no gate command runs. Answers "is thi
 | Consumed events | `lint/index.rs` | `[consumed-events]` | Every event any config surface reads |
 | SQL event mentions | `lint/index.rs` | `[sql-event-mentions]` | Declared event names quoted in a predicate |
 | L1 unsatisfiable gate | `lint/checks.rs` | `[check-l1]` | Required event with no producer (error if restricted or `require_producers`) |
+| L3 boundary route-around | `lint/checks.rs` | `[check-l3]` | Delete tagged edges, re-test reachability; prints the surviving bypass path |
 | L4 dead-end state | `lint/checks.rs` | `[check-l4]` | Non-terminal state with no exit, or all exits unsatisfiable |
 | L5 dead vocabulary | `lint/checks.rs` | `[check-l5]` | Declared event nothing produces or consumes |
 
@@ -448,6 +450,7 @@ main.rs [cli-main] → Commands::Lint
         → lint/index.rs [build-producers] ← declared producers + emits + hook auto_record + engine built-ins
         → lint/index.rs [consumed-events] ← gates, renders, hook checks, named queries
       → lint/checks.rs [check-l1]         ← required event with no producer; fills Analysis.unsatisfiable
+      → lint/checks.rs [check-l3]         ← graph.build_filtered() drops boundary-tagged edges, then path_between()
       → lint/checks.rs [check-l4]         ← reads Analysis.unsatisfiable: is any exit from this state real?
       → lint/checks.rs [check-l5]         ← declared event nothing produces or consumes
       → filter by --only / [lint] disabled_checks, sort by (check, location, message)
@@ -561,7 +564,7 @@ main.rs [cli-main]
 | `tests/render_filter_tests.rs` | Custom Tera filters (where_eq, unique_by) |
 | `tests/json_output_tests.rs` | JSON envelope serialization, per-command data structs, CLI --json integration |
 | `tests/horizons1_tests.rs` | HORIZONS-1 mission protocol: status, transitions, gates, sets with --json |
-| `tests/lint_tests.rs` | Static analysis: L1 producer closure (restricted/require_producers/emits/auto_record/polarity), L4 dead ends, L5 dead vocabulary, check selection, CLI exit codes + JSON |
+| `tests/lint_tests.rs` | Static analysis: L1 producer closure (restricted/require_producers/emits/auto_record/polarity), L3 boundary route-arounds, L4 dead ends, L5 dead vocabulary, check selection, CLI exit codes + JSON |
 | `tests/hook_eval_tests.rs` | Hook evaluation engine: gate/check/filter/state/monitor/write-gated/managed-path/CLI eval |
 | `tests/concurrent_append_tests.rs` | Concurrent ledger append stress tests (issue #21 TOCTOU race) |
 | `tests/daemon_platform_tests.rs` | Platform API smoke tests: preload env, exe path, cmdline, parent PID, mlock |

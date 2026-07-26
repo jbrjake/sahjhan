@@ -299,6 +299,7 @@ fn test_validate_catches_invalid_transition_state() {
     use sahjhan::config::*;
     let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     config.transitions.push(TransitionConfig {
+        boundary: None,
         emits: Vec::new(),
         from: "nonexistent".to_string(),
         to: "also_nonexistent".to_string(),
@@ -377,6 +378,7 @@ fn test_validate_any_of_empty_gates_is_error() {
     use sahjhan::config::*;
     let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     config.transitions.push(TransitionConfig {
+        boundary: None,
         emits: Vec::new(),
         from: "idle".to_string(),
         to: "working".to_string(),
@@ -404,6 +406,7 @@ fn test_validate_not_wrong_child_count_is_error() {
     use sahjhan::config::*;
     let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     config.transitions.push(TransitionConfig {
+        boundary: None,
         emits: Vec::new(),
         from: "idle".to_string(),
         to: "working".to_string(),
@@ -444,6 +447,7 @@ fn test_validate_k_of_n_missing_k_is_error() {
     use sahjhan::config::*;
     let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     config.transitions.push(TransitionConfig {
+        boundary: None,
         emits: Vec::new(),
         from: "idle".to_string(),
         to: "working".to_string(),
@@ -476,6 +480,7 @@ fn test_validate_composite_validates_children_recursively() {
     use sahjhan::config::*;
     let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     config.transitions.push(TransitionConfig {
+        boundary: None,
         emits: Vec::new(),
         from: "idle".to_string(),
         to: "working".to_string(),
@@ -506,6 +511,7 @@ fn test_validate_branching_no_fallback_warning() {
     use sahjhan::config::*;
     let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     config.transitions.push(TransitionConfig {
+        boundary: None,
         emits: Vec::new(),
         from: "idle".to_string(),
         to: "working".to_string(),
@@ -521,6 +527,7 @@ fn test_validate_branching_no_fallback_warning() {
         }],
     });
     config.transitions.push(TransitionConfig {
+        boundary: None,
         emits: Vec::new(),
         from: "idle".to_string(),
         to: "done".to_string(),
@@ -836,6 +843,7 @@ fn config_with_gate(gate: sahjhan::config::GateConfig) -> sahjhan::config::Proto
     use sahjhan::config::*;
     let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     config.transitions = vec![TransitionConfig {
+        boundary: None,
         from: "idle".to_string(),
         to: "working".to_string(),
         command: "begin".to_string(),

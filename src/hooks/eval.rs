@@ -685,6 +685,7 @@ mod tests {
             hooks: vec![],
             monitors: vec![],
             queries: HashMap::new(),
+            boundaries: Vec::new(),
             lint: Default::default(),
             vault_policies: HashMap::new(),
         };

@@ -236,6 +236,7 @@ current directory. Reach for this module before writing
 | Resolve by template | `render/engine.rs` | `resolve_ledger_by_template` | Template metadata lookup (active first, then most recent) |
 | Open registry entry | `render/engine.rs` | `open_registry_entry` | Shared helper to open ledger from registry entry |
 | Build context | `render/engine.rs` | `[build-context]` | Build template vars from ledger + config; injects `template_instance_id` / `template_name` from registry |
+| Manifest key anchor | `render/engine.rs` | `[project-root]` | The directory rendered files are keyed against — from the config's `data_dir`, never the process cwd |
 | Render triggered | `render/engine.rs` | `[render-triggered]` | Render on_transition / on_event |
 | Dump context | `render/engine.rs` | `[dump-context]` | Export render context as JSON |
 
@@ -318,6 +319,7 @@ current directory. Reach for this module before writing
 | Alias resolution | `cli/aliases.rs` | `[resolve-alias]` | Rewrite CLI args via protocol aliases |
 | JSON output types | `cli/output.rs` | `CommandOutput`, `CommandResult<T>`, data structs | Structured output with JSON envelope (`schema_version: 1`) |
 | Shared helpers | `cli/commands.rs` | (see file index) | Exit codes, ledger targeting, config loading, active-ledger marker, `[compute-registry-path]`, `[status-cache-path]`, `[write-status-cache]` |
+| Path anchoring | `cli/commands.rs` | `[resolve-data-dir]`, `[resolve-project-root]` | Resolve `data_dir` and the project root; both delegate to `paths.rs` so they cannot drift |
 | Lint | `cli/lint.rs` | `[cmd-lint]` | Static integrity analysis; `--only <CHECK>`, `--strict`; exit 3 on errors |
 | Init/validate/reset | `cli/init.rs` | `[cmd-init]`, `[cmd-validate]`, `[cmd-reset]` | Lifecycle commands; init writes status-cache.json; reset requires HMAC proof via daemon (#26) |
 | Transition/gate/event | `cli/transition.rs` | `[cmd-transition]`, `[cmd-gate-check]`, `[record-and-render]`, `validate_event_fields`, `[cmd-event]` | State machine commands; transition updates status-cache.json |

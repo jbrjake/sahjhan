@@ -195,15 +195,33 @@ Config-only analysis: no ledger is opened, no gate command runs. Answers "is thi
 | Verify config seal | `ledger/chain.rs` | `[verify-config-seal]` | Verify config files match sealed hashes |
 | Config integrity error | `ledger/entry.rs` | `ConfigIntegrityViolation` | Error when config files don't match seal |
 
+### paths.rs — Project-Root Anchoring
+
+**The rule:** paths the system owns (`data_dir`, `render_dir`, manifest keys,
+the manifest verify base, a gate command's working directory) are resolved
+against the **project root**. Paths a user types on the command line
+(`--config-dir`, `ledger create --path`, `ledger import`) stay relative to the
+current directory. Reach for this module before writing
+`std::env::current_dir()` anywhere near a managed file.
+
+| Concept | File | Anchor/Item | Purpose |
+|---------|------|-------------|---------|
+| Project root | `paths.rs` | `[project-root]` | Ancestor of cwd that holds the relative `data_dir` — the anchor |
+| Data dir | `paths.rs` | `[data-dir]` | `project_root_from(..).join(data_dir)`; one derivation, so the two cannot drift |
+| Manifest key | `paths.rs` | `[manifest-key]` | Project-root-relative key for a managed file |
+| Containment | `paths.rs` | `[path-under]` | Component-wise "is under" (not string `starts_with`); refuses `..` |
+| Managed test | `paths.rs` | `[is-managed]` | Under any of `managed_paths`; empty list = unconstrained |
+
 ### manifest/ — File Integrity Tracking
 
 | Concept | File | Anchor/Item | Purpose |
 |---------|------|-------------|---------|
 | Manifest | `manifest/tracker.rs` | `Manifest` | SHA-256 tracked file registry |
-| Track file | `manifest/tracker.rs` | `[manifest-track]` | Record file hash + metadata |
+| Track file | `manifest/tracker.rs` | `[manifest-track]` | Record file hash + metadata; refuses keys outside `managed_paths` (E13) |
 | Load/Save | `manifest/tracker.rs` | `[manifest-load]`, `[manifest-save]` | JSON persistence |
-| Verify | `manifest/verify.rs` | `[verify]` | Compare files against manifest hashes |
-| Mismatch | `manifest/verify.rs` | `Mismatch` | File that differs from manifest |
+| Verify | `manifest/verify.rs` | `[verify]` | Compare files against manifest hashes; `base_dir` is the **project root** |
+| Mismatch | `manifest/verify.rs` | `Mismatch` | File that differs from manifest, plus its `kind` |
+| Mismatch kind | `manifest/verify.rs` | `MismatchKind` | `Modified` / `Missing` / `Unmanaged` — only the first two count against `clean` |
 
 ### render/ — Template Rendering
 
@@ -361,6 +379,30 @@ main.rs [cli-main]
         → ledger/chain.rs [ledger-append]           ← gate_attestation event (stdout_hash, exit_code, etc.)
     → render/engine.rs [render-triggered]         ← on_transition renders
 ```
+
+### Flow: Path Anchoring
+
+Where a managed file's *name* comes from, and why it must not come from the cwd.
+
+```
+config paths.data_dir  (e.g. "docs/holtz/.sahjhan", relative)
+  → paths.rs [project-root]        ← walk UP from cwd to the ancestor holding it
+      │                              this ancestor IS the project root
+      ├→ paths.rs [data-dir]         = project_root.join(data_dir)   ← ledger, manifest, registry live here
+      ├→ paths.rs [manifest-key]     = file.strip_prefix(project_root) ← every manifest entry key
+      │    → manifest/tracker.rs [manifest-track]  ← refuses a key outside managed_paths (E13)
+      ├→ manifest/verify.rs [verify] ← base_dir for resolving those same keys
+      └→ state/machine.rs StateMachine::new  ← working_dir for `command_succeeds` gates
+```
+
+**Invariant:** the anchor is computed once, by `project_root_from`, and
+everything else is expressed in terms of it. holtz #85 was two derivations of
+this one fact disagreeing — the walk-up found the root for `data_dir` while
+manifest keys were re-derived from `std::env::current_dir()` at five sites. A
+`cd` into a subdirectory then produced a second spelling of a file already
+tracked, which resolved to nothing and read as permanent tampering. If you find
+yourself calling `current_dir()` on the path of a managed file, you are
+reintroducing that bug.
 
 ### Flow: Template Variable Resolution
 

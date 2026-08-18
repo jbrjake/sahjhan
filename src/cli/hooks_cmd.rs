@@ -10,8 +10,8 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use super::commands::{
-    load_config, open_targeted_ledger, resolve_config_dir, LedgerTargeting, EXIT_CONFIG_ERROR,
-    EXIT_GATE_FAILED, EXIT_SUCCESS,
+    load_config, open_targeted_ledger, resolve_config_dir, resolve_project_root, LedgerTargeting,
+    EXIT_CONFIG_ERROR, EXIT_GATE_FAILED, EXIT_SUCCESS,
 };
 use super::output::{
     CommandOutput, CommandResult, HookAutoRecord, HookEvalData, HookEvalMessage, HookMonitorWarning,
@@ -161,7 +161,8 @@ pub fn cmd_hook_eval(
         output_text: output_text.clone(),
     };
 
-    let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    // Hook commands run from the project root, not the caller's cwd (#85).
+    let working_dir = resolve_project_root(&config.paths.data_dir);
     let result = evaluate_hooks(&config, &ledger, &request, &working_dir);
 
     // Auto-record events

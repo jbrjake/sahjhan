@@ -261,6 +261,14 @@ fn test_manifest_verify_data_json() {
             actual: Some(
                 "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef".to_string(),
             ),
+            kind: "modified".to_string(),
+        }],
+        unmanaged: vec![MismatchData {
+            path: "STATUS.md".to_string(),
+            expected: "cafebabe1234567890abcdef1234567890abcdef1234567890abcdef12345678"
+                .to_string(),
+            actual: None,
+            kind: "unmanaged".to_string(),
         }],
     };
     let result = CommandResult::ok("manifest_verify", data);
@@ -268,6 +276,7 @@ fn test_manifest_verify_data_json() {
     assert_eq!(v["data"]["clean"], false);
     assert_eq!(v["data"]["tracked_count"], 3);
     assert_eq!(v["data"]["mismatches"][0]["path"], "output/STATUS.md");
+    assert_eq!(v["data"]["mismatches"][0]["kind"], "modified");
     assert_eq!(
         v["data"]["mismatches"][0]["expected"]
             .as_str()
@@ -275,6 +284,10 @@ fn test_manifest_verify_data_json() {
             .len(),
         64
     );
+    // Unmanaged entries ride in their own list so a consumer that records a
+    // violation per mismatch cannot mistake one for tampering (holtz #85).
+    assert_eq!(v["data"]["unmanaged"][0]["path"], "STATUS.md");
+    assert_eq!(v["data"]["unmanaged"][0]["kind"], "unmanaged");
 }
 
 #[test]

@@ -616,29 +616,50 @@ pub struct ManifestVerifyData {
     pub clean: bool,
     pub tracked_count: usize,
     pub mismatches: Vec<MismatchData>,
+    /// Entries keyed outside `managed_paths`. Reported, never counted — see
+    /// `manifest::verify::MismatchKind::Unmanaged`.
+    #[serde(default)]
+    pub unmanaged: Vec<MismatchData>,
 }
 
 impl Display for ManifestVerifyData {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.clean {
-            write!(f, "manifest clean ({} tracked)", self.tracked_count)
+            writeln!(f, "manifest clean ({} tracked)", self.tracked_count)?;
         } else {
-            writeln!(f, "manifest: {} modified", self.mismatches.len())?;
+            let modified = self
+                .mismatches
+                .iter()
+                .filter(|m| m.kind == "modified")
+                .count();
+            let missing = self
+                .mismatches
+                .iter()
+                .filter(|m| m.kind == "missing")
+                .count();
+            writeln!(f, "manifest: {} modified, {} missing", modified, missing)?;
             for m in &self.mismatches {
-                let actual_str = match &m.actual {
-                    Some(h) => format!("got {}", &h[..12]),
-                    None => "missing".to_string(),
-                };
-                writeln!(
-                    f,
-                    "  {} \u{2014} expected {}, {}",
-                    m.path,
-                    &m.expected[..12],
-                    actual_str
-                )?;
+                writeln!(f, "  {}", m)?;
             }
-            Ok(())
         }
+
+        if !self.unmanaged.is_empty() {
+            writeln!(
+                f,
+                "manifest: {} entr{} outside managed paths \u{2014} not an integrity failure; \
+                 a key computed against the wrong directory (holtz #85)",
+                self.unmanaged.len(),
+                if self.unmanaged.len() == 1 {
+                    "y"
+                } else {
+                    "ies"
+                }
+            )?;
+            for m in &self.unmanaged {
+                writeln!(f, "  {}", m)?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -651,20 +672,27 @@ pub struct MismatchData {
     pub path: String,
     pub expected: String,
     pub actual: Option<String>,
+    /// `modified`, `missing`, or `unmanaged`. Consumers key their message off
+    /// this rather than inferring "deleted" from a null hash, which cannot tell
+    /// a removed file from one that never existed.
+    pub kind: String,
 }
 
 impl Display for MismatchData {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let actual_str = match &self.actual {
-            Some(h) => format!("got {}", &h[..12]),
-            None => "missing".to_string(),
+        let detail = match (self.kind.as_str(), &self.actual) {
+            ("unmanaged", _) => "not under any managed path".to_string(),
+            ("missing", _) => "file not found".to_string(),
+            (_, Some(h)) => format!("got {}", &h[..12]),
+            (_, None) => "file not found".to_string(),
         };
         write!(
             f,
-            "{} \u{2014} expected {}, {}",
+            "{} \u{2014} {}: expected {}, {}",
             self.path,
+            self.kind,
             &self.expected[..12],
-            actual_str
+            detail
         )
     }
 }

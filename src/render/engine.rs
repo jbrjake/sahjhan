@@ -179,6 +179,17 @@ impl RenderEngine {
         self
     }
 
+    // [project-root]
+    /// The directory every manifest key this engine writes is spelled against.
+    ///
+    /// Derived from the config's own `data_dir`, not the process cwd — a render
+    /// triggered from a subdirectory must key the file it writes exactly as a
+    /// render from the project root would (holtz #85).
+    fn project_root(&self) -> std::path::PathBuf {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        crate::paths::project_root_from(&self.config.paths.data_dir, &cwd)
+    }
+
     /// Resolve the ledger for a render config.
     ///
     /// If the render has a `ledger` field, attempt to load that ledger from the
@@ -380,11 +391,7 @@ impl RenderEngine {
             })?;
 
             // Track in manifest
-            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-            let rel = target_path
-                .strip_prefix(&cwd)
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|_| target_path.to_string_lossy().to_string());
+            let rel = crate::paths::manifest_key(&target_path, &self.project_root());
             manifest
                 .track(&rel, &target_path, "render", ledger_seq)
                 .map_err(|e| format!("cannot track rendered file: {}", e))?;
@@ -460,11 +467,7 @@ impl RenderEngine {
                 )
             })?;
 
-            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-            let rel = target_path
-                .strip_prefix(&cwd)
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|_| target_path.to_string_lossy().to_string());
+            let rel = crate::paths::manifest_key(&target_path, &self.project_root());
             manifest
                 .track(&rel, &target_path, "render", ledger_seq)
                 .map_err(|e| format!("cannot track rendered file: {}", e))?;

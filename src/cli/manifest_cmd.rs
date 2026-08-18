@@ -7,13 +7,11 @@
 // - [cmd-manifest-list] cmd_manifest_list() — show managed files and hashes
 // - [cmd-manifest-restore] cmd_manifest_restore() — restore file from last known-good state
 
-use std::path::PathBuf;
-
 use crate::manifest::verify as manifest_verify;
 
 use super::commands::{
-    load_config, load_manifest, resolve_config_dir, resolve_data_dir, EXIT_INTEGRITY_ERROR,
-    EXIT_SUCCESS, EXIT_USAGE_ERROR,
+    load_config, load_manifest, resolve_config_dir, resolve_data_dir, resolve_project_root,
+    EXIT_INTEGRITY_ERROR, EXIT_SUCCESS, EXIT_USAGE_ERROR,
 };
 use super::output::{CommandOutput, CommandResult, ManifestVerifyData, MismatchData};
 
@@ -50,24 +48,25 @@ pub fn cmd_manifest_verify(config_dir: &str) -> Box<dyn CommandOutput> {
     };
 
     let tracked_count = manifest.entries.len();
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let result = manifest_verify::verify(&manifest, &cwd);
+    // Entry keys are spelled against the project root, so that is what they
+    // must be resolved against — not whichever directory the caller ran from
+    // (holtz #85).
+    let root = resolve_project_root(&config.paths.data_dir);
+    let result = manifest_verify::verify(&manifest, &root);
 
-    let mismatches: Vec<MismatchData> = result
-        .mismatches
-        .iter()
-        .map(|m| MismatchData {
-            path: m.path.clone(),
-            expected: m.expected.clone(),
-            actual: m.actual.clone(),
-        })
-        .collect();
+    let to_data = |m: &manifest_verify::Mismatch| MismatchData {
+        path: m.path.clone(),
+        expected: m.expected.clone(),
+        actual: m.actual.clone(),
+        kind: m.kind.as_str().to_string(),
+    };
 
     let clean = result.clean;
     let data = ManifestVerifyData {
         clean,
         tracked_count,
-        mismatches,
+        mismatches: result.mismatches.iter().map(to_data).collect(),
+        unmanaged: result.unmanaged.iter().map(to_data).collect(),
     };
 
     if clean {

@@ -59,12 +59,13 @@ impl Manifest {
     /// Validates that `data_dir` is under one of the `managed_paths` (E12).
     /// Returns an error if the constraint is violated.
     pub fn init(data_dir: &str, managed_paths: Vec<String>) -> Result<Self, String> {
-        // E12: data_dir must be under a managed path
-        let data_dir_normalized = normalize_path(data_dir);
-        let is_under_managed = managed_paths.iter().any(|mp| {
-            let mp_normalized = normalize_path(mp);
-            data_dir_normalized.starts_with(&mp_normalized) || data_dir_normalized == mp_normalized
-        });
+        // E12: data_dir must be under a managed path. The containment test is
+        // component-wise (crate::paths::path_is_under) — the string
+        // `starts_with` this used to do put `docs/holtz-old/.sahjhan` under
+        // `docs/holtz`.
+        let is_under_managed = managed_paths
+            .iter()
+            .any(|mp| crate::paths::path_is_under(data_dir, mp));
 
         if !is_under_managed {
             return Err(format!(
@@ -116,6 +117,14 @@ impl Manifest {
     ///
     /// `file_path` is the path relative to the project root (as stored in entries).
     /// `abs_path` is the absolute path to the file on disk (used to read contents).
+    ///
+    /// **E13:** a key that is not under any managed path is refused rather than
+    /// registered. `managed_paths` is the manifest's own statement of what it
+    /// tracks, so an entry outside it can only be a mis-derived key — and a
+    /// mis-derived key resolves to a file that does not exist, which reads as
+    /// permanent tampering (holtz #85). Failing the write makes that class of
+    /// defect loud instead of silent. An empty `managed_paths` declares no
+    /// constraint and admits everything.
     pub fn track(
         &mut self,
         file_path: &str,
@@ -123,6 +132,15 @@ impl Manifest {
         operation: &str,
         ledger_seq: u64,
     ) -> Result<(), String> {
+        if !crate::paths::is_managed(file_path, &self.managed_paths) {
+            return Err(format!(
+                "E13: refusing to track '{}': not under any managed path {:?}. \
+                 This usually means the key was computed against the current \
+                 directory instead of the project root.",
+                file_path, self.managed_paths
+            ));
+        }
+
         let hash = compute_file_sha256(abs_path)?;
         let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
 
@@ -191,9 +209,4 @@ pub fn compute_file_sha256(path: &Path) -> Result<String, String> {
 /// Hex-encode a byte slice.
 fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
-}
-
-/// Normalize a path string by stripping trailing slashes for consistent comparison.
-fn normalize_path(p: &str) -> String {
-    p.trim_end_matches('/').to_string()
 }

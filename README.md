@@ -665,6 +665,8 @@ The ledger is the hash chain. Every entry is a JSON line with eight envelope fie
 
 The manifest tracks SHA-256 hashes of every managed file. Touch one through Bash, the hash won't match, violation gets written to the ledger. Permanently. The manifest hash is also in the ledger, so tampering with the manifest means tampering with the ledger, which means defeating the hash chain. Turtles all the way down, but SHA-256 turtles.
 
+Every manifest key is spelled relative to the **project root** — the ancestor directory that holds the configured `data_dir` — never the directory a command happened to run from. That anchor is what makes `cd` harmless: the same file gets the same key from anywhere in the tree, and a key that lands outside the declared managed paths is refused at write rather than registered as a file nobody can find. Gate commands run from that same root, so a `cmd` written relative to the project resolves the same way whoever invokes it.
+
 Hooks handle the perimeter. PreToolUse evaluates gate conditions, write guards, and managed path checks before every tool use. PostToolUse auto-records events and runs checks after. Stop hooks catch premature completion claims. All three delegate to `sahjhan hook eval`, which evaluates rules from `hooks.toml` against live ledger state.
 
 ## Gate types
@@ -1162,6 +1164,7 @@ src/
   gates/               Gate evaluation, file/command/ledger/snapshot/query gates
   query/               DataFusion query engine, Arrow table builder
   manifest/            File hash tracking, integrity verification
+  paths.rs             Project-root anchoring for system-owned paths
   config/              TOML parsing (protocol, states, transitions, events, renders, hooks)
   render/              Tera template rendering (where_eq, unique_by filters)
   hooks/               Hook script generation and runtime evaluation

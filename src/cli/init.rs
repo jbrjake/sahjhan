@@ -7,14 +7,12 @@
 // - [cmd-validate] cmd_validate() — validate protocol config
 // - [cmd-reset] cmd_reset() — archive and reset run (requires HMAC proof via daemon)
 
-use std::path::PathBuf;
-
 use crate::config::ProtocolConfig;
 use crate::manifest::tracker::Manifest;
 
 use super::commands::{
-    ledger_path, load_config, manifest_path, open_ledger, pathdiff, remove_active_ledger,
-    resolve_config_dir, resolve_data_dir, save_manifest, write_status_cache, EXIT_CONFIG_ERROR,
+    ledger_path, load_config, manifest_path, open_ledger, remove_active_ledger, resolve_config_dir,
+    resolve_data_dir, resolve_project_root, save_manifest, write_status_cache, EXIT_CONFIG_ERROR,
     EXIT_INTEGRITY_ERROR, EXIT_SUCCESS, EXIT_USAGE_ERROR,
 };
 
@@ -140,9 +138,10 @@ pub fn cmd_init(config_dir: &str) -> i32 {
         }
     };
 
-    // Track the ledger file in the manifest
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let ledger_rel = pathdiff(&lp, &cwd);
+    // Track the ledger file in the manifest, keyed against the project root
+    // rather than the cwd `init` happened to run from (holtz #85).
+    let root = resolve_project_root(&config.paths.data_dir);
+    let ledger_rel = crate::paths::manifest_key(&lp, &root);
     if let Err(e) = manifest.track(&ledger_rel, &lp, "genesis", 0) {
         eprintln!("error: cannot track ledger in manifest: {}", e);
         return EXIT_INTEGRITY_ERROR;

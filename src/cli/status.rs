@@ -8,7 +8,6 @@
 // - [cmd-set-complete] cmd_set_complete() — record member completion (runs gates)
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 use crate::gates::evaluator::{evaluate_gates, GateContext};
 use crate::ledger::registry::LedgerMode;
@@ -17,8 +16,8 @@ use crate::state::machine::StateMachine;
 
 use super::commands::{
     build_state_params, determine_ledger_source, load_config, load_manifest, open_targeted_ledger,
-    registry_path_from_config, resolve_config_dir, resolve_data_dir, save_manifest,
-    status_cache_path, track_ledger_in_manifest, LedgerTargeting, EXIT_CONFIG_ERROR,
+    registry_path_from_config, resolve_config_dir, resolve_data_dir, resolve_project_root,
+    save_manifest, status_cache_path, track_ledger_in_manifest, LedgerTargeting, EXIT_CONFIG_ERROR,
     EXIT_INTEGRITY_ERROR, EXIT_SUCCESS, EXIT_USAGE_ERROR,
 };
 use super::output::{
@@ -142,7 +141,8 @@ pub fn cmd_status(
             .collect()
     };
 
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    // Gate commands run from the project root, not the caller's cwd (#85).
+    let cwd = resolve_project_root(&config.paths.data_dir);
     let transitions: Vec<TransitionSummaryData> = available_transitions
         .iter()
         .map(|transition| {
@@ -345,7 +345,7 @@ pub fn cmd_set_complete(
     match machine.record_event("set_member_complete", fields) {
         Ok(()) => {
             if let Err((code, msg)) =
-                track_ledger_in_manifest(&mut manifest, &data_dir, machine.ledger())
+                track_ledger_in_manifest(&mut manifest, &data_dir, machine.ledger(), &config)
             {
                 eprintln!("error: {}", msg);
                 return code;

@@ -10,7 +10,6 @@
 // - [cmd-event] cmd_event() — record a protocol event
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 use crate::config::events::EventConfig;
 use crate::gates::evaluator::{evaluate_gates, GateContext};
@@ -19,9 +18,9 @@ use crate::state::machine::StateMachine;
 
 use super::commands::{
     build_state_params, guard_event_only, load_config, load_manifest, open_targeted_ledger,
-    resolve_config_dir, resolve_data_dir, save_manifest, track_ledger_in_manifest,
-    write_status_cache, LedgerTargeting, EXIT_GATE_FAILED, EXIT_INTEGRITY_ERROR, EXIT_SUCCESS,
-    EXIT_USAGE_ERROR,
+    resolve_config_dir, resolve_data_dir, resolve_project_root, save_manifest,
+    track_ledger_in_manifest, write_status_cache, LedgerTargeting, EXIT_GATE_FAILED,
+    EXIT_INTEGRITY_ERROR, EXIT_SUCCESS, EXIT_USAGE_ERROR,
 };
 use super::output::{CandidateData, CommandOutput, CommandResult, GateCheckData, GateResultData};
 
@@ -74,7 +73,7 @@ pub fn cmd_transition(
         Ok(outcome) => {
             // Update manifest with ledger
             if let Err((code, msg)) =
-                track_ledger_in_manifest(&mut manifest, &data_dir, machine.ledger())
+                track_ledger_in_manifest(&mut manifest, &data_dir, machine.ledger(), &config)
             {
                 eprintln!("{}", msg);
                 return code;
@@ -264,7 +263,8 @@ pub fn cmd_gate_check(
     }
 
     let multi = candidates.len() > 1;
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    // Gate commands run from the project root, not the caller's cwd (#85).
+    let cwd = resolve_project_root(&config.paths.data_dir);
     let mut would_take: Option<String> = None;
     let mut candidate_data: Vec<CandidateData> = Vec::new();
 
@@ -388,7 +388,8 @@ pub fn record_and_render(
 ) -> i32 {
     match machine.record_event(event_type, fields) {
         Ok(()) => {
-            if let Err((code, msg)) = track_ledger_in_manifest(manifest, data_dir, machine.ledger())
+            if let Err((code, msg)) =
+                track_ledger_in_manifest(manifest, data_dir, machine.ledger(), config)
             {
                 eprintln!("{}", msg);
                 return code;

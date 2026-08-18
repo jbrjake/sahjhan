@@ -2826,3 +2826,133 @@ gates = [
         "attestation should be from the winning candidate's gate"
     );
 }
+
+// ---------------------------------------------------------------------------
+// holtz #85 — a drifted shell must not fork the manifest
+// ---------------------------------------------------------------------------
+
+/// Collect the manifest's entry keys, sorted.
+fn manifest_keys(root: &std::path::Path) -> Vec<String> {
+    let raw = std::fs::read_to_string(root.join("output/.sahjhan/manifest.json")).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    let mut keys: Vec<String> = json["entries"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect();
+    keys.sort();
+    keys
+}
+
+#[test]
+fn test_manifest_keys_are_identical_from_root_and_from_a_subdirectory() {
+    let dir = setup_initialized_dir();
+    let root = dir.path();
+    // `--config-dir` is user-typed and stays cwd-relative by design, so a
+    // subdirectory invocation supplies it absolutely — which is what holtz
+    // does in the field ("$CLAUDE_PLUGIN_ROOT/enforcement").
+    let config_dir = root.join("enforcement");
+    let config_dir = config_dir.to_str().unwrap();
+
+    // Transition from the project root, then note what the manifest looks like.
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", config_dir, "transition", "begin"])
+        .current_dir(root)
+        .assert()
+        .success();
+    let from_root = manifest_keys(root);
+    assert!(
+        from_root.contains(&"output/.sahjhan/ledger.jsonl".to_string()),
+        "expected a root-relative ledger key, got {:?}",
+        from_root
+    );
+    assert!(
+        from_root.contains(&"output/STATUS.md".to_string()),
+        "expected a root-relative render key, got {:?}",
+        from_root
+    );
+
+    // Now do more work from inside the directory the artifacts live in — the
+    // reported reproduction. Before #85 this registered a SECOND set of
+    // entries (`.sahjhan/ledger.jsonl`, `STATUS.md`) for the very same files.
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            config_dir,
+            "event",
+            "set_member_complete",
+            "--field",
+            "set=check",
+            "--field",
+            "member=tests",
+        ])
+        .current_dir(root.join("output"))
+        .assert()
+        .success();
+
+    // That command triggers the HISTORY.md render, so a new key legitimately
+    // appears. Assert it is *there* and correctly spelled, not merely that no
+    // phantom appeared: the E13 guard in Manifest::track would also refuse a
+    // mis-derived key, leaving the file written but untracked and the command
+    // still exiting 0. Only "rendered AND tracked under the root-relative key"
+    // distinguishes a working anchor from a guard catching a broken one.
+    let from_sub = manifest_keys(root);
+    assert!(
+        root.join("output/HISTORY.md").exists(),
+        "the subdirectory run did not render HISTORY.md at all"
+    );
+    assert!(
+        from_sub.contains(&"output/HISTORY.md".to_string()),
+        "HISTORY.md was rendered from a subdirectory but not tracked under its \
+         root-relative key — the manifest key was derived against the cwd \
+         (holtz #85); keys are {:?}",
+        from_sub
+    );
+
+    for key in &from_sub {
+        assert!(
+            key.starts_with("output/"),
+            "a command run from a subdirectory registered the phantom key {:?} \
+             — keys are {:?} (holtz #85)",
+            key,
+            from_sub
+        );
+    }
+    for key in &from_root {
+        assert!(
+            from_sub.contains(key),
+            "the subdirectory run re-keyed {:?}; keys are now {:?}",
+            key,
+            from_sub
+        );
+    }
+}
+
+#[test]
+fn test_manifest_verify_is_clean_when_run_from_a_subdirectory() {
+    let dir = setup_initialized_dir();
+    let root = dir.path();
+    let config_dir = root.join("enforcement");
+    let config_dir = config_dir.to_str().unwrap();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", config_dir, "transition", "begin"])
+        .current_dir(root)
+        .assert()
+        .success();
+
+    // The read side of the same bug: entry keys are spelled against the
+    // project root, so verifying from a subdirectory used to resolve every one
+    // of them against the wrong base and report the lot as missing.
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", config_dir, "manifest", "verify"])
+        .current_dir(root.join("output"))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("manifest clean"));
+}

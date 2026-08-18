@@ -2,6 +2,7 @@ use std::fs;
 
 use sahjhan::manifest::tracker::{Manifest, RestoreAction};
 use sahjhan::manifest::verify;
+use sahjhan::manifest::verify::MismatchKind;
 use tempfile::tempdir;
 
 #[test]
@@ -215,6 +216,139 @@ fn test_verify_handles_deleted_file() {
     assert_eq!(mismatch.path, "docs/holtz/PUNCHLIST.md");
     assert!(mismatch.actual.is_none()); // None indicates deleted
     assert!(!mismatch.expected.is_empty());
+    // A deleted managed file is "missing", not "modified" — the report noted
+    // that verify called the same thing both at once (holtz #85 fix 3).
+    assert_eq!(mismatch.kind, MismatchKind::Missing);
+}
+
+// ---------------------------------------------------------------------------
+// holtz #85 — the manifest refuses keys it cannot be responsible for
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_track_refuses_a_key_outside_managed_paths() {
+    let dir = tempdir().unwrap();
+    let base = dir.path();
+    let file_dir = base.join("docs/holtz");
+    fs::create_dir_all(&file_dir).unwrap();
+    let file_path = file_dir.join("STATUS.md");
+    fs::write(&file_path, "# Status\n").unwrap();
+
+    let mut manifest =
+        Manifest::init("docs/holtz/.sahjhan", vec!["docs/holtz".to_string()]).unwrap();
+
+    // This is the phantom key from the report: the same real file, spelled as
+    // if the project root were docs/holtz. It resolves against the actual root
+    // to nothing, so admitting it means permanent, unrecoverable "missing".
+    let err = manifest
+        .track("STATUS.md", &file_path, "render", 1)
+        .unwrap_err();
+    assert!(err.contains("E13"), "unexpected error: {}", err);
+    assert!(manifest.entries.is_empty(), "phantom key was registered");
+
+    // The correctly-anchored key for the identical file is accepted.
+    manifest
+        .track("docs/holtz/STATUS.md", &file_path, "render", 1)
+        .unwrap();
+    assert_eq!(manifest.entries.len(), 1);
+}
+
+#[test]
+fn test_track_allows_anything_when_managed_paths_is_empty() {
+    // examples/lint-demo ships `managed = []`. No declaration, no constraint.
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("anywhere.md");
+    fs::write(&file_path, "x").unwrap();
+
+    let mut manifest = Manifest {
+        version: 1,
+        managed_paths: vec![],
+        entries: Default::default(),
+        manifest_hash: String::new(),
+    };
+    manifest
+        .track("anywhere.md", &file_path, "render", 1)
+        .unwrap();
+    assert_eq!(manifest.entries.len(), 1);
+}
+
+#[test]
+fn test_e12_uses_component_boundaries() {
+    // `docs/holtz-old` is not under `docs/holtz`, though the string starts
+    // with it — the check the old raw `starts_with` got wrong.
+    let result = Manifest::init("docs/holtz-old/.sahjhan", vec!["docs/holtz".to_string()]);
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("E12"));
+}
+
+#[test]
+fn test_verify_reports_unmanaged_entries_without_failing() {
+    let dir = tempdir().unwrap();
+    let base = dir.path();
+    let file_dir = base.join("docs/holtz");
+    fs::create_dir_all(&file_dir).unwrap();
+    let file_path = file_dir.join("STATUS.md");
+    fs::write(&file_path, "# Status\n").unwrap();
+
+    let mut manifest =
+        Manifest::init("docs/holtz/.sahjhan", vec!["docs/holtz".to_string()]).unwrap();
+    manifest
+        .track("docs/holtz/STATUS.md", &file_path, "render", 1)
+        .unwrap();
+
+    // Simulate a manifest already poisoned by the pre-fix key derivation.
+    // track() now refuses this, so it can only arrive from an older binary —
+    // which is exactly the upgrade case that has to stop bleeding.
+    manifest.entries.insert(
+        "STATUS.md".to_string(),
+        manifest.entries["docs/holtz/STATUS.md"].clone(),
+    );
+
+    let result = verify::verify(&manifest, base);
+    assert!(
+        result.clean,
+        "an entry that cannot describe a managed file must not read as tampering"
+    );
+    assert!(result.mismatches.is_empty());
+    assert_eq!(result.unmanaged.len(), 1);
+    assert_eq!(result.unmanaged[0].path, "STATUS.md");
+    assert_eq!(result.unmanaged[0].kind, MismatchKind::Unmanaged);
+}
+
+#[test]
+fn test_verify_still_fails_on_a_real_modification_alongside_unmanaged_entries() {
+    // The forgiveness above is scoped to keys outside managed_paths. A managed
+    // file that actually changed must still fail, poisoned manifest or not.
+    let dir = tempdir().unwrap();
+    let base = dir.path();
+    let file_dir = base.join("docs/holtz");
+    fs::create_dir_all(&file_dir).unwrap();
+    let file_path = file_dir.join("STATUS.md");
+    fs::write(&file_path, "# Status\n").unwrap();
+
+    let mut manifest =
+        Manifest::init("docs/holtz/.sahjhan", vec!["docs/holtz".to_string()]).unwrap();
+    manifest
+        .track("docs/holtz/STATUS.md", &file_path, "render", 1)
+        .unwrap();
+    manifest.entries.insert(
+        "STATUS.md".to_string(),
+        manifest.entries["docs/holtz/STATUS.md"].clone(),
+    );
+
+    fs::write(
+        &file_path,
+        "# Status\n\nedited behind the protocol's back\n",
+    )
+    .unwrap();
+
+    let result = verify::verify(&manifest, base);
+    assert!(!result.clean);
+    assert_eq!(result.mismatches.len(), 1);
+    assert_eq!(result.mismatches[0].path, "docs/holtz/STATUS.md");
+    assert_eq!(result.mismatches[0].kind, MismatchKind::Modified);
+    assert!(result.mismatches[0].actual.is_some());
+    assert_eq!(result.unmanaged.len(), 1);
 }
 
 #[test]

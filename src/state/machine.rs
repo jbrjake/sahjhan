@@ -92,10 +92,15 @@ impl StateMachine {
     /// recent `state_transition` event.  If none exists, the config's initial
     /// state is used.
     ///
-    /// `working_dir` defaults to `std::env::current_dir()`.
+    /// `working_dir` defaults to the **project root** — the anchor derived from
+    /// the config's `data_dir`, not the process cwd. A gate `cmd` is written
+    /// relative to the project (`python3 enforcement/scripts/verify_suite.py`),
+    /// so running it from whichever subdirectory the caller happened to be in
+    /// is the same defect as keying a manifest entry there (holtz #85).
     pub fn new(config: &ProtocolConfig, ledger: Ledger) -> Self {
         let current_state = Self::derive_state_from_ledger(config, &ledger);
-        let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let working_dir = crate::paths::project_root_from(&config.paths.data_dir, &cwd);
         StateMachine {
             config: config.clone(),
             ledger,

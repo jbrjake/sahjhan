@@ -7,14 +7,14 @@
 // - [ledger-targeting] LedgerTargeting — global --ledger / --ledger-path flags
 // - [load-config] load_config() — load and validate protocol config
 // - [resolve-config-dir] resolve_config_dir() — resolve config path relative to cwd
-// - [resolve-data-dir] resolve_data_dir() — resolve data path relative to cwd
+// - [resolve-data-dir] resolve_data_dir() — resolve data path relative to project root
+// - [resolve-project-root] resolve_project_root() — anchor for system-owned paths
 // - [ledger-path] ledger_path() — canonical ledger file path
 // - [manifest-path] manifest_path() — canonical manifest file path
 // - [open-ledger] open_ledger() — open ledger from data_dir
 // - [load-manifest] load_manifest() — load manifest from data_dir
 // - [save-manifest] save_manifest() — save manifest to data_dir
 // - [track-ledger] track_ledger_in_manifest() — track ledger in manifest
-// - [pathdiff] pathdiff() — compute relative path
 // - [resolve-ledger] resolve_ledger_from_targeting() — resolve ledger path from flags
 // - [open-targeted] open_targeted_ledger() — open ledger via targeting
 // - [registry-path] registry_path_from_config() — registry path from config
@@ -116,20 +116,17 @@ pub(crate) fn resolve_data_dir(data_dir: &str) -> PathBuf {
 
 /// cwd-parameterized core of [`resolve_data_dir`] (pure, for tests).
 pub(crate) fn resolve_data_dir_from(data_dir: &str, cwd: &Path) -> PathBuf {
-    let p = PathBuf::from(data_dir);
-    if p.is_absolute() {
-        return p;
-    }
-    let mut dir: Option<&Path> = Some(cwd);
-    while let Some(d) = dir {
-        let candidate = d.join(&p);
-        if candidate.exists() {
-            return candidate;
-        }
-        dir = d.parent();
-    }
-    // No ancestor holds it (fresh init / no audit here) — cwd-relative.
-    cwd.join(p)
+    crate::paths::data_dir_from(data_dir, cwd)
+}
+
+// [resolve-project-root]
+/// Resolve the project root — the anchor manifest keys and gate commands use.
+///
+/// The walk-up in [`resolve_data_dir`] already finds this directory; naming it
+/// is what stops a second derivation from drifting off it (holtz #85).
+pub(crate) fn resolve_project_root(data_dir: &str) -> PathBuf {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    crate::paths::project_root_from(data_dir, &cwd)
 }
 
 // [ledger-path]
@@ -172,14 +169,20 @@ pub(crate) fn save_manifest(manifest: &mut Manifest, data_dir: &Path) -> Result<
 }
 
 // [track-ledger]
+/// Track the ledger file in the manifest under its project-root-relative key.
+///
+/// The key is derived from the project root — never the process cwd — so the
+/// ledger has one spelling regardless of which directory the command was run
+/// from (holtz #85).
 pub(crate) fn track_ledger_in_manifest(
     manifest: &mut Manifest,
     data_dir: &Path,
     ledger: &Ledger,
+    config: &ProtocolConfig,
 ) -> Result<(), (i32, String)> {
     let lp = ledger_path(data_dir);
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let rel = pathdiff(&lp, &cwd);
+    let root = resolve_project_root(&config.paths.data_dir);
+    let rel = crate::paths::manifest_key(&lp, &root);
     manifest
         .track(
             &rel,
@@ -188,16 +191,6 @@ pub(crate) fn track_ledger_in_manifest(
             ledger.entries().last().unwrap().seq,
         )
         .map_err(|e| (EXIT_INTEGRITY_ERROR, format!("Cannot track ledger: {}", e)))
-}
-
-// [pathdiff]
-/// Compute a relative path from `base` to `target`.
-pub(crate) fn pathdiff(target: &Path, base: &Path) -> String {
-    // Try to strip the base prefix; if it fails, use the target as-is.
-    target
-        .strip_prefix(base)
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|_| target.to_string_lossy().to_string())
 }
 
 // ---------------------------------------------------------------------------

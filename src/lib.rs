@@ -7,6 +7,7 @@ pub mod ledger;
 pub mod lint;
 pub mod manifest;
 pub mod mermaid;
+pub mod paths;
 pub mod query;
 pub mod render;
 pub mod state;

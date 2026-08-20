@@ -4,6 +4,7 @@
 // operations over a Unix domain socket.
 //
 // ## Index
+// - CONNECTION_IO_TIMEOUT     -- per-connection read/write bound (a silent client must not wedge the daemon)
 // - socket_path_for           -- daemon socket path (SAHJHAN_DAEMON_SOCKET override, else data_dir/daemon.sock)
 // - DaemonServer              -- main server struct
 // - DaemonServer::new         -- construct and initialize (key gen, preload check, stale cleanup, idle timeout, sandbox fuse)
@@ -34,7 +35,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use base64::Engine;
 use hmac::{Hmac, Mac};
@@ -74,6 +75,16 @@ pub fn socket_path_for(data_dir: &Path) -> PathBuf {
         _ => data_dir.join("daemon.sock"),
     }
 }
+
+/// How long a connected client may leave the daemon waiting on a read or
+/// write before the connection is dropped.
+///
+/// The daemon serves connections sequentially, so without this bound one
+/// client that connects and goes silent wedges every other caller — and
+/// under fail-closed consumers, availability *is* integrity. Requests are
+/// single-line JSON over a local socket; a client that needs ten silent
+/// seconds mid-connection is not a client, it is a wedge.
+const CONNECTION_IO_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Static flag for signal handler. The signal handler sets this to false.
 /// Both the handler and the accept loop read/write this directly — no Mutex
@@ -343,7 +354,9 @@ impl DaemonServer {
 /// Handle a single client connection.
 ///
 /// Reads newline-delimited JSON requests, dispatches each to `handle_request`,
-/// and writes back JSON responses (one per line).
+/// and writes back JSON responses (one per line). Both I/O directions are
+/// bounded by `CONNECTION_IO_TIMEOUT` so a silent client cannot wedge the
+/// sequential accept loop.
 ///
 /// Authenticates the caller via PID-based manifest check before processing.
 /// Status requests are exempt (health checks). All other requests require
@@ -361,6 +374,19 @@ fn handle_connection(
     plugin_root: &Path,
     sandbox_fuse: &fuse::SandboxFuse,
 ) {
+    // Bound both I/O directions before anything else: a silent or stalled
+    // client must not hold the (single-threaded) daemon open indefinitely.
+    // A timed-out read surfaces as an error in the line loop below, which
+    // drops the connection and returns to the accept loop.
+    if let Err(e) = stream.set_read_timeout(Some(CONNECTION_IO_TIMEOUT)) {
+        eprintln!("cannot set read timeout: {}", e);
+        return;
+    }
+    if let Err(e) = stream.set_write_timeout(Some(CONNECTION_IO_TIMEOUT)) {
+        eprintln!("cannot set write timeout: {}", e);
+        return;
+    }
+
     // Authenticate before setting up reader/writer. `None` means no
     // trusted-callers.toml exists — caller auth was never configured, and
     // all connections are allowed (the development default). A present

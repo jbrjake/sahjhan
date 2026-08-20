@@ -344,6 +344,42 @@ fn test_daemon_socket_env_override() {
 
 #[test]
 #[ignore]
+fn test_silent_client_cannot_wedge_daemon() {
+    let dir = setup_dir();
+    let mut daemon = start_daemon(dir.path());
+    wait_for_socket(dir.path());
+    let socket_path = dir.path().join("output/.sahjhan/daemon.sock");
+
+    // A client that connects and says nothing. The single-threaded daemon
+    // enters this connection's read loop and would previously sit there
+    // forever, never returning to the accept loop.
+    let wedge = UnixStream::connect(&socket_path).expect("connect wedge");
+
+    // A status request issued behind it must still be answered once the
+    // connection I/O timeout (10s) drops the silent client.
+    let start = std::time::Instant::now();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_sahjhan"))
+        .args(["--config-dir", "enforcement", "daemon", "status"])
+        .current_dir(dir.path())
+        .output()
+        .expect("status should run");
+    assert!(
+        output.status.success(),
+        "status must be served despite the silent client, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(30),
+        "status should be served shortly after the timeout, took {:?}",
+        start.elapsed()
+    );
+
+    drop(wedge);
+    stop_daemon(&mut daemon);
+}
+
+#[test]
+#[ignore]
 fn test_daemon_status_request() {
     let dir = setup_dir();
     let mut daemon = start_daemon(dir.path());

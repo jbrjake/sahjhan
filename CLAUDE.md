@@ -286,7 +286,7 @@ current directory. Reach for this module before writing
 | Server start | `daemon/mod.rs` | `DaemonServer::start` | Bind socket, set 0600 perms, write PID, signal handling, non-blocking accept loop |
 | Idle timeout | `daemon/mod.rs` | `DaemonServer::start` | last_activity tracking in accept loop; clean shutdown on idle_timeout expiry |
 | Server cleanup | `daemon/mod.rs` | `DaemonServer::cleanup` | Remove socket and PID files |
-| Handle connection | `daemon/mod.rs` | `handle_connection` | Read JSON lines from stream, dispatch to handle_request, write responses |
+| Handle connection | `daemon/mod.rs` | `handle_connection` | Read JSON lines from stream, dispatch to handle_request, write responses; I/O bounded by `CONNECTION_IO_TIMEOUT` (10s) so a silent client cannot wedge the sequential accept loop |
 | Handle request | `daemon/mod.rs` | `handle_request` | Dispatch Request variant to sign/vault/status/enforcement/record_event operation |
 | Record event (authed peer) | `daemon/mod.rs` | `handle_record_event` | Append a consumer-declared event to the active ledger for an authenticated peer; ledger-write analog of `enforcement_write` (validates against events.toml, no HMAC proof) |
 | Ledger-state overlay | `daemon/mod.rs` | `overlay_ledger_state` | Override enforcement blob `state` key with ledger-derived state on enforcement_read (holtz #57); fail-soft to stored bytes |
@@ -662,7 +662,7 @@ main.rs [cli-main]
 | `tests/daemon_protocol_tests.rs` | Wire protocol types: Request deserialization (all ops + unknowns), Response serialization (all constructors incl. idle fields) |
 | `tests/daemon_auth_tests.rs` | Trusted-callers manifest load/parse, hash match/mismatch, not-in-manifest, extract_script_path |
 | `tests/daemon_vault_tests.rs` | Vault CRUD: store/read, overwrite, delete, list, read-not-found, delete-noop |
-| `tests/daemon_signing_tests.rs` | E2E daemon signing (deterministic proofs, sign-without-daemon), lifecycle (socket/PID creation, stop cleanup, status, preload rejection, idle timeout shutdown, `SAHJHAN_DAEMON_SOCKET` relocation), reset auth (#26), auth reason codes (#26), direct-peer auth (trusted script on the socket authenticates; CLI-mediated connection denied even with a trusted ancestor; empty manifest denies everyone) |
+| `tests/daemon_signing_tests.rs` | E2E daemon signing (deterministic proofs, sign-without-daemon), lifecycle (socket/PID creation, stop cleanup, status, preload rejection, idle timeout shutdown, `SAHJHAN_DAEMON_SOCKET` relocation, silent-client wedge recovery), reset auth (#26), auth reason codes (#26), direct-peer auth (trusted script on the socket authenticates; CLI-mediated connection denied even with a trusted ancestor; empty manifest denies everyone) |
 | `tests/daemon_vault_e2e_tests.rs` | E2E vault via CLI: store+read, list, delete, read-nonexistent (all require live daemon) |
 | `tests/daemon_enforcement_tests.rs` | Enforcement state ops: write/read round-trip, update merge, not_found, reserved namespace, vault_list filtering, status enforcement_active, validation (#27) |
 | `tests/active_ledger_tests.rs` | Active-ledger marker: activate/deactivate, create --activate, resolution priority, stale marker fallback, reset clears marker, status display, events land in active ledger |

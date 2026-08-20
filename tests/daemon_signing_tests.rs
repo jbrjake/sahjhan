@@ -279,6 +279,70 @@ fn test_daemon_stop_cleans_up() {
 
 #[test]
 #[ignore]
+fn test_daemon_socket_env_override() {
+    let dir = setup_dir();
+
+    // Socket lives outside the project directory. Keep the path short:
+    // AF_UNIX paths are capped at 104 bytes on macOS, and tempdir paths
+    // under /var/folders easily exceed that.
+    let sock_dir = tempfile::Builder::new()
+        .prefix("sjc1")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let sock_path = sock_dir.path().join("d.sock");
+
+    let mut daemon = std::process::Command::new(env!("CARGO_BIN_EXE_sahjhan"))
+        .args(["--config-dir", "enforcement", "daemon", "start"])
+        .current_dir(dir.path())
+        .env("SAHJHAN_DAEMON_SOCKET", &sock_path)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to start daemon");
+
+    for _ in 0..50 {
+        if sock_path.exists() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(
+        sock_path.exists(),
+        "socket should appear at the override path"
+    );
+    assert!(
+        !dir.path().join("output/.sahjhan/daemon.sock").exists(),
+        "no socket should appear at the default in-project path"
+    );
+    // The PID file stays in data_dir regardless of the socket override.
+    assert!(dir.path().join("output/.sahjhan/daemon.pid").exists());
+
+    // `daemon status` resolves the same override and reaches the daemon.
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "daemon", "status"])
+        .current_dir(dir.path())
+        .env("SAHJHAN_DAEMON_SOCKET", &sock_path)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"ok\":true"));
+
+    // `daemon stop` cleans up the override socket.
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "daemon", "stop"])
+        .current_dir(dir.path())
+        .env("SAHJHAN_DAEMON_SOCKET", &sock_path)
+        .assert()
+        .success();
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    assert!(!sock_path.exists(), "override socket removed after stop");
+
+    let _ = daemon.wait();
+}
+
+#[test]
+#[ignore]
 fn test_daemon_status_request() {
     let dir = setup_dir();
     let mut daemon = start_daemon(dir.path());

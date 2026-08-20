@@ -60,7 +60,7 @@ pub fn cmd_daemon_stop(config_dir: &str) -> i32 {
     let data_dir_abs = resolve_data_dir(&config.paths.data_dir);
 
     let pid_path = data_dir_abs.join("daemon.pid");
-    let socket_path = data_dir_abs.join("daemon.sock");
+    let socket_path = crate::daemon::socket_path_for(&data_dir_abs);
 
     if !pid_path.exists() {
         eprintln!("daemon: no PID file found — daemon is not running");
@@ -136,14 +136,15 @@ pub fn cmd_daemon_status(config_dir: &str) -> i32 {
 }
 
 // [resolve-socket-path]
-/// Resolve the daemon Unix socket path from config.
+/// Resolve the daemon Unix socket path from config, honoring the
+/// `SAHJHAN_DAEMON_SOCKET` override (see `daemon::socket_path_for`).
 ///
 /// Returns an error if the socket file does not exist (daemon not running).
 pub(crate) fn resolve_socket_path(config_dir: &str) -> Result<PathBuf, (i32, String)> {
     let config_dir_abs = resolve_config_dir(config_dir);
     let config = load_config(&config_dir_abs)?;
     let data_dir_abs = resolve_data_dir(&config.paths.data_dir);
-    let socket_path = data_dir_abs.join("daemon.sock");
+    let socket_path = crate::daemon::socket_path_for(&data_dir_abs);
 
     if !socket_path.exists() {
         return Err((

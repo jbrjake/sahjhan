@@ -4,6 +4,7 @@
 // operations over a Unix domain socket.
 //
 // ## Index
+// - socket_path_for           -- daemon socket path (SAHJHAN_DAEMON_SOCKET override, else data_dir/daemon.sock)
 // - DaemonServer              -- main server struct
 // - DaemonServer::new         -- construct and initialize (key gen, preload check, stale cleanup, idle timeout)
 // - DaemonServer::start       -- bind socket, accept loop, signal handling
@@ -54,6 +55,24 @@ use crate::state::machine::StateMachine;
 
 type HmacSha256 = Hmac<Sha256>;
 
+/// Resolve the daemon socket path: a non-empty `SAHJHAN_DAEMON_SOCKET`
+/// overrides the default `data_dir/daemon.sock`.
+///
+/// The Python consumer hooks already honor this variable with the same
+/// semantics (empty string falls through to the default). The override
+/// exists so the socket can live *outside* the project working directory:
+/// a sandboxed session that denies unix sockets and denies writes to the
+/// socket's directory leaves the agent unable to connect to it or pre-bind
+/// (squat) its path, while hooks running outside the sandbox still reach
+/// it. The PID file intentionally stays in `data_dir` — consumers watch it
+/// there to detect a dead daemon, and it guards nothing.
+pub fn socket_path_for(data_dir: &Path) -> PathBuf {
+    match std::env::var("SAHJHAN_DAEMON_SOCKET") {
+        Ok(s) if !s.is_empty() => PathBuf::from(s),
+        _ => data_dir.join("daemon.sock"),
+    }
+}
+
 /// Static flag for signal handler. The signal handler sets this to false.
 /// Both the handler and the accept loop read/write this directly — no Mutex
 /// needed (AtomicBool is async-signal-safe for store with Ordering::SeqCst).
@@ -92,7 +111,7 @@ impl DaemonServer {
             return Err(format!("refusing to start: {} is set in environment", var));
         }
 
-        let socket_path = data_dir.join("daemon.sock");
+        let socket_path = socket_path_for(&data_dir);
         let pid_path = data_dir.join("daemon.pid");
 
         // 2. Clean stale socket/PID files
@@ -812,4 +831,38 @@ pub fn build_canonical_payload(event_type: &str, fields: &HashMap<String, String
         payload.push_str(&format!("{}={}", k, v));
     }
     payload
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One test covers default, override, and empty-string cases sequentially:
+    /// `SAHJHAN_DAEMON_SOCKET` is process-global state, so separate parallel
+    /// test functions would race on it.
+    #[test]
+    fn socket_path_env_override() {
+        let data_dir = Path::new("/some/data/dir");
+
+        std::env::remove_var("SAHJHAN_DAEMON_SOCKET");
+        assert_eq!(
+            socket_path_for(data_dir),
+            PathBuf::from("/some/data/dir/daemon.sock")
+        );
+
+        std::env::set_var("SAHJHAN_DAEMON_SOCKET", "/tmp/elsewhere/d.sock");
+        assert_eq!(
+            socket_path_for(data_dir),
+            PathBuf::from("/tmp/elsewhere/d.sock")
+        );
+
+        // Empty string falls through to the default, matching the Python side.
+        std::env::set_var("SAHJHAN_DAEMON_SOCKET", "");
+        assert_eq!(
+            socket_path_for(data_dir),
+            PathBuf::from("/some/data/dir/daemon.sock")
+        );
+
+        std::env::remove_var("SAHJHAN_DAEMON_SOCKET");
+    }
 }

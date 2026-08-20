@@ -279,6 +279,7 @@ current directory. Reach for this module before writing
 
 | Concept | File | Anchor/Item | Purpose |
 |---------|------|-------------|---------|
+| Socket path | `daemon/mod.rs` | `socket_path_for` | Daemon socket path: non-empty `SAHJHAN_DAEMON_SOCKET` overrides, else `data_dir/daemon.sock`; lets the socket live outside the project cwd (PID file stays in data_dir) |
 | Daemon server | `daemon/mod.rs` | `DaemonServer` | Main server struct (socket_path, pid_path, session_key, vault, config/data dirs, trusted_callers) |
 | Server init | `daemon/mod.rs` | `DaemonServer::new` | Preload check, stale cleanup, key gen, mlock, deny debug, load trusted callers, idle timeout |
 | Server start | `daemon/mod.rs` | `DaemonServer::start` | Bind socket, set 0600 perms, write PID, signal handling, non-blocking accept loop |
@@ -337,7 +338,7 @@ current directory. Reach for this module before writing
 | Daemon start | `cli/daemon_cmd.rs` | `[cmd-daemon-start]` | Start daemon in foreground (accepts idle_timeout) |
 | Daemon stop | `cli/daemon_cmd.rs` | `[cmd-daemon-stop]` | Stop running daemon (SIGTERM, then SIGKILL) |
 | Daemon status | `cli/daemon_cmd.rs` | `[cmd-daemon-status]` | Query daemon status via socket |
-| Socket path resolver | `cli/daemon_cmd.rs` | `[resolve-socket-path]` | Resolve daemon socket path from config |
+| Socket path resolver | `cli/daemon_cmd.rs` | `[resolve-socket-path]` | Resolve daemon socket path from config (honors `SAHJHAN_DAEMON_SOCKET` via `socket_path_for`) |
 | Socket request helper | `cli/daemon_cmd.rs` | `[connect-and-request]` | Send JSON request to daemon socket, read response |
 | Sign via daemon | `cli/sign_cmd.rs` | `[cmd-sign]` | Request HMAC-SHA256 proof from daemon |
 | Vault store | `cli/vault_cmd.rs` | `[cmd-vault-store]` | Store file contents in daemon vault |
@@ -627,7 +628,7 @@ main.rs [cli-main]
 | `tests/daemon_protocol_tests.rs` | Wire protocol types: Request deserialization (all ops + unknowns), Response serialization (all constructors incl. idle fields) |
 | `tests/daemon_auth_tests.rs` | Trusted-callers manifest load/parse, hash match/mismatch, not-in-manifest, extract_script_path |
 | `tests/daemon_vault_tests.rs` | Vault CRUD: store/read, overwrite, delete, list, read-not-found, delete-noop |
-| `tests/daemon_signing_tests.rs` | E2E daemon signing (deterministic proofs, sign-without-daemon), lifecycle (socket/PID creation, stop cleanup, status, preload rejection, idle timeout shutdown), reset auth (#26), auth reason codes (#26), ancestor walk auth (#26) |
+| `tests/daemon_signing_tests.rs` | E2E daemon signing (deterministic proofs, sign-without-daemon), lifecycle (socket/PID creation, stop cleanup, status, preload rejection, idle timeout shutdown, `SAHJHAN_DAEMON_SOCKET` relocation), reset auth (#26), auth reason codes (#26), ancestor walk auth (#26) |
 | `tests/daemon_vault_e2e_tests.rs` | E2E vault via CLI: store+read, list, delete, read-nonexistent (all require live daemon) |
 | `tests/daemon_enforcement_tests.rs` | Enforcement state ops: write/read round-trip, update merge, not_found, reserved namespace, vault_list filtering, status enforcement_active, validation (#27) |
 | `tests/active_ledger_tests.rs` | Active-ledger marker: activate/deactivate, create --activate, resolution priority, stale marker fallback, reset clears marker, status display, events land in active ledger |

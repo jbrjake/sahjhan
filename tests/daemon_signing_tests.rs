@@ -48,7 +48,8 @@ render_dir = "output"
     )
     .unwrap();
 
-    std::fs::write(config_dir.join("trusted-callers.toml"), "[callers]\n").unwrap();
+    // No trusted-callers.toml — caller auth unconfigured; the daemon accepts
+    // test connections (a present manifest is enforced; an empty one denies).
 
     std::fs::create_dir_all(dir.path().join("output")).unwrap();
 
@@ -460,7 +461,8 @@ fields = [
     )
     .unwrap();
 
-    std::fs::write(config_dir.join("trusted-callers.toml"), "[callers]\n").unwrap();
+    // No trusted-callers.toml — caller auth unconfigured; the daemon accepts
+    // test connections (a present manifest is enforced; an empty one denies).
 
     std::fs::create_dir_all(dir.path().join("output")).unwrap();
 
@@ -716,6 +718,14 @@ fn test_reset_with_wrong_proof_is_rejected() {
 
 /// Setup dir with a non-empty trusted-callers.toml so auth is enforced.
 fn setup_dir_with_callers() -> tempfile::TempDir {
+    setup_dir_with_callers_content(
+        "[callers]\n\"hooks/nonexistent.py\" = \"sha256:0000000000000000000000000000000000000000000000000000000000000000\"\n",
+    )
+}
+
+/// Setup dir with a caller manifest of the given content (written before
+/// `init`, so it is covered by the config seal like a real deployment's).
+fn setup_dir_with_callers_content(callers_toml: &str) -> tempfile::TempDir {
     let dir = tempdir().unwrap();
     let config_dir = dir.path().join("enforcement");
     std::fs::create_dir_all(&config_dir).unwrap();
@@ -747,12 +757,8 @@ render_dir = "output"
     )
     .unwrap();
 
-    // Non-empty callers table — auth is enforced
-    std::fs::write(
-        config_dir.join("trusted-callers.toml"),
-        "[callers]\n\"hooks/nonexistent.py\" = \"sha256:0000000000000000000000000000000000000000000000000000000000000000\"\n",
-    )
-    .unwrap();
+    // A present callers table — auth is enforced
+    std::fs::write(config_dir.join("trusted-callers.toml"), callers_toml).unwrap();
 
     std::fs::create_dir_all(dir.path().join("output")).unwrap();
 
@@ -822,12 +828,14 @@ fn test_auth_error_includes_reason_code() {
 }
 
 // ---------------------------------------------------------------------------
-// Ancestor walk auth test (#26)
+// Direct-peer auth tests
 // ---------------------------------------------------------------------------
 
-/// Setup dir with a real hook script in trusted-callers.toml.
-/// The hook script runs `sahjhan sign` — auth must succeed by walking
-/// the process tree from sahjhan → shell → python → finding the script.
+/// Setup dir with two real hook scripts in trusted-callers.toml: one that
+/// speaks the socket protocol directly (must authenticate) and one that
+/// shells out to `sahjhan sign` (must NOT — manifest authority is not
+/// inheritable by a trusted script's descendants, and the CLI never
+/// authenticates).
 fn setup_dir_with_real_hook() -> (tempfile::TempDir, String) {
     let dir = tempdir().unwrap();
     let config_dir = dir.path().join("enforcement");
@@ -836,9 +844,9 @@ fn setup_dir_with_real_hook() -> (tempfile::TempDir, String) {
     std::fs::write(
         config_dir.join("protocol.toml"),
         r#"[protocol]
-name = "test-ancestor-walk"
+name = "test-direct-peer"
 version = "1.0.0"
-description = "Ancestor walk test"
+description = "Direct-peer auth test"
 
 [paths]
 managed = ["output"]
@@ -860,13 +868,26 @@ render_dir = "output"
     )
     .unwrap();
 
-    // Create hook script
     let hooks_dir = config_dir.join("hooks");
     std::fs::create_dir_all(&hooks_dir).unwrap();
 
-    // The hook script calls sahjhan sign
+    // direct_hook.py speaks the socket protocol itself — the authenticated
+    // peer IS the trusted script.
+    let direct_content = r#"#!/usr/bin/env python3
+import json, socket, sys
+s = socket.socket(socket.AF_UNIX)
+s.connect(sys.argv[1])
+s.sendall((json.dumps({"op": "sign", "event_type": "test", "fields": {"x": "1"}}) + "\n").encode())
+resp = s.makefile().readline()
+print(resp, end="")
+sys.exit(0 if json.loads(resp).get("ok") else 1)
+"#;
+    std::fs::write(hooks_dir.join("direct_hook.py"), direct_content).unwrap();
+
+    // cli_hook.py shells out to `sahjhan sign` — the peer on the socket is
+    // the CLI binary, not this script.
     let sahjhan_bin = env!("CARGO_BIN_EXE_sahjhan");
-    let hook_content = format!(
+    let cli_content = format!(
         r#"#!/usr/bin/env python3
 import subprocess, sys, os
 os.chdir(sys.argv[1])
@@ -882,17 +903,30 @@ sys.exit(result.returncode)
 "#,
         bin = sahjhan_bin
     );
-    std::fs::write(hooks_dir.join("test_hook.py"), &hook_content).unwrap();
+    std::fs::write(hooks_dir.join("cli_hook.py"), &cli_content).unwrap();
 
-    // Compute hash of the hook script
     use sha2::{Digest, Sha256};
-    let content = std::fs::read(hooks_dir.join("test_hook.py")).unwrap();
-    let hash = format!("sha256:{}", hex::encode(Sha256::digest(&content)));
+    let direct_hash = format!(
+        "sha256:{}",
+        hex::encode(Sha256::digest(
+            std::fs::read(hooks_dir.join("direct_hook.py")).unwrap()
+        ))
+    );
+    let cli_hash = format!(
+        "sha256:{}",
+        hex::encode(Sha256::digest(
+            std::fs::read(hooks_dir.join("cli_hook.py")).unwrap()
+        ))
+    );
 
-    // Write trusted-callers.toml with the hook script
+    // Both scripts are listed — the CLI-mediated test must fail on the
+    // *peer*, not on a missing manifest entry.
     std::fs::write(
         config_dir.join("trusted-callers.toml"),
-        format!("[callers]\n\"hooks/test_hook.py\" = \"{}\"\n", hash),
+        format!(
+            "[callers]\n\"hooks/direct_hook.py\" = \"{}\"\n\"hooks/cli_hook.py\" = \"{}\"\n",
+            direct_hash, cli_hash
+        ),
     )
     .unwrap();
 
@@ -905,21 +939,61 @@ sys.exit(result.returncode)
         .assert()
         .success();
 
-    (dir, hash)
+    (dir, direct_hash)
 }
 
 #[test]
 #[ignore]
-fn test_ancestor_walk_authenticates_hook_script() {
+fn test_direct_peer_hook_authenticates() {
     let (dir, _hash) = setup_dir_with_real_hook();
     let mut daemon = start_daemon(dir.path());
     wait_for_socket(dir.path());
 
-    // Run the hook script, which calls `sahjhan sign`.
-    // Process tree: python3 → sahjhan sign (connects to daemon socket)
-    // The daemon must walk up: sahjhan (our binary) → parent → python3
-    // and find test_hook.py in the cmdline of the python3 process.
-    let hook_script = dir.path().join("enforcement/hooks/test_hook.py");
+    // The trusted script connects to the socket itself: the direct peer's
+    // cmdline names it, it canonicalizes under --config-dir, and its hash
+    // matches the manifest.
+    let hook_script = dir.path().join("enforcement/hooks/direct_hook.py");
+    let socket_path = dir.path().join("output/.sahjhan/daemon.sock");
+    let output = std::process::Command::new("python3")
+        .arg(&hook_script)
+        .arg(&socket_path)
+        .output()
+        .expect("hook script should run");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    let _ = daemon.kill();
+    let daemon_output = daemon.wait_with_output().unwrap();
+    let daemon_stderr = String::from_utf8_lossy(&daemon_output.stderr);
+
+    assert!(
+        output.status.success(),
+        "direct-peer hook should authenticate\nstdout: {}\nstderr: {}\ndaemon stderr:\n{}",
+        stdout,
+        stderr,
+        daemon_stderr
+    );
+    assert!(
+        stdout.contains("\"proof\""),
+        "should get a proof back from sign, stdout: {}\ndaemon stderr:\n{}",
+        stdout,
+        daemon_stderr
+    );
+}
+
+#[test]
+#[ignore]
+fn test_cli_mediated_connection_is_denied() {
+    let (dir, _hash) = setup_dir_with_real_hook();
+    let mut daemon = start_daemon(dir.path());
+    wait_for_socket(dir.path());
+
+    // cli_hook.py is trusted and listed — but it reaches the daemon through
+    // `sahjhan sign`, so the process on the socket is the CLI binary. With
+    // the ancestor walk gone, a trusted ancestor confers nothing: manifest
+    // authority is not inheritable, and the CLI never authenticates.
+    let hook_script = dir.path().join("enforcement/hooks/cli_hook.py");
     let output = std::process::Command::new("python3")
         .arg(&hook_script)
         .arg(dir.path())
@@ -929,21 +1003,58 @@ fn test_ancestor_walk_authenticates_hook_script() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    // Capture daemon stderr for diagnostics
     let _ = daemon.kill();
     let daemon_output = daemon.wait_with_output().unwrap();
     let daemon_stderr = String::from_utf8_lossy(&daemon_output.stderr);
 
     assert!(
-        output.status.success(),
-        "hook script should succeed (ancestor walk should find trusted script)\nstdout: {}\nstderr: {}\ndaemon stderr:\n{}",
-        stdout, stderr, daemon_stderr
-    );
-    // The proof should be a hex string
-    assert!(
-        !stdout.trim().is_empty(),
-        "should get a proof back from sign, stderr: {}\ndaemon stderr:\n{}",
+        !output.status.success(),
+        "CLI-mediated sign must NOT authenticate\nstdout: {}\nstderr: {}\ndaemon stderr:\n{}",
+        stdout,
         stderr,
         daemon_stderr
     );
+}
+
+#[test]
+#[ignore]
+fn test_empty_manifest_denies_every_caller() {
+    // A present trusted-callers.toml with an empty [callers] table means
+    // "no one", not "anyone". Only status still answers.
+    let dir = setup_dir_with_callers_content("[callers]\n");
+    let mut daemon = start_daemon(dir.path());
+    wait_for_socket(dir.path());
+
+    let socket_path = dir.path().join("output/.sahjhan/daemon.sock");
+    let mut stream = UnixStream::connect(&socket_path).expect("connect to daemon socket");
+    writeln!(
+        stream,
+        r#"{{"op":"sign","event_type":"test","fields":{{}}}}"#
+    )
+    .expect("write sign request");
+    let reader = BufReader::new(&stream);
+    let line = reader
+        .lines()
+        .next()
+        .expect("should get a response")
+        .expect("response should be readable");
+    let val: serde_json::Value =
+        serde_json::from_str(&line).expect("response should be valid JSON");
+    assert_eq!(val["ok"], false, "empty manifest must deny, got: {}", line);
+    assert_eq!(val["error"], "auth_failed");
+
+    // Close our connection before asking for status: the single-threaded
+    // daemon serves connections sequentially, and a held-open stream blocks
+    // the accept loop (the wedge the connection read timeout exists for).
+    drop(stream);
+
+    // Status is exempt (health check).
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "daemon", "status"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    stop_daemon(&mut daemon);
 }

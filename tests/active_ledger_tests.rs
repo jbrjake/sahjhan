@@ -433,13 +433,11 @@ fn stop_daemon(child: &mut std::process::Child) {
     let _ = child.wait();
 }
 
-/// Setup dir with trusted-callers.toml for daemon tests.
+/// Setup dir for daemon-backed reset tests. No trusted-callers.toml —
+/// caller auth unconfigured; the daemon accepts test connections (a present
+/// manifest is enforced; an empty one denies).
 fn setup_dir_for_reset() -> tempfile::TempDir {
-    let dir = setup_initialized_dir();
-    let config_dir = dir.path().join("enforcement");
-    // Write empty trusted-callers.toml (allow all — test env)
-    std::fs::write(config_dir.join("trusted-callers.toml"), "[callers]\n").unwrap();
-    dir
+    setup_initialized_dir()
 }
 
 #[test]

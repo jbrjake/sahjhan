@@ -281,7 +281,7 @@ current directory. Reach for this module before writing
 | Concept | File | Anchor/Item | Purpose |
 |---------|------|-------------|---------|
 | Socket path | `daemon/mod.rs` | `socket_path_for` | Daemon socket path: non-empty `SAHJHAN_DAEMON_SOCKET` overrides, else `data_dir/daemon.sock`; lets the socket live outside the project cwd (PID file stays in data_dir) |
-| Daemon server | `daemon/mod.rs` | `DaemonServer` | Main server struct (socket_path, pid_path, session_key, vault, config/data dirs, trusted_callers) |
+| Daemon server | `daemon/mod.rs` | `DaemonServer` | Main server struct (socket_path, pid_path, session_key, vault, config/data dirs, optional trusted_callers — absent file = caller auth unconfigured/allow, present file = enforced, empty table denies everyone) |
 | Server init | `daemon/mod.rs` | `DaemonServer::new` | Preload check, stale cleanup, key gen, mlock, deny debug, load trusted callers, idle timeout, sandbox fuse |
 | Server start | `daemon/mod.rs` | `DaemonServer::start` | Bind socket, set 0600 perms, write PID, signal handling, non-blocking accept loop |
 | Idle timeout | `daemon/mod.rs` | `DaemonServer::start` | last_activity tracking in accept loop; clean shutdown on idle_timeout expiry |
@@ -307,8 +307,7 @@ current directory. Reach for this module before writing
 | Script path extractor | `daemon/auth.rs` | `extract_script_path` | Extracts first non-flag arg from interpreter cmdline (the script path) |
 | Auth error | `daemon/auth.rs` | `AuthError` | NotInManifest, HashMismatch, ScriptNotFound, NoScriptPath, ManifestLoad, ManifestParse, Platform |
 | Auth reason codes | `daemon/auth.rs` | `AuthError::reason_code` | Maps error to diagnostic reason: pid_resolution_failed, hash_mismatch, peer_cred_unavailable (#26) |
-| Find trusted ancestor | `daemon/auth.rs` | `find_trusted_ancestor` | Walk process ancestor chain looking for trusted script in manifest (#26) |
-| Peer authentication | `daemon/auth.rs` | `authenticate_peer` | PID-based caller auth via ancestor walk: peer PID → exe check → walk ancestors → cmdline → manifest verify (#26) |
+| Peer authentication | `daemon/auth.rs` | `authenticate_peer` | Direct-peer caller auth: peer PID → cmdline → script canonicalizes under --config-dir → manifest hash verify. No ancestor walk (authority is not inheritable), no own-binary exemption (the CLI never authenticates). Hardening, not the boundary — see daemon/fuse.rs |
 | Peer PID | `daemon/platform.rs` | `[get-peer-pid]` | Extract connecting PID from Unix socket (macOS: LOCAL_PEERPID, Linux: SO_PEERCRED) |
 | Exe path | `daemon/platform.rs` | `[get-exe-path]` | Resolve PID to executable path (macOS: proc_pidpath, Linux: /proc/pid/exe) |
 | Command line | `daemon/platform.rs` | `[get-cmdline]` | Read process command-line arguments (macOS: KERN_PROCARGS2, Linux: /proc/pid/cmdline) |
@@ -663,7 +662,7 @@ main.rs [cli-main]
 | `tests/daemon_protocol_tests.rs` | Wire protocol types: Request deserialization (all ops + unknowns), Response serialization (all constructors incl. idle fields) |
 | `tests/daemon_auth_tests.rs` | Trusted-callers manifest load/parse, hash match/mismatch, not-in-manifest, extract_script_path |
 | `tests/daemon_vault_tests.rs` | Vault CRUD: store/read, overwrite, delete, list, read-not-found, delete-noop |
-| `tests/daemon_signing_tests.rs` | E2E daemon signing (deterministic proofs, sign-without-daemon), lifecycle (socket/PID creation, stop cleanup, status, preload rejection, idle timeout shutdown, `SAHJHAN_DAEMON_SOCKET` relocation), reset auth (#26), auth reason codes (#26), ancestor walk auth (#26) |
+| `tests/daemon_signing_tests.rs` | E2E daemon signing (deterministic proofs, sign-without-daemon), lifecycle (socket/PID creation, stop cleanup, status, preload rejection, idle timeout shutdown, `SAHJHAN_DAEMON_SOCKET` relocation), reset auth (#26), auth reason codes (#26), direct-peer auth (trusted script on the socket authenticates; CLI-mediated connection denied even with a trusted ancestor; empty manifest denies everyone) |
 | `tests/daemon_vault_e2e_tests.rs` | E2E vault via CLI: store+read, list, delete, read-nonexistent (all require live daemon) |
 | `tests/daemon_enforcement_tests.rs` | Enforcement state ops: write/read round-trip, update merge, not_found, reserved namespace, vault_list filtering, status enforcement_active, validation (#27) |
 | `tests/active_ledger_tests.rs` | Active-ledger marker: activate/deactivate, create --activate, resolution priority, stale marker fallback, reset clears marker, status display, events land in active ledger |

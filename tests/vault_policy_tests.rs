@@ -160,7 +160,8 @@ fn setup_dir_with_policy() -> tempfile::TempDir {
          deletable_in_states=[\"recon\"]\n",
     )
     .unwrap();
-    std::fs::write(config_dir.join("trusted-callers.toml"), "[callers]\n").unwrap();
+    // No trusted-callers.toml — caller auth unconfigured; the daemon accepts
+    // test connections (a present manifest is enforced; an empty one denies).
     std::fs::create_dir_all(dir.path().join("output")).unwrap();
 
     Command::cargo_bin("sahjhan")

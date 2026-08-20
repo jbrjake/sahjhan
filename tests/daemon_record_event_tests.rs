@@ -3,9 +3,9 @@
 //!
 //! These require a live daemon, so they are `#[ignore]` by default and run
 //! explicitly (same pattern as daemon_enforcement_tests.rs). Auth is skipped
-//! because trusted-callers.toml has an empty `[callers]` table — the record
-//! path itself is what's under test, not peer authentication (covered in
-//! daemon_auth_tests.rs / daemon_signing_tests.rs).
+//! because no trusted-callers.toml exists (caller auth unconfigured) — the
+//! record path itself is what's under test, not peer authentication (covered
+//! in daemon_auth_tests.rs / daemon_signing_tests.rs).
 
 use assert_cmd::Command;
 use std::io::{BufRead, BufReader, Write};
@@ -60,7 +60,8 @@ fields = [
     )
     .unwrap();
 
-    std::fs::write(config_dir.join("trusted-callers.toml"), "[callers]\n").unwrap();
+    // No trusted-callers.toml — caller auth unconfigured; the daemon accepts
+    // test connections (a present manifest is enforced; an empty one denies).
 
     std::fs::create_dir_all(dir.path().join("output")).unwrap();
 

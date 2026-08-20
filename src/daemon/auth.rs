@@ -3,14 +3,21 @@
 // Caller authentication for the daemon. Loads a trusted-callers manifest,
 // resolves the calling script from PID metadata, and verifies its hash.
 //
+// Scope, stated honestly: this is hardening, not the security boundary. A
+// same-user process can defeat any peer inspection — fork a connected fd
+// into an exec of a genuine hook, rewrite its own /proc/pid/cmdline on
+// Linux, or load code into a trusted interpreter. The boundary against the
+// agent is the OS sandbox (see daemon/fuse.rs). This check exists to reject
+// accidents and crude impersonation, and to keep authority from being
+// inherited: only the process *directly* holding the socket is examined.
+//
 // ## Index
 // - TrustedCallersManifest    — manifest struct + loader
 // - TrustedCallersManifest::verify_caller — path lookup + SHA-256 verification
 // - extract_script_path       — extract script path from interpreter cmdline
 // - AuthError                 — authentication error type
 // - AuthError::reason_code    — map error to diagnostic reason code (issue #26)
-// - find_trusted_ancestor     — walk process ancestor chain looking for trusted script
-// - authenticate_peer         — PID-based caller authentication via ancestor walk
+// - authenticate_peer         — direct-peer caller authentication (no ancestor walk)
 
 use crate::daemon::platform;
 use serde::Deserialize;
@@ -116,84 +123,21 @@ pub fn extract_script_path(args: &[String]) -> Option<String> {
     None
 }
 
-/// Walk up the process ancestor chain looking for a trusted script.
+/// Authenticate the process directly holding the socket.
 ///
-/// Starting from `start_pid`, examines the cmdline of each ancestor for a
-/// script path under `plugin_root` that appears in the manifest. Walks up
-/// to `MAX_ANCESTOR_DEPTH` levels to avoid runaway loops.
+/// The peer PID's kernel-recorded cmdline must name a script that
+/// canonicalizes under `plugin_root` (the `--config-dir`) and appears in
+/// the trusted-callers manifest with a matching SHA-256.
 ///
-/// Returns the relative path of the matched script on success.
-fn find_trusted_ancestor(
-    start_pid: u32,
-    manifest: &TrustedCallersManifest,
-    plugin_root_canonical: &Path,
-) -> Result<(), AuthError> {
-    const MAX_ANCESTOR_DEPTH: usize = 10;
-    let mut current_pid = start_pid;
-
-    for depth in 0..MAX_ANCESTOR_DEPTH {
-        if current_pid <= 1 {
-            // Hit init/launchd — no more ancestors to check
-            break;
-        }
-
-        let cmdline = match platform::get_cmdline(current_pid) {
-            Ok(args) => args,
-            Err(e) => {
-                eprintln!(
-                    "auth: depth {}: cannot get cmdline for PID {}: {}",
-                    depth, current_pid, e
-                );
-                break;
-            }
-        };
-
-        eprintln!(
-            "auth: depth {}: PID {} cmdline = {:?}",
-            depth, current_pid, cmdline
-        );
-
-        if let Some(script_path_str) = extract_script_path(&cmdline) {
-            let script_path = std::path::Path::new(&script_path_str);
-            if let Ok(canonical) = script_path.canonicalize() {
-                if let Ok(relative) = canonical.strip_prefix(plugin_root_canonical) {
-                    let relative_str = relative.to_string_lossy();
-                    eprintln!(
-                        "auth: depth {}: found candidate script '{}'",
-                        depth, relative_str
-                    );
-                    // Found a script under plugin root — verify its hash
-                    return manifest.verify_caller(plugin_root_canonical, &relative_str);
-                }
-            }
-        }
-
-        // Move to parent
-        current_pid = match platform::get_parent_pid(current_pid) {
-            Ok(ppid) => ppid,
-            Err(e) => {
-                eprintln!(
-                    "auth: depth {}: cannot get parent PID of {}: {}",
-                    depth, current_pid, e
-                );
-                break;
-            }
-        };
-    }
-
-    Err(AuthError::NoScriptPath)
-}
-
-/// Authenticate a connected peer via PID resolution + ancestor walk.
+/// Deliberately absent, both removed with the ancestor walk:
 ///
-/// Resolves the peer PID from the socket, then walks up the process tree
-/// looking for a script that matches the trusted-callers manifest. If the
-/// peer is our own binary (CLI-mediated connection like `sahjhan sign`),
-/// starts the walk from the parent; otherwise starts from the peer itself.
-///
-/// This ancestor-chain walk handles deep process trees common on macOS
-/// where shell intermediaries (bash, zsh) sit between the hook script
-/// and the sahjhan CLI process.
+/// - **No walk up the process tree.** Manifest authority must not be
+///   inheritable — under the walk, *every* descendant of a trusted script
+///   (a shell it spawned, a command that shell ran) authenticated as it.
+/// - **No exemption for our own binary.** A CLI-mediated connection
+///   (`sahjhan sign`) does not authenticate, whoever its ancestors are: an
+///   agent that can run the CLI must not reach privileged ops through it.
+///   Trusted consumers speak the socket protocol directly from their hooks.
 pub fn authenticate_peer(
     stream: &UnixStream,
     manifest: &TrustedCallersManifest,
@@ -202,30 +146,28 @@ pub fn authenticate_peer(
     let peer_pid = platform::get_peer_pid(stream)
         .map_err(|e| AuthError::Platform(format!("cannot get peer PID: {}", e)))?;
 
-    let peer_exe = platform::get_exe_path(peer_pid)
-        .map_err(|e| AuthError::Platform(format!("cannot get peer exe: {}", e)))?;
-    let our_exe = std::env::current_exe()
-        .map_err(|e| AuthError::Platform(format!("cannot get own exe: {}", e)))?;
+    let cmdline = platform::get_cmdline(peer_pid).map_err(|e| {
+        AuthError::Platform(format!("cannot get cmdline for PID {}: {}", peer_pid, e))
+    })?;
 
-    eprintln!(
-        "auth: peer PID={}, exe={}, our_exe={}",
-        peer_pid,
-        peer_exe.display(),
-        our_exe.display()
-    );
-
-    // Start from parent if peer is our own binary (CLI-mediated),
-    // otherwise start from the peer itself
-    let start_pid = if peer_exe == our_exe {
-        platform::get_parent_pid(peer_pid)
-            .map_err(|e| AuthError::Platform(format!("cannot get parent PID: {}", e)))?
-    } else {
-        peer_pid
-    };
+    let script_path_str = extract_script_path(&cmdline).ok_or(AuthError::NoScriptPath)?;
+    let script_path = Path::new(&script_path_str);
+    // Relative cmdline paths resolve against the daemon's own cwd, which is
+    // generally not the peer's — consumers must invoke hooks by absolute
+    // path for auth to succeed.
+    let canonical = script_path
+        .canonicalize()
+        .map_err(|_| AuthError::ScriptNotFound(script_path.to_path_buf()))?;
 
     let plugin_root_canonical = plugin_root
         .canonicalize()
         .map_err(|e| AuthError::Platform(format!("cannot canonicalize plugin root: {}", e)))?;
 
-    find_trusted_ancestor(start_pid, manifest, &plugin_root_canonical)
+    let relative = canonical
+        .strip_prefix(&plugin_root_canonical)
+        .map_err(|_| AuthError::NotInManifest {
+            path: canonical.display().to_string(),
+        })?;
+
+    manifest.verify_caller(&plugin_root_canonical, &relative.to_string_lossy())
 }

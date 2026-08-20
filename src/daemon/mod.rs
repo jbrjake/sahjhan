@@ -6,7 +6,7 @@
 // ## Index
 // - socket_path_for           -- daemon socket path (SAHJHAN_DAEMON_SOCKET override, else data_dir/daemon.sock)
 // - DaemonServer              -- main server struct
-// - DaemonServer::new         -- construct and initialize (key gen, preload check, stale cleanup, idle timeout)
+// - DaemonServer::new         -- construct and initialize (key gen, preload check, stale cleanup, idle timeout, sandbox fuse)
 // - DaemonServer::start       -- bind socket, accept loop, signal handling
 // - DaemonServer::cleanup     -- remove socket and PID files
 // - handle_connection         -- read JSON lines from a stream, dispatch, respond
@@ -92,8 +92,7 @@ pub struct DaemonServer {
     vault: Arc<Mutex<Vault>>,
     config_dir: PathBuf,
     data_dir: PathBuf,
-    #[allow(dead_code)]
-    trusted_callers: TrustedCallersManifest,
+    trusted_callers: Option<TrustedCallersManifest>,
     start_time: Instant,
     idle_timeout: u64,
     fuse: fuse::SandboxFuse,
@@ -164,16 +163,20 @@ impl DaemonServer {
         // 5. Deny debugger attachment
         platform::deny_debug_attach();
 
-        // 6. Load trusted-callers.toml
+        // 6. Load trusted-callers.toml. An *absent* file means caller auth
+        // was never configured — connections are allowed (the development
+        // default). A *present* file is enforced as written, so an empty
+        // `[callers]` table denies everyone rather than allowing everyone:
+        // a deployment that declares callers and lists none has said "no
+        // one", not "anyone".
         let callers_path = config_dir.join("trusted-callers.toml");
         let trusted_callers = if callers_path.exists() {
-            TrustedCallersManifest::load(&callers_path)
-                .map_err(|e| format!("cannot load trusted-callers.toml: {}", e))?
+            Some(
+                TrustedCallersManifest::load(&callers_path)
+                    .map_err(|e| format!("cannot load trusted-callers.toml: {}", e))?,
+            )
         } else {
-            // No manifest — empty callers (all connections allowed)
-            TrustedCallersManifest {
-                callers: HashMap::new(),
-            }
+            None
         };
 
         let fuse = fuse::SandboxFuse {
@@ -283,7 +286,7 @@ impl DaemonServer {
                         start_time,
                         last_activity,
                         idle_timeout,
-                        &self.trusted_callers,
+                        self.trusted_callers.as_ref(),
                         plugin_root,
                         &self.fuse,
                     );
@@ -354,26 +357,25 @@ fn handle_connection(
     start_time: Instant,
     last_activity: Instant,
     idle_timeout: u64,
-    trusted_callers: &auth::TrustedCallersManifest,
+    trusted_callers: Option<&auth::TrustedCallersManifest>,
     plugin_root: &Path,
     sandbox_fuse: &fuse::SandboxFuse,
 ) {
-    // Authenticate before setting up reader/writer.
-    // If no callers are configured, skip auth (allow all). This lets the
-    // daemon operate without caller restrictions when trusted-callers.toml
-    // has an empty [callers] table, which is the default for development
-    // and testing.
-    let (authenticated, auth_reason) = if trusted_callers.callers.is_empty() {
-        (true, None)
-    } else {
-        match auth::authenticate_peer(&stream, trusted_callers, plugin_root) {
+    // Authenticate before setting up reader/writer. `None` means no
+    // trusted-callers.toml exists — caller auth was never configured, and
+    // all connections are allowed (the development default). A present
+    // manifest is enforced as written: an empty `[callers]` table denies
+    // every caller rather than allowing every caller.
+    let (authenticated, auth_reason) = match trusted_callers {
+        None => (true, None),
+        Some(manifest) => match auth::authenticate_peer(&stream, manifest, plugin_root) {
             Ok(()) => (true, None),
             Err(e) => {
                 let reason = e.reason_code().to_string();
                 eprintln!("auth: {} (reason: {})", e, reason);
                 (false, Some(reason))
             }
-        }
+        },
     };
 
     let reader_stream = match stream.try_clone() {

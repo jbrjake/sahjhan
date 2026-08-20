@@ -70,6 +70,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | Lint config | `config/protocol.rs` | `LintConfig` | `[lint]` section; `require_producers`, `disabled_checks`, `similarity_threshold` (#32) |
 | Named query | `config/protocol.rs` | `NamedQuery` | `[queries.<name>]` reusable SQL predicate (`sql` + optional `intent`); referenced by query gates as `query = "<name>"` (#32) |
 | Write-gated config | `config/protocol.rs` | `WriteGatedConfig` | A path whose writability is gated by protocol state (path, writable_in, message) |
+| Daemon config | `config/protocol.rs` | `DaemonConfig` | `[daemon]` section; `require_sandbox` arms the sandbox fuse (protocol.toml is sealed, so arming can't be silently undone) |
 | Hooks file | `config/hooks.rs` | `HooksFile` | Top-level hooks.toml wrapper (hooks + monitors) |
 | Hook config | `config/hooks.rs` | `HookConfig` | Single hook rule (event, tools, states, gate, check, auto_record, filter) |
 | Hook event | `config/hooks.rs` | `HookEvent` | PreToolUse, PostToolUse, Stop |
@@ -84,7 +85,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | Event definitions | `config/events.rs` | `EventConfig`, `EventFieldConfig` | events.toml; field patterns for validation; `restricted` marks HMAC-only events; `optional` marks non-required fields; `attestation` names its evidence strength |
 | Event producers | `config/events.rs` | `ProducerConfig` | `[[events.X.producers]]`; opaque `id` + optional `available_in_states`; consumed by lint L1/L2 (#32) |
 | Render definitions | `config/renders.rs` | `RenderConfig` | renders.toml; trigger/template/target/ledger/ledger_template |
-| Config seal hashing | `config/mod.rs` | `compute_config_seals()` | SHA-256 hash all 7 sealed config files (incl. `trusted-callers.toml`, holtz #30) |
+| Config seal hashing | `config/mod.rs` | `compute_config_seals()` | SHA-256 hash all eight sealed config files (incl. `trusted-callers.toml` and `vault.toml`) |
 
 ### gates/ — Gate Evaluation
 
@@ -281,7 +282,7 @@ current directory. Reach for this module before writing
 |---------|------|-------------|---------|
 | Socket path | `daemon/mod.rs` | `socket_path_for` | Daemon socket path: non-empty `SAHJHAN_DAEMON_SOCKET` overrides, else `data_dir/daemon.sock`; lets the socket live outside the project cwd (PID file stays in data_dir) |
 | Daemon server | `daemon/mod.rs` | `DaemonServer` | Main server struct (socket_path, pid_path, session_key, vault, config/data dirs, trusted_callers) |
-| Server init | `daemon/mod.rs` | `DaemonServer::new` | Preload check, stale cleanup, key gen, mlock, deny debug, load trusted callers, idle timeout |
+| Server init | `daemon/mod.rs` | `DaemonServer::new` | Preload check, stale cleanup, key gen, mlock, deny debug, load trusted callers, idle timeout, sandbox fuse |
 | Server start | `daemon/mod.rs` | `DaemonServer::start` | Bind socket, set 0600 perms, write PID, signal handling, non-blocking accept loop |
 | Idle timeout | `daemon/mod.rs` | `DaemonServer::start` | last_activity tracking in accept loop; clean shutdown on idle_timeout expiry |
 | Server cleanup | `daemon/mod.rs` | `DaemonServer::cleanup` | Remove socket and PID files |
@@ -296,6 +297,11 @@ current directory. Reach for this module before writing
 | Reserved vault namespace | `daemon/mod.rs` | `handle_request` | `_`-prefixed names rejected by generic vault ops, filtered from vault_list (#27) |
 | Wire request | `daemon/protocol.rs` | `Request` | Tagged enum for incoming JSON operations (sign, vault_store, vault_read, vault_delete, vault_list, status, verify, enforcement_read, enforcement_write, enforcement_update, record_event) |
 | Wire response | `daemon/protocol.rs` | `Response` | Output envelope; constructors: ok_sign, ok_data, ok_names, ok_status, ok_empty, err, err_with_reason; ok_status includes enforcement_active bool; includes optional `reason` field (#26) |
+| Sandbox fuse | `daemon/fuse.rs` | `SandboxFuse` | Armed flag + project_root + socket_path; held by DaemonServer, consulted before every non-status request |
+| Fuse refusal | `daemon/fuse.rs` | `SandboxFuse::refusal` | Evaluate the boundary; `Some(Response)` refusal (`error: sandbox_required` + machine-readable reason) when tripped |
+| Fuse scopes | `daemon/fuse.rs` | `[fuse-scopes]` | Settings files consulted: project settings.local.json, project settings.json, ~/.claude/settings.json (precedence order) |
+| Fuse checks | `daemon/fuse.rs` | `[fuse-evaluate]` | enabled=true, allowUnsandboxedCommands=false, failIfUnavailable=true (effective values); socket-allowlist + excludedCommands scans across all scopes; socket outside project root |
+| Allowlist coverage | `daemon/fuse.rs` | `[fuse-entry-covers]` | Does an allowUnixSockets entry reach the socket (exact, dir prefix, or any glob = covering) |
 | Trusted callers manifest | `daemon/auth.rs` | `TrustedCallersManifest` | Loads trusted-callers.toml (path → sha256 hash map) |
 | Caller verification | `daemon/auth.rs` | `TrustedCallersManifest::verify_caller` | Checks relative script path is in manifest and its SHA-256 matches |
 | Script path extractor | `daemon/auth.rs` | `extract_script_path` | Extracts first non-flag arg from interpreter cmdline (the script path) |
@@ -489,6 +495,35 @@ There is deliberately no write path for `state`: an agent-invoked CLI cannot
 authenticate to the daemon, and trusting the binary itself would let agents
 mint HMAC proofs via `sahjhan sign`.
 
+### Flow: Sandbox Fuse (daemon refuses without the boundary)
+
+Why an armed daemon serves nothing privileged until the Claude Code sandbox
+confines the agent (`[daemon] require_sandbox = true` in sealed protocol.toml):
+
+```
+cli/daemon_cmd.rs [cmd-daemon-start]
+  → config.daemon.require_sandbox + resolve_project_root  → DaemonServer::new
+    → daemon/fuse.rs SandboxFuse { armed, project_root, socket_path }
+daemon/mod.rs handle_connection            ← per request, before auth; status exempt
+  → daemon/fuse.rs SandboxFuse::refusal
+    → [fuse-scopes]   .claude/settings.local.json → .claude/settings.json → ~/.claude/settings.json
+    → [fuse-evaluate] effective sandbox.enabled == true
+                      effective sandbox.allowUnsandboxedCommands == false
+                      effective sandbox.failIfUnavailable == true
+                      no scope allowlists the socket (allowUnixSockets/allowAllUnixSockets)
+                      no scope has non-empty excludedCommands
+                      socket outside the project root (C1 applied)
+    → any failure → Response error "sandbox_required" + reason code (fail closed)
+```
+
+Evaluated fresh per request — the arming flow starts the daemon *before*
+writing the settings, so the fuse begins passing the moment the boundary
+appears, and trips again if it goes away. The fuse reads configuration, not
+kernel state; `failIfUnavailable = true` is required precisely so "settings
+demand the sandbox" implies "it is on, or the session halted." On Linux the
+socket block additionally needs the optional seccomp filter
+(`@anthropic-ai/sandbox-runtime`), which the fuse cannot verify.
+
 ### Flow: Lint (static integrity analysis)
 
 How `sahjhan lint` decides a protocol is incoherent — config only, no ledger, no gate execution:
@@ -554,7 +589,7 @@ How config seals are created and verified:
 
 ```
 cli/init.rs [cmd-init]
-  → config/mod.rs compute_config_seals()      ← SHA-256 of all 7 sealed config files (incl. trusted-callers.toml)
+  → config/mod.rs compute_config_seals()      ← SHA-256 of all eight sealed config files (incl. trusted-callers.toml, vault.toml)
   → ledger/chain.rs init_with_seals()          ← seals stored in genesis entry fields
 
 cli/commands.rs [open-ledger] or [open-targeted]
@@ -633,3 +668,4 @@ main.rs [cli-main]
 | `tests/daemon_enforcement_tests.rs` | Enforcement state ops: write/read round-trip, update merge, not_found, reserved namespace, vault_list filtering, status enforcement_active, validation (#27) |
 | `tests/active_ledger_tests.rs` | Active-ledger marker: activate/deactivate, create --activate, resolution priority, stale marker fallback, reset clears marker, status display, events land in active ledger |
 | `tests/daemon_record_event_tests.rs` | E2E `record_event` op: authenticated ledger append lands event in ledger (read-back), rejects undeclared event type, field pattern violation, and missing required field (all `#[ignore]`, need live daemon) |
+| `tests/daemon_fuse_tests.rs` | E2E sandbox fuse: armed daemon follows the settings lifecycle (refuse → serve → refuse against one process), rejects weakened settings and in-project sockets, unarmed daemon unaffected (all `#[ignore]`, need live daemon; fuse check logic itself is unit-tested in `daemon/fuse.rs`) |

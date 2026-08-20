@@ -389,6 +389,7 @@ mod tests {
             boundaries: Vec::new(),
             attestation: Default::default(),
             lint: Default::default(),
+            daemon: Default::default(),
             vault_policies: HashMap::new(),
         }
     }

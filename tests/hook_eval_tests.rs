@@ -90,6 +90,7 @@ fn base_config() -> ProtocolConfig {
         boundaries: Vec::new(),
         attestation: Default::default(),
         lint: Default::default(),
+        daemon: Default::default(),
         vault_policies: std::collections::HashMap::new(),
     }
 }

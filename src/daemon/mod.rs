@@ -20,8 +20,10 @@
 // - mod vault                 -- in-memory secret store
 // - mod protocol              -- wire protocol types
 // - mod auth                  -- caller authentication
+// - mod fuse                  -- sandbox fuse (refuse privileged ops when the boundary is absent)
 
 pub mod auth;
+pub mod fuse;
 pub mod platform;
 pub mod protocol;
 pub mod vault;
@@ -94,6 +96,7 @@ pub struct DaemonServer {
     trusted_callers: TrustedCallersManifest,
     start_time: Instant,
     idle_timeout: u64,
+    fuse: fuse::SandboxFuse,
 }
 
 impl DaemonServer {
@@ -105,7 +108,17 @@ impl DaemonServer {
     /// 4. Best-effort mlock on key bytes
     /// 5. Deny debugger attachment
     /// 6. Load trusted-callers.toml
-    pub fn new(config_dir: PathBuf, data_dir: PathBuf, idle_timeout: u64) -> Result<Self, String> {
+    ///
+    /// `require_sandbox` arms the sandbox fuse (`[daemon] require_sandbox`
+    /// in the consumer's sealed protocol.toml); `project_root` anchors the
+    /// `.claude` settings scopes the fuse reads.
+    pub fn new(
+        config_dir: PathBuf,
+        data_dir: PathBuf,
+        idle_timeout: u64,
+        require_sandbox: bool,
+        project_root: PathBuf,
+    ) -> Result<Self, String> {
         // 1. Check for library injection
         if let Some(var) = platform::check_preload_env() {
             return Err(format!("refusing to start: {} is set in environment", var));
@@ -163,6 +176,12 @@ impl DaemonServer {
             }
         };
 
+        let fuse = fuse::SandboxFuse {
+            armed: require_sandbox,
+            project_root,
+            socket_path: socket_path.clone(),
+        };
+
         Ok(DaemonServer {
             socket_path,
             pid_path,
@@ -173,6 +192,7 @@ impl DaemonServer {
             trusted_callers,
             start_time: Instant::now(),
             idle_timeout,
+            fuse,
         })
     }
 
@@ -206,6 +226,21 @@ impl DaemonServer {
         let pid = std::process::id();
         std::fs::write(&self.pid_path, pid.to_string())
             .map_err(|e| format!("cannot write PID file: {}", e))?;
+
+        // Report the fuse state once at startup. Informational only: under
+        // the normal arming order the daemon starts *before* the sandbox
+        // settings are written, so a tripped fuse here is expected — it is
+        // re-evaluated per request and starts passing when the boundary
+        // appears.
+        if self.fuse.armed {
+            match self.fuse.refusal() {
+                None => eprintln!("daemon: sandbox fuse armed; boundary verified"),
+                Some(_) => eprintln!(
+                    "daemon: sandbox fuse armed; boundary not yet in place — privileged \
+                     operations are refused until it is"
+                ),
+            }
+        }
 
         // 4. Install signal handlers for SIGTERM and SIGINT
         RUNNING.store(true, Ordering::SeqCst);
@@ -250,6 +285,7 @@ impl DaemonServer {
                         idle_timeout,
                         &self.trusted_callers,
                         plugin_root,
+                        &self.fuse,
                     );
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -308,7 +344,8 @@ impl DaemonServer {
 ///
 /// Authenticates the caller via PID-based manifest check before processing.
 /// Status requests are exempt (health checks). All other requests require
-/// successful authentication.
+/// successful authentication, and — when the sandbox fuse is armed — a
+/// passing boundary check, evaluated fresh per request.
 #[allow(clippy::too_many_arguments)]
 fn handle_connection(
     stream: UnixStream,
@@ -319,6 +356,7 @@ fn handle_connection(
     idle_timeout: u64,
     trusted_callers: &auth::TrustedCallersManifest,
     plugin_root: &Path,
+    sandbox_fuse: &fuse::SandboxFuse,
 ) {
     // Authenticate before setting up reader/writer.
     // If no callers are configured, skip auth (allow all). This lets the
@@ -372,7 +410,11 @@ fn handle_connection(
                 )
             }
             Ok(req) => {
-                if authenticated {
+                // The fuse outranks caller identity: without the sandbox
+                // boundary, "who is on the socket" is unanswerable anyway.
+                if let Some(refusal) = sandbox_fuse.refusal() {
+                    refusal
+                } else if authenticated {
                     handle_request(
                         req,
                         &vault,

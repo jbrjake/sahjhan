@@ -24,7 +24,7 @@ pub use hooks::{
     MonitorTrigger,
 };
 pub use protocol::{
-    AttestationConfig, BoundaryConfig, BoundaryEdge, CheckpointConfig, GuardsConfig,
+    AttestationConfig, BoundaryConfig, BoundaryEdge, CheckpointConfig, DaemonConfig, GuardsConfig,
     LedgerTemplateConfig, LintConfig, NamedQuery, PathsConfig, ProtocolMeta, SetConfig,
     WriteGatedConfig,
 };
@@ -62,6 +62,9 @@ pub struct ProtocolConfig {
     /// The `[lint]` section — strictness knobs for static analysis. Defaults
     /// apply when the section is absent.
     pub lint: LintConfig,
+    /// The `[daemon]` section — daemon-mode knobs (`require_sandbox` arms the
+    /// sandbox fuse). Defaults apply when the section is absent.
+    pub daemon: DaemonConfig,
     pub hooks: Vec<hooks::HookConfig>,
     pub monitors: Vec<hooks::MonitorConfig>,
     /// Per-key state-based vault access policies, keyed by vault entry name.
@@ -167,6 +170,7 @@ impl ProtocolConfig {
             boundaries: proto_file.boundaries,
             attestation: proto_file.attestation,
             lint: proto_file.lint,
+            daemon: proto_file.daemon,
             hooks: hooks_vec,
             monitors: monitors_vec,
             vault_policies: vault_policies_map,

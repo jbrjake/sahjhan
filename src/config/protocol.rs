@@ -3,7 +3,8 @@
 // Deserialization structs for protocol.toml.
 //
 // ## Index
-// - ProtocolFile            — top-level wrapper (protocol, paths, sets, aliases, checkpoints, ledgers, guards, queries)
+// - ProtocolFile            — top-level wrapper (protocol, paths, sets, aliases, checkpoints, ledgers, guards, queries, daemon)
+// - DaemonConfig            — [daemon] section; require_sandbox arms the sandbox fuse
 // - ProtocolMeta            — name, version, description
 // - PathsConfig             — managed, data_dir, render_dir
 // - SetConfig               — description + ordered values
@@ -42,6 +43,28 @@ pub struct ProtocolFile {
     pub attestation: AttestationConfig,
     #[serde(default)]
     pub lint: LintConfig,
+    #[serde(default)]
+    pub daemon: DaemonConfig,
+}
+
+/// The `[daemon]` section — daemon-mode behavior knobs.
+///
+/// ```toml
+/// [daemon]
+/// require_sandbox = true
+/// ```
+///
+/// `require_sandbox` arms the sandbox fuse (`daemon/fuse.rs`): the daemon
+/// refuses every privileged operation unless the consumer project's Claude
+/// Code sandbox settings confirm the agent's shell is confined and the
+/// daemon socket is unreachable from inside it. Off by default — a daemon
+/// used as a plain secret-holder has no sandbox to check. protocol.toml is
+/// one of the sealed config files, so a consumer that arms the fuse cannot
+/// have it silently disarmed without breaking the config seal.
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct DaemonConfig {
+    #[serde(default)]
+    pub require_sandbox: bool,
 }
 
 /// The `[attestation]` section — a consumer-declared ordering the engine only

@@ -33,6 +33,7 @@ fn make_config(managed: Vec<&str>) -> ProtocolConfig {
         boundaries: Vec::new(),
         attestation: Default::default(),
         lint: Default::default(),
+        daemon: Default::default(),
         vault_policies: std::collections::HashMap::new(),
     }
 }

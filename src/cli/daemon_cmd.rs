@@ -16,7 +16,8 @@ use std::path::{Path, PathBuf};
 use crate::daemon::DaemonServer;
 
 use super::commands::{
-    load_config, resolve_config_dir, resolve_data_dir, EXIT_CONFIG_ERROR, EXIT_SUCCESS,
+    load_config, resolve_config_dir, resolve_data_dir, resolve_project_root, EXIT_CONFIG_ERROR,
+    EXIT_SUCCESS,
 };
 
 // [cmd-daemon-start]
@@ -30,8 +31,15 @@ pub fn cmd_daemon_start(config_dir: &str, idle_timeout: u64) -> i32 {
         }
     };
     let data_dir_abs = resolve_data_dir(&config.paths.data_dir);
+    let project_root = resolve_project_root(&config.paths.data_dir);
 
-    let server = match DaemonServer::new(config_dir_abs, data_dir_abs, idle_timeout) {
+    let server = match DaemonServer::new(
+        config_dir_abs,
+        data_dir_abs,
+        idle_timeout,
+        config.daemon.require_sandbox,
+        project_root,
+    ) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("daemon: {}", e);

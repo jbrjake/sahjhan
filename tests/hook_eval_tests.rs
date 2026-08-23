@@ -87,6 +87,7 @@ fn base_config() -> ProtocolConfig {
         hooks: vec![],
         monitors: vec![],
         queries: std::collections::HashMap::new(),
+        batches: std::collections::HashMap::new(),
         boundaries: Vec::new(),
         attestation: Default::default(),
         lint: Default::default(),

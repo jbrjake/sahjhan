@@ -386,6 +386,7 @@ mod tests {
             hooks: vec![],
             monitors: vec![],
             queries: HashMap::new(),
+            batches: HashMap::new(),
             boundaries: Vec::new(),
             attestation: Default::default(),
             lint: Default::default(),

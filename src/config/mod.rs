@@ -24,9 +24,9 @@ pub use hooks::{
     MonitorTrigger,
 };
 pub use protocol::{
-    AttestationConfig, BoundaryConfig, BoundaryEdge, CheckpointConfig, DaemonConfig, GuardsConfig,
-    LedgerTemplateConfig, LintConfig, NamedQuery, PathsConfig, ProtocolMeta, SetConfig,
-    WriteGatedConfig,
+    AttestationConfig, BatchConfig, BatchStep, BoundaryConfig, BoundaryEdge, CheckpointConfig,
+    DaemonConfig, GuardsConfig, LedgerTemplateConfig, LintConfig, NamedQuery, PathsConfig,
+    ProtocolMeta, SetConfig, WriteGatedConfig,
 };
 pub use renders::RenderConfig;
 pub use states::{StateConfig, StateParam};
@@ -53,6 +53,9 @@ pub struct ProtocolConfig {
     /// Named SQL predicates (`[queries.<name>]`), referenced by query gates as
     /// `query = "<name>"`. Empty when none are declared.
     pub queries: HashMap<String, protocol::NamedQuery>,
+    /// Bulk transitions (`[batches.<name>]`), run by `sahjhan batch <name>`.
+    /// Empty when none are declared.
+    pub batches: HashMap<String, protocol::BatchConfig>,
     /// Edges that must not be routed around (`[[boundaries]]`), checked by
     /// lint L3. Empty when none are declared.
     pub boundaries: Vec<BoundaryConfig>,
@@ -167,6 +170,7 @@ impl ProtocolConfig {
             ledgers: proto_file.ledgers,
             guards: proto_file.guards,
             queries: proto_file.queries,
+            batches: proto_file.batches,
             boundaries: proto_file.boundaries,
             attestation: proto_file.attestation,
             lint: proto_file.lint,
@@ -318,6 +322,7 @@ impl ProtocolConfig {
     /// - Gate type validation (known types + required params)
     /// - Template file existence (renders.toml paths relative to config_dir)
     /// - Alias target validation (alias values resolve to valid commands)
+    /// - Batch validation (steps reference declared queries and transitions)
     /// - Render event type validation (on_event triggers reference defined events)
     /// - Terminal state outgoing transition warnings
     /// - Unreachable state detection warnings
@@ -413,6 +418,34 @@ impl ProtocolConfig {
                 // Valid targets and other command kinds (set, log, status,
                 // etc.) are built-in — skip.
                 _ => {}
+            }
+        }
+
+        // 8b. Batch validation. A batch names its population and its verb
+        // indirectly, so a typo in either is a command that runs, reports
+        // nothing, and exits 0 — the failure a caller is least able to see.
+        for (batch_name, batch) in &self.batches {
+            if batch.steps.is_empty() {
+                errors.push(format!(
+                    "protocol.toml: batch '{}' declares no steps",
+                    batch_name
+                ));
+            }
+            for step in &batch.steps {
+                if !self.queries.contains_key(&step.items) {
+                    errors.push(format!(
+                        "protocol.toml: batch '{}' step '{}' references query '{}' which is not declared",
+                        batch_name,
+                        step.value.as_deref().unwrap_or(&step.transition),
+                        step.items
+                    ));
+                }
+                if !transition_commands.contains(step.transition.as_str()) {
+                    errors.push(format!(
+                        "protocol.toml: batch '{}' applies transition '{}' which is not defined",
+                        batch_name, step.transition
+                    ));
+                }
             }
         }
 

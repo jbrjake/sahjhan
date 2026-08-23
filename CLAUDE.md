@@ -69,6 +69,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | Boundary | `config/protocol.rs` | `BoundaryConfig`, `BoundaryEdge` | `[[boundaries]]`; an edge that must not be routed around (`name` + `must_traverse = {from, to}`), checked by lint L3 (#32) |
 | Lint config | `config/protocol.rs` | `LintConfig` | `[lint]` section; `require_producers`, `disabled_checks`, `similarity_threshold` (#32) |
 | Named query | `config/protocol.rs` | `NamedQuery` | `[queries.<name>]` reusable SQL predicate (`sql` + optional `intent`); referenced by query gates as `query = "<name>"` (#32) |
+| Batch | `config/protocol.rs` | `BatchConfig`, `BatchStep` | `[batches.<name>]`: `param` names the selector flag, each step maps a `value` to an `items` query and the `transition` its ids receive; `validate_deep` rejects a step naming an undeclared query or transition |
 | Write-gated config | `config/protocol.rs` | `WriteGatedConfig` | A path whose writability is gated by protocol state (path, writable_in, message) |
 | Daemon config | `config/protocol.rs` | `DaemonConfig` | `[daemon]` section; `require_sandbox` arms the sandbox fuse (protocol.toml is sealed, so arming can't be silently undone) |
 | Hooks file | `config/hooks.rs` | `HooksFile` | Top-level hooks.toml wrapper (hooks + monitors) |
@@ -322,13 +323,14 @@ current directory. Reach for this module before writing
 | Concept | File | Anchor | Purpose |
 |---------|------|--------|---------|
 | CLI entry point | `main.rs` | `[cli-main]` | clap arg parsing, alias resolution, dispatch; `--json` global flag |
-| Alias resolution | `cli/aliases.rs` | `[resolve-alias]` | Rewrite CLI args via protocol aliases |
+| Alias resolution | `cli/aliases.rs` | `[resolve-alias]`, `[expand-alias]` | Rewrite CLI args via protocol aliases; keys may name several words (`"defer low"`), widest key wins, a flag ends the key |
 | JSON output types | `cli/output.rs` | `CommandOutput`, `CommandResult<T>`, data structs | Structured output with JSON envelope (`schema_version: 1`) |
 | Shared helpers | `cli/commands.rs` | (see file index) | Exit codes, ledger targeting, config loading, active-ledger marker, `[compute-registry-path]`, `[status-cache-path]`, `[write-status-cache]` |
 | Path anchoring | `cli/commands.rs` | `[resolve-data-dir]`, `[resolve-project-root]` | Resolve `data_dir` and the project root; both delegate to `paths.rs` so they cannot drift |
 | Lint | `cli/lint.rs` | `[cmd-lint]` | Static integrity analysis; `--only <CHECK>`, `--strict`; exit 3 on errors |
 | Init/validate/reset | `cli/init.rs` | `[cmd-init]`, `[cmd-validate]`, `[cmd-reset]` | Lifecycle commands; init writes status-cache.json; reset requires HMAC proof via daemon (#26) |
-| Transition/gate/event | `cli/transition.rs` | `[cmd-transition]`, `[cmd-gate-check]`, `[record-and-render]`, `validate_event_fields`, `[cmd-event]` | State machine commands; transition updates status-cache.json |
+| Transition/gate/event | `cli/transition.rs` | `[cmd-transition]`, `[render-after-transitions]`, `[cmd-gate-check]`, `[record-and-render]`, `validate_event_fields`, `[cmd-event]` | State machine commands; transition updates status-cache.json |
+| Batch | `cli/batch.rs` | `[cmd-batch]`, `[parse-selector]`, `[select-steps]`, `[items-of]` | `[batches.<name>]`: one transition per item a named query returns; selector flag named by the batch's own `param`; gate refusals are reported per item, not fatal; renders once at the end |
 | Status/sets | `cli/status.rs` | `[cmd-status]`, `[cmd-set-status]`, `[cmd-set-complete]` | Status display + set management; status warns on missing cache; `--no-gates` skips transition gate evaluation (fast, side-effect-free for hook callers) |
 | Log inspection | `cli/log.rs` | `[cmd-log-dump]`, `[cmd-log-verify]`, `[cmd-log-tail]` | Ledger viewing |
 | Ledger management | `cli/ledger.rs` | `[cmd-ledger-create]`, `[cmd-ledger-list]`, `[cmd-ledger-activate]`, `[cmd-ledger-deactivate]`, etc. | Multi-ledger CRUD; create supports `--from` template + `--activate`; activate/deactivate manage active-ledger marker |

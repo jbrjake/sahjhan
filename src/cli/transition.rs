@@ -3,6 +3,7 @@
 // Transition, gate check, and event recording commands.
 //
 // ## Index
+// - [render-after-transitions] render_after_transitions() — on_transition + on_event renders; shared with batch
 // - [cmd-transition] cmd_transition() — execute a named transition (runs gates); handles GateBlocked + AllCandidatesBlocked
 // - [cmd-gate-check] cmd_gate_check() — dry-run gate evaluation; multi-candidate aware
 // - [record-and-render] record_and_render() — shared event recording + render triggering logic
@@ -27,6 +28,72 @@ use super::output::{CandidateData, CommandOutput, CommandResult, GateCheckData, 
 // ---------------------------------------------------------------------------
 // transition
 // ---------------------------------------------------------------------------
+
+// [render-after-transitions]
+/// Run the renders a transition triggers, and return how many files were
+/// written.
+///
+/// Two triggers, in order: `on_transition`, then `on_event` for every event
+/// the transition emitted — `finding_resolved` from `fix_commit` is what keeps
+/// PUNCHLIST current in the same command that recorded the resolution.
+///
+/// `emitted_events` is a list rather than one transition's outcome so a batch
+/// can render once for a run of transitions instead of once per item.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn render_after_transitions(
+    config: &crate::config::ProtocolConfig,
+    config_path: &std::path::Path,
+    targeting: &LedgerTargeting,
+    ledger: &crate::ledger::chain::Ledger,
+    manifest: &mut crate::manifest::tracker::Manifest,
+    data_dir: &std::path::Path,
+    emitted_events: &[String],
+) -> usize {
+    if config.renders.is_empty() {
+        return 0;
+    }
+    let registry_path = super::commands::registry_path_from_config(config);
+    let Ok(engine) = RenderEngine::new(config, config_path) else {
+        return 0;
+    };
+    let mut engine = engine.with_registry(registry_path);
+    if let Some(ref name) = targeting.ledger_name {
+        engine = engine.with_active_ledger_name(name.clone());
+    }
+    let render_dir = resolve_data_dir(&config.paths.render_dir);
+    let ledger_seq = ledger.entries().last().map(|e| e.seq).unwrap_or(0);
+
+    let mut render_count = 0usize;
+    let mut run = |trigger: &str,
+                   event_type: Option<&str>,
+                   manifest: &mut crate::manifest::tracker::Manifest| {
+        match engine.render_triggered(
+            trigger,
+            event_type,
+            ledger,
+            &render_dir,
+            manifest,
+            ledger_seq,
+        ) {
+            Ok(rendered) => {
+                render_count += rendered.len();
+                if !rendered.is_empty() {
+                    let _ = save_manifest(manifest, data_dir);
+                }
+            }
+            Err(e) => {
+                eprintln!("error: render: {}", e);
+            }
+        }
+    };
+
+    run("on_transition", None, manifest);
+    for event_type in emitted_events {
+        run("on_event", Some(event_type), manifest);
+    }
+
+    render_count
+}
 
 // [cmd-transition]
 pub fn cmd_transition(
@@ -83,68 +150,15 @@ pub fn cmd_transition(
                 return code;
             }
 
-            let mut render_count = 0usize;
-
-            // Trigger on_transition renders
-            if !config.renders.is_empty() {
-                let registry_path = super::commands::registry_path_from_config(&config);
-                if let Ok(engine) = RenderEngine::new(&config, &config_path) {
-                    let mut engine = engine.with_registry(registry_path);
-                    if let Some(ref name) = targeting.ledger_name {
-                        engine = engine.with_active_ledger_name(name.clone());
-                    }
-                    let render_dir = resolve_data_dir(&config.paths.render_dir);
-                    let ledger_seq = machine
-                        .ledger()
-                        .entries()
-                        .last()
-                        .map(|e| e.seq)
-                        .unwrap_or(0);
-                    match engine.render_triggered(
-                        "on_transition",
-                        None,
-                        machine.ledger(),
-                        &render_dir,
-                        &mut manifest,
-                        ledger_seq,
-                    ) {
-                        Ok(rendered) => {
-                            render_count = rendered.len();
-                            if !rendered.is_empty() {
-                                let _ = save_manifest(&mut manifest, &data_dir);
-                            }
-                        }
-                        Err(e) => {
-                            eprintln!("error: render: {}", e);
-                        }
-                    }
-
-                    // Events auto-emitted by this transition (e.g.
-                    // finding_resolved from fix_commit) also drive their
-                    // on_event renders, so views like PUNCHLIST update in the
-                    // same command that recorded the resolution.
-                    for event_type in &outcome.emitted_events {
-                        match engine.render_triggered(
-                            "on_event",
-                            Some(event_type),
-                            machine.ledger(),
-                            &render_dir,
-                            &mut manifest,
-                            ledger_seq,
-                        ) {
-                            Ok(rendered) => {
-                                render_count += rendered.len();
-                                if !rendered.is_empty() {
-                                    let _ = save_manifest(&mut manifest, &data_dir);
-                                }
-                            }
-                            Err(e) => {
-                                eprintln!("error: render: {}", e);
-                            }
-                        }
-                    }
-                }
-            }
+            let render_count = render_after_transitions(
+                &config,
+                &config_path,
+                targeting,
+                machine.ledger(),
+                &mut manifest,
+                &data_dir,
+                &outcome.emitted_events,
+            );
 
             // Update status cache with new state
             write_status_cache(&data_dir, &config, &config_path, &outcome.to);

@@ -13,6 +13,8 @@
 // - GuardsConfig            — write_gated paths
 // - WriteGatedConfig        — path whose writability is gated by protocol state
 // - NamedQuery              — a reusable, named SQL predicate ([queries.<name>])
+// - BatchConfig             — [batches.<name>]; one transition applied to every item a query returns
+// - BatchStep               — one step of a batch: selector value, items query, transition
 // - LintConfig              — [lint] section; static-analysis strictness knobs
 // - BoundaryConfig          — [[boundaries]]; an edge that must not be routed around
 // - BoundaryEdge            — the from/to pair a boundary protects
@@ -37,6 +39,8 @@ pub struct ProtocolFile {
     pub guards: Option<GuardsConfig>,
     #[serde(default)]
     pub queries: HashMap<String, NamedQuery>,
+    #[serde(default)]
+    pub batches: HashMap<String, BatchConfig>,
     #[serde(default)]
     pub boundaries: Vec<BoundaryConfig>,
     #[serde(default)]
@@ -187,6 +191,49 @@ pub struct NamedQuery {
     pub sql: String,
     #[serde(default)]
     pub intent: Option<String>,
+}
+
+/// A `[batches.<name>]` declaration: one transition applied to every item a
+/// named query returns, for each selected step.
+///
+/// ```toml
+/// [batches.defer]
+/// description = "Defer findings in bulk, by severity"
+/// param = "severity"                       # `sahjhan batch defer --severity low,medium`
+/// steps = [
+///     { value = "low",    items = "open_low_findings",    transition = "defer_low" },
+///     { value = "medium", items = "open_medium_findings", transition = "defer_medium" },
+/// ]
+/// ```
+///
+/// The engine knows nothing about severities or findings: `param` names the
+/// flag, `value` selects which steps that flag turns on, `items` is a query in
+/// `[queries]` returning an `id` column, and `transition` is applied to each id
+/// with its own gates. A step whose gate refuses an item skips that item and
+/// keeps going — a budget-capped transition is *supposed* to stop partway, and
+/// the count of what applied and what was refused is the command's output.
+#[derive(Debug, Deserialize, Clone)]
+pub struct BatchConfig {
+    #[serde(default)]
+    pub description: Option<String>,
+    /// The flag name this batch accepts, without dashes. Absent means the
+    /// batch takes no selector and every step runs.
+    #[serde(default)]
+    pub param: Option<String>,
+    pub steps: Vec<BatchStep>,
+}
+
+/// One step of a `[batches.<name>]`: which param value selects it, which named
+/// query supplies its items, and which transition each item receives.
+#[derive(Debug, Deserialize, Clone)]
+pub struct BatchStep {
+    /// The `param` value that selects this step. Absent means always selected.
+    #[serde(default)]
+    pub value: Option<String>,
+    /// A name in `[queries]`. Its rows supply the transition's argument, read
+    /// from the `id` column.
+    pub items: String,
+    pub transition: String,
 }
 
 /// Configuration for the `[guards]` section of protocol.toml.

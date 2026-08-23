@@ -18,6 +18,7 @@ use clap::{Parser, Subcommand};
 
 use sahjhan::cli::aliases;
 use sahjhan::cli::authed_event;
+use sahjhan::cli::batch;
 use sahjhan::cli::commands;
 use sahjhan::cli::daemon_cmd;
 use sahjhan::cli::hooks_cmd;
@@ -122,6 +123,18 @@ enum Commands {
         /// Additional arguments
         #[arg(trailing_var_arg = true)]
         args: Vec<String>,
+    },
+
+    /// Apply a declared batch: one transition per item a named query returns
+    Batch {
+        /// Batch name, declared as `[batches.<name>]` in protocol.toml
+        name: String,
+
+        /// Step selector, as the batch's own `param` flag — e.g.
+        /// `--severity low,medium` for `param = "severity"`. Omitted runs
+        /// every step.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        selector: Vec<String>,
     },
 
     /// Gate operations
@@ -558,6 +571,10 @@ fn main() {
         Commands::Transition { name, args } => {
             let code = transition::cmd_transition(&cli.config_dir, &name, &args, &targeting);
             Box::new(LegacyResult::new("transition", code))
+        }
+        Commands::Batch { name, selector } => {
+            let code = batch::cmd_batch(&cli.config_dir, &name, &selector, &targeting);
+            Box::new(LegacyResult::new("batch", code))
         }
         Commands::Event { event_type, fields } => {
             let code = transition::cmd_event(&cli.config_dir, &event_type, &fields, &targeting);

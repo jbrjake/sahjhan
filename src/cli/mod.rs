@@ -2,6 +2,7 @@
 
 pub mod aliases;
 pub mod authed_event;
+pub mod batch;
 pub mod commands;
 pub mod daemon_cmd;
 pub mod hooks_cmd;

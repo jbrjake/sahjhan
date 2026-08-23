@@ -6,6 +6,7 @@
 // ## Index
 // - [resolve-alias]          resolve_alias()     — resolve alias from raw CLI args
 // - [resolve-with-map]       resolve_with_map()  — resolve given already-parsed alias map
+// - [expand-alias]           expand()            — longest-key match + arg rewrite
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -26,30 +27,7 @@ pub fn resolve_alias(args: &[String], config_dir: &str) -> Option<Vec<String>> {
     // resolution is possible — silently return None and let clap handle it.
     let config = ProtocolConfig::load(Path::new(config_dir)).ok()?;
 
-    if config.aliases.is_empty() {
-        return None;
-    }
-
-    // Find the first positional arg (skip binary name and --config-dir/value pairs).
-    let (prefix, subcommand_idx) = find_subcommand_index(args)?;
-
-    let subcommand = &args[subcommand_idx];
-
-    if let Some(expansion) = config.aliases.get(subcommand.as_str()) {
-        let expanded_words: Vec<&str> = expansion.split_whitespace().collect();
-        let mut new_args = Vec::with_capacity(args.len() + expanded_words.len());
-        new_args.extend_from_slice(&prefix);
-        for word in &expanded_words {
-            new_args.push(word.to_string());
-        }
-        // Append any remaining args after the alias
-        if subcommand_idx + 1 < args.len() {
-            new_args.extend_from_slice(&args[subcommand_idx + 1..]);
-        }
-        Some(new_args)
-    } else {
-        None
-    }
+    expand(args, &config.aliases)
 }
 
 /// Find the index of the first subcommand argument and the prefix before it.
@@ -100,25 +78,161 @@ fn find_subcommand_index(args: &[String]) -> Option<(Vec<String>, usize)> {
 ///
 /// This is a simpler version used when we already have the aliases loaded.
 pub fn resolve_with_map(args: &[String], aliases: &HashMap<String, String>) -> Option<Vec<String>> {
+    expand(args, aliases)
+}
+
+// [expand-alias]
+/// Match the widest alias key the args begin with, and rewrite them.
+///
+/// Keys may name more than one word — `"defer low" = "transition defer_low"`
+/// makes `sahjhan defer low BH-001` legal. Matching only the first word, as
+/// this did until 0.22.0, silently ignored every such key: the config loaded,
+/// `validate` passed, and the command died at clap with `unrecognized
+/// subcommand 'defer'`.
+///
+/// Two rules make the match unambiguous:
+///
+/// * **Widest key wins.** With both `"defer"` and `"defer low"` declared, the
+///   longer one is what `sahjhan defer low` means; the shorter would swallow
+///   `low` as an argument to a different command.
+/// * **A flag ends the key.** Candidate words stop at the first `-`-prefixed
+///   arg, so `sahjhan defer batch --severity low,medium` matches
+///   `"defer batch"` and leaves the flag for the expanded command to parse.
+fn expand(args: &[String], aliases: &HashMap<String, String>) -> Option<Vec<String>> {
     if aliases.is_empty() {
         return None;
     }
 
     let (prefix, subcommand_idx) = find_subcommand_index(args)?;
-    let subcommand = &args[subcommand_idx];
 
-    if let Some(expansion) = aliases.get(subcommand.as_str()) {
+    let widest = aliases
+        .keys()
+        .map(|k| k.split_whitespace().count())
+        .max()
+        .unwrap_or(1);
+    let available = args[subcommand_idx..]
+        .iter()
+        .take_while(|a| !a.starts_with('-'))
+        .count();
+
+    for len in (1..=widest.min(available)).rev() {
+        let key = args[subcommand_idx..subcommand_idx + len].join(" ");
+        let Some(expansion) = aliases.get(&key) else {
+            continue;
+        };
         let expanded_words: Vec<&str> = expansion.split_whitespace().collect();
         let mut new_args = Vec::with_capacity(args.len() + expanded_words.len());
         new_args.extend_from_slice(&prefix);
         for word in &expanded_words {
             new_args.push(word.to_string());
         }
-        if subcommand_idx + 1 < args.len() {
-            new_args.extend_from_slice(&args[subcommand_idx + 1..]);
-        }
-        Some(new_args)
-    } else {
-        None
+        new_args.extend_from_slice(&args[subcommand_idx + len..]);
+        return Some(new_args);
+    }
+
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(words: &[&str]) -> Vec<String> {
+        words.iter().map(|w| w.to_string()).collect()
+    }
+
+    fn aliases(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn one_word_key_still_resolves() {
+        let out = expand(
+            &args(["sahjhan", "start"].as_ref()),
+            &aliases(&[("start", "transition begin")]),
+        );
+        assert_eq!(out, Some(args(&["sahjhan", "transition", "begin"])));
+    }
+
+    #[test]
+    fn two_word_key_resolves_and_keeps_its_argument() {
+        let out = expand(
+            &args(&[
+                "sahjhan",
+                "--config-dir",
+                "enforcement",
+                "defer",
+                "low",
+                "BH-001",
+            ]),
+            &aliases(&[("defer low", "transition defer_low")]),
+        );
+        assert_eq!(
+            out,
+            Some(args(&[
+                "sahjhan",
+                "--config-dir",
+                "enforcement",
+                "transition",
+                "defer_low",
+                "BH-001",
+            ]))
+        );
+    }
+
+    #[test]
+    fn a_flag_after_the_key_survives_the_rewrite() {
+        let out = expand(
+            &args(&["sahjhan", "defer", "batch", "--severity", "low,medium"]),
+            &aliases(&[("defer batch", "batch defer")]),
+        );
+        assert_eq!(
+            out,
+            Some(args(&[
+                "sahjhan",
+                "batch",
+                "defer",
+                "--severity",
+                "low,medium",
+            ]))
+        );
+    }
+
+    #[test]
+    fn the_widest_key_wins() {
+        // A one-word key would swallow "low" as an argument to the wrong
+        // command, and the caller could never reach the two-word alias.
+        let out = expand(
+            &args(&["sahjhan", "defer", "low", "BH-001"]),
+            &aliases(&[
+                ("defer", "transition defer_any"),
+                ("defer low", "transition defer_low"),
+            ]),
+        );
+        assert_eq!(
+            out,
+            Some(args(&["sahjhan", "transition", "defer_low", "BH-001"]))
+        );
+    }
+
+    #[test]
+    fn a_key_cannot_reach_across_a_flag() {
+        let out = expand(
+            &args(&["sahjhan", "defer", "--dry-run", "low"]),
+            &aliases(&[("defer low", "transition defer_low")]),
+        );
+        assert_eq!(out, None);
+    }
+
+    #[test]
+    fn an_unmatched_first_word_is_left_alone() {
+        let out = expand(
+            &args(&["sahjhan", "status"]),
+            &aliases(&[("defer low", "transition defer_low")]),
+        );
+        assert_eq!(out, None);
     }
 }

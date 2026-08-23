@@ -153,15 +153,24 @@ pub(super) fn eval_query_gate(gate: &GateConfig, ctx: &GateContext) -> GateResul
 
     let passed = actual == expect;
 
+    // A named predicate says its name when it refuses. Without it a caller
+    // reading "query returned 'false'" — a batch printing one line per refused
+    // item, most of all — cannot tell which of a transition's gates stopped it,
+    // and a refusal nobody can attribute is a refusal nobody can clear.
+    let named = |text: String| match query_name {
+        Some(name) => format!("query '{}' {}", name, text),
+        None => format!("query {}", text),
+    };
+
     GateResult {
         passed,
         evaluable: true,
         gate_type: "query".to_string(),
         description,
         reason: Some(if passed {
-            format!("query returned '{}'", actual)
+            named(format!("returned '{}'", actual))
         } else {
-            format!("query returned '{}', expected '{}'", actual, expect)
+            named(format!("returned '{}', expected '{}'", actual, expect))
         }),
         intent: None,
         attestation: None,

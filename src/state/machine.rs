@@ -4,6 +4,8 @@
 //
 // ## Index
 // - StateError               — NoTransition, GateBlocked, AllCandidatesBlocked, Ledger, Serialization, UnknownSet
+//                              (blocked variants carry the gate's intent for CLI display)
+// - BlockedCandidate         — per-candidate failure detail (target, gate_type, reason, intent)
 // - TransitionOutcome        — result of a successful transition (from, to, attestations)
 // - StateMachine             — owns config + ledger, executes transitions
 // - [transition]             transition()              — execute named command (multi-candidate branching with fallthrough)
@@ -35,14 +37,19 @@ pub enum StateError {
     NoTransition { command: String, state: String },
 
     #[error("gate '{gate_type}' blocked transition: {reason}")]
-    GateBlocked { gate_type: String, reason: String },
+    GateBlocked {
+        gate_type: String,
+        reason: String,
+        /// Why the gate exists, surfaced to the blocked caller so the agent
+        /// is told what to fix and why — not just that something failed.
+        intent: Option<String>,
+    },
 
     #[error("all transition candidates for '{command}' from '{state}' were blocked")]
     AllCandidatesBlocked {
         command: String,
         state: String,
-        /// (target_state, gate_type, reason) per failed candidate
-        candidates: Vec<(String, String, String)>,
+        candidates: Vec<BlockedCandidate>,
     },
 
     #[error("ledger error: {0}")]
@@ -56,6 +63,19 @@ pub enum StateError {
 
     #[error("transition emit of event '{event}' failed: {reason}")]
     EmitFailed { event: String, reason: String },
+}
+
+/// A transition candidate that was gate-blocked, kept for error reporting.
+#[derive(Debug, Clone)]
+pub struct BlockedCandidate {
+    /// The `to` state of the candidate.
+    pub target: String,
+    /// Gate type that failed.
+    pub gate_type: String,
+    /// Why the gate failed.
+    pub reason: String,
+    /// Why the gate exists (declared or per-type default).
+    pub intent: Option<String>,
 }
 
 /// The result of a successful transition, including machine-attested gate evidence.
@@ -168,8 +188,7 @@ impl StateMachine {
         }
 
         // Track failures so we can report them if every candidate is blocked.
-        // Each entry: (target_state, gate_type, reason)
-        let mut failures: Vec<(String, String, String)> = Vec::new();
+        let mut failures: Vec<BlockedCandidate> = Vec::new();
 
         for candidate in &candidates {
             // Build state_params from the target state's param definitions.
@@ -201,14 +220,15 @@ impl StateMachine {
 
             if let Some(failed) = first_failure {
                 // Stash the first failure for this candidate and try the next.
-                failures.push((
-                    candidate.to.clone(),
-                    failed.gate_type.clone(),
-                    failed
+                failures.push(BlockedCandidate {
+                    target: candidate.to.clone(),
+                    gate_type: failed.gate_type.clone(),
+                    reason: failed
                         .reason
                         .clone()
                         .unwrap_or_else(|| "gate failed".to_string()),
-                ));
+                    intent: failed.intent.clone(),
+                });
                 continue;
             }
 
@@ -307,8 +327,12 @@ impl StateMachine {
         // No candidate passed. Choose error style based on candidate count.
         if candidates.len() == 1 {
             // Backward-compatible: single candidate returns GateBlocked.
-            let (_, gate_type, reason) = failures.into_iter().next().unwrap();
-            Err(StateError::GateBlocked { gate_type, reason })
+            let blocked = failures.into_iter().next().unwrap();
+            Err(StateError::GateBlocked {
+                gate_type: blocked.gate_type,
+                reason: blocked.reason,
+                intent: blocked.intent,
+            })
         } else {
             Err(StateError::AllCandidatesBlocked {
                 command: command.to_string(),
@@ -467,6 +491,7 @@ impl StateMachine {
             return Err(StateError::GateBlocked {
                 gate_type: result.gate_type,
                 reason: result.reason.unwrap_or_else(|| "gate failed".to_string()),
+                intent: result.intent,
             });
         }
 

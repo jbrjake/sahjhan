@@ -159,11 +159,11 @@ Every gate is something sahjhan checks itself. `file_exists` looks at the disk.
 `command_succeeds` runs the suite — sahjhan runs it, not the agent. The agent
 self-reports nothing. Full gate reference: [gates.md](gates.md).
 
-`intent` is optional and worth writing. `sahjhan gate check` and `status` print
-it beside the gate, so the agent can be told what to fix and why; a blocked
-`transition` prints only the failure reason. Omit it and sahjhan generates a
-default from the gate type (for `query` gates that reference a named query, the
-query's own `intent` fills in first).
+`intent` is optional and worth writing. sahjhan prints it beside the failure —
+in `gate check`, in `status`, and when a `transition` is blocked — so the agent
+is told what to fix and why. Omit it and sahjhan generates a default from the
+gate type (for `query` gates that reference a named query, the query's own
+`intent` fills in first).
 
 ### protocol.toml: paths, sets, aliases
 

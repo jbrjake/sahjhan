@@ -234,13 +234,32 @@ pub fn cmd_batch(
                         }
                     }
                 }
-                Err(StateError::GateBlocked { gate_type, reason }) => {
-                    refused.push((id.clone(), format!("{}: {}", gate_type, reason)));
+                Err(StateError::GateBlocked {
+                    gate_type,
+                    reason,
+                    intent,
+                }) => {
+                    refused.push((
+                        id.clone(),
+                        format!(
+                            "{}: {} \u{2014} {}",
+                            gate_type,
+                            reason,
+                            intent.as_deref().unwrap_or("gate condition must be met")
+                        ),
+                    ));
                 }
                 Err(StateError::AllCandidatesBlocked { candidates, .. }) => {
                     let reason = candidates
                         .first()
-                        .map(|(_, gate_type, reason)| format!("{}: {}", gate_type, reason))
+                        .map(|c| {
+                            format!(
+                                "{}: {} \u{2014} {}",
+                                c.gate_type,
+                                c.reason,
+                                c.intent.as_deref().unwrap_or("gate condition must be met")
+                            )
+                        })
                         .unwrap_or_else(|| "blocked".to_string());
                     refused.push((id.clone(), reason));
                 }

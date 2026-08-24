@@ -38,11 +38,11 @@ The same gate types work inside `hooks.toml` rules — see [hooks.md](hooks.md).
 | `query` | `sql` *or* `query`, `expect` | SQL against the ledger, evaluated by DataFusion. |
 
 Every type also accepts `intent`, a sentence explaining why the gate exists.
-`sahjhan gate check` and `status` print it beside the failure, so the agent is
-told what to fix rather than that something failed (a blocked `transition`
-prints only the failure reason). Omit it and sahjhan generates a default from
-the gate type; a `query` gate that references a named query inherits the
-query's `intent` first.
+sahjhan prints it beside the failure — in `gate check`, in `status`, and when a
+`transition` is blocked — so the agent is told what to fix rather than that
+something failed. Omit it and sahjhan generates a default from the gate type;
+a `query` gate that references a named query inherits the query's `intent`
+first.
 
 ### notes on the ones with sharp edges
 

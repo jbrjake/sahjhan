@@ -174,8 +174,17 @@ pub fn cmd_transition(
 
             EXIT_SUCCESS
         }
-        Err(crate::state::machine::StateError::GateBlocked { gate_type, reason }) => {
-            eprintln!("\u{2717} {}: {}", gate_type, reason);
+        Err(crate::state::machine::StateError::GateBlocked {
+            gate_type,
+            reason,
+            intent,
+        }) => {
+            eprintln!(
+                "\u{2717} {}: {} \u{2014} {}",
+                gate_type,
+                reason,
+                intent.as_deref().unwrap_or("gate condition must be met")
+            );
             EXIT_GATE_FAILED
         }
         Err(crate::state::machine::StateError::AllCandidatesBlocked {
@@ -183,10 +192,13 @@ pub fn cmd_transition(
             state: _,
             candidates,
         }) => {
-            for (target, gate_type, reason) in &candidates {
+            for c in &candidates {
                 eprintln!(
-                    "\u{2717} \u{2192} {} blocked by {}: {}",
-                    target, gate_type, reason
+                    "\u{2717} \u{2192} {} blocked by {}: {} \u{2014} {}",
+                    c.target,
+                    c.gate_type,
+                    c.reason,
+                    c.intent.as_deref().unwrap_or("gate condition must be met")
                 );
             }
             EXIT_GATE_FAILED

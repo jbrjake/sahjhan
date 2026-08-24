@@ -171,8 +171,9 @@ Config-only analysis: no ledger is opened, no gate command runs. Answers "is thi
 | Derive state | `state/machine.rs` | `[derive-state]` | Find current state from last state_transition in ledger |
 | Completed members | `state/machine.rs` | `[completed-members]` | Scan ledger for set_member_complete events |
 | Set types | `state/sets.rs` | `MemberStatus`, `SetStatus` | Completion tracking structs |
-| State errors | `state/machine.rs` | `StateError` | NoTransition, GateBlocked, Ledger, etc. |
-| All blocked error | `state/machine.rs` | `StateError::AllCandidatesBlocked` | All candidate transitions for a command were gate-blocked; carries per-candidate results |
+| State errors | `state/machine.rs` | `StateError` | NoTransition, GateBlocked (carries gate intent), Ledger, etc. |
+| All blocked error | `state/machine.rs` | `StateError::AllCandidatesBlocked` | All candidate transitions for a command were gate-blocked; carries per-candidate `BlockedCandidate` results |
+| Blocked candidate | `state/machine.rs` | `BlockedCandidate` | Per-candidate failure detail (target, gate_type, reason, intent) for blocked-transition reporting |
 
 ### ledger/ — Append-Only Hash-Chained Event Log
 

@@ -30,7 +30,7 @@ $ sahjhan transition begin
 idle → working (1 rendered)
 
 $ sahjhan transition complete
-✗ set_covered: set 'check' not fully covered; missing: tests, lint
+✗ set_covered: set 'check' not fully covered; missing: tests, lint — all set members must be completed
 
 $ sahjhan set complete check tests # below we'll cover how to enforce this without trusting the agent's word
 set check: tests done (1/2, 1 rendered)

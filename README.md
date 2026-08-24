@@ -280,7 +280,7 @@ sign failed: caller not authenticated
 
 $ python3 enforcement/hooks/quiz.py
 questions: {"q1":"what does spill_batch_size default to?"} # the quiz can see the answers
-recorded: quiz_passed # the agent has to answer them blind
+recorded: quiz_passed # and the quiz script is the trusted-caller reporting the grade to sahjhan
 
 $ sahjhan log tail 1
 [2026-08-19T21:04:43.102Z] seq=1 type=quiz_passed hash=e579285ae4ca {pass=true, score=5/5}

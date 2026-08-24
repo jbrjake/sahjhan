@@ -1,19 +1,10 @@
 # static analysis: `sahjhan lint`
 
-`sahjhan validate` answers "is this config well-formed" — do the states exist, do
-the gates name real types, do the template files resolve. `lint` answers the next
-question: is this protocol *coherent*?
+`sahjhan validate` answers "is this config well-formed?" Do the states exist, do the gates name real types, do the template files resolve? `lint` answers the next question: is this protocol *coherent*?
 
-A gate can be perfectly well-formed and still be a wall. It can wait for an event
-nothing is able to record. It can wait for one whose only producer runs in a
-state the run has already left. Two gates that must agree about the same fact can
-drift apart until the blocking condition is strictly stronger than the escape
-hatch it prints, and the agent deadlocks while being told exactly which
-impossible thing to do. None of that is a parse error, and all of it is decidable
-at rest from config the engine already has.
+A gate can be perfectly well-formed and still be a dead-end. It can wait for an event nothing is able to record. It can wait for one whose only producer runs in a state the run has already left. Two gates that must agree about the same fact can drift apart until the blocking condition is strictly stronger than the escape hatch it prints, and the agent deadlocks while being told exactly which impossible thing to do. None of that is a parse error, and all of it is decidable at rest from config the engine already has.
 
-Nothing here opens a ledger or runs a gate command. Config in, findings out,
-which makes it cheap enough for a pre-commit hook:
+Nothing here opens a ledger or runs a gate command. Config in, findings out, which makes it cheap enough for a pre-commit hook:
 
 ```bash
 sahjhan --config-dir enforcement lint --strict || exit 1
@@ -44,13 +35,10 @@ L4 error: states.toml: state 'anomaly'
 | `L6` | Two copies of one predicate — inline SQL duplicating a named query, or each other. Drift waiting to happen. |
 | `L7` | A gate demanding evidence stronger than the event supplying it. Reads as a strong check, enforces a weak one. |
 
-Errors mean the protocol is provably broken given what the engine can see.
-Warnings mean it's suspicious but a legitimate reading exists. Exit code 3 on
-errors.
+Errors mean the protocol is provably broken given what the engine can see and sahjhan exits with code 3.
+Warnings mean it's suspicious but a legitimate reading exists, but you can upgrade them to hard errors with `--strict`.
 
-Ordering is a dependency, not a preference: L4 asks whether a state's exits are
-usable, which is only answerable after L1 and L2 have marked the transitions that
-can never fire. `--only` filters the findings, never the run.
+The ordering of the checks matters. L4 asks whether a state's exits are usable, which is only answerable after L1 and L2 have marked the transitions that can never fire. `--only` filters the findings emitted, never the linting process.
 
 ```
 --only L1 --only L3     narrow the reported findings
@@ -58,8 +46,7 @@ can never fire. `--only` filters the findings, never the run.
 --json                  the usual envelope
 ```
 
-Checks can also be switched off in config, which is the right move while
-migrating:
+Checks can also be switched off in config:
 
 ```toml
 [lint]
@@ -68,9 +55,7 @@ disabled_checks = ["L6"]
 
 ## boundaries
 
-Some edges exist to make something happen, and the protocol is only sound if
-every route crosses them. Declare the boundary, then tag the edges that satisfy
-it:
+Some edges exist to make something happen, and the protocol is only sound if every route crosses them. Declare the boundary, then tag the edges that satisfy it:
 
 ```toml
 [[boundaries]]
@@ -86,8 +71,7 @@ command = "resume"
 boundary = "context-reset"
 ```
 
-L3 deletes every tagged edge and asks whether the target is still reachable. If
-it is, it prints the surviving path:
+L3 deletes every tagged edge and asks whether the target is still reachable. If it is, it prints the surviving path:
 
 ```bash
 $ sahjhan --config-dir examples/lint-demo lint
@@ -101,14 +85,11 @@ L3 error: protocol.toml: boundary 'context-reset'
 1 error(s), 0 warning(s) from 7 check(s): L1, L2, L3, L4, L5, L6, L7
 ```
 
-This is the check that most repays living in the engine. You can grep your own
-config for the tag. You can't see by grepping that a second `resume` added six
-months later, from an unrelated pause state, quietly became a way around.
+This is the check that most repays living in the engine. You can grep your own config for the tag. You can't see by grepping that a second `resume` added six months later, from an unrelated pause state, quietly became a way around.
 
 ## named queries
 
-A predicate that decides a fact should exist once. Declare it in
-`protocol.toml`, then reference it by name:
+A predicate that decides a fact should exist once. Declare it in `protocol.toml`, then reference it by name:
 
 ```toml
 [queries.fix_budget]
@@ -120,11 +101,7 @@ intent = "three fixes is the budget"
 { type = "query", query = "fix_budget" }
 ```
 
-Two gates that must agree are now the same object rather than two strings hoped
-to be equal, and `intent` travels with the predicate instead of being restated at
-every use. L6 flags inline copies you haven't converted yet, using a token-level
-normalized edit distance over case- and whitespace-insensitive SQL. The default
-similarity cutoff is 0.85:
+Two gates that must agree are now the same object rather than two strings hoped to be equal, and `intent` travels with the predicate instead of being restated at every use. L6 flags inline copies you haven't converted yet, using a token-level normalized edit distance over case- and whitespace-insensitive SQL. The default similarity cutoff is 0.85:
 
 ```toml
 [lint]
@@ -133,9 +110,7 @@ similarity_threshold = 0.9
 
 ## producers
 
-L1 and L2 need to know who can record an event. The engine infers what it can —
-transition `emits`, hook `auto_record`, its own built-ins — and you declare the
-rest:
+L1 and L2 need to know who can record an event. The engine infers what it can, like that transitions `emit` and hooks `auto_record`, and you declare the rest:
 
 ```toml
 [[events.context_reset.producers]]
@@ -143,16 +118,9 @@ id = "hook:session-start"
 available_in_states = ["awaiting_clear"]
 ```
 
-`id` is opaque; the engine only reports it back to you. `available_in_states` is
-the window L2 checks against the reachability relation. A producer with no window
-makes no temporal claim — and one such producer is enough to silence L2 for that
-event entirely, other producers' windows included, since the event could always
-have come from the unconstrained one.
+`id` is opaque; the engine only reports it back to you. `available_in_states` is the window L2 checks against the reachability relation.
 
-By default L1 only errors on *restricted* events with no producer, because
-`sahjhan event` can record any declared non-restricted type and the engine would
-otherwise be claiming more than it knows. Once your producers are declared, opt
-into full closure:
+By default L1 only errors on *restricted* events with no producer, because `sahjhan event` can record any declared non-restricted type and the engine would otherwise be claiming more than it knows. Once your producers are declared, opt into full closure:
 
 ```toml
 [lint]
@@ -161,8 +129,7 @@ require_producers = true
 
 ## attestation levels
 
-Evidence has strength, and the engine compares it without knowing what any of it
-means. Declare an ordering, weakest to strongest:
+Evidence has strength, and the engine compares it without knowing what any of it means. Declare an ordering, weakest to strongest:
 
 ```toml
 [attestation]
@@ -183,17 +150,8 @@ command = "resume"
   requires_attestation = "host"
 ```
 
-The levels are opaque strings whose only property is their position in your list
-— the same shape as `write_gated` and the vault policies, where the engine
-enforces a policy it doesn't interpret. L7 compares them and reports a gate that
-demands host-level proof while accepting something the agent can write itself.
-An individual gate may override the transition's requirement with its own
-`requires_attestation`. With no `[attestation]` section there's nothing to
-compare and the check has no opinion.
+The levels are opaque strings whose only property is their position in your list. L7 compares them and reports issues like a gate that demands host-level proof while accepting something the agent can write itself. An individual gate may override the transition's requirement with its own `requires_attestation`.
 
 ## a worked example
 
-[`examples/lint-demo`](../examples/lint-demo) is a small fix-loop protocol that
-exercises every one of the seven checks and passes all of them. Break any single
-declaration in it and lint tells you which one and why. Its config comments name
-the check each declaration is there to satisfy.
+[`examples/lint-demo`](../examples/lint-demo) is a small fix-loop protocol that exercises every one of the seven checks and passes all of them. Break any single declaration in it and lint tells you which one and why. Its config comments name the check each declaration is there to satisfy.

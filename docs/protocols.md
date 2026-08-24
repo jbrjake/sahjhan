@@ -1,8 +1,6 @@
 # writing a protocol
 
-A protocol is a directory of TOML files, passed to the binary with
-`--config-dir` (default: `enforcement`). Three files are required, five are
-optional.
+A protocol is a directory of TOML files, passed to the binary with `--config-dir` (default: `enforcement`). Three files are required, five are optional.
 
 | file | required | what it declares |
 | --- | --- | --- |
@@ -15,18 +13,15 @@ optional.
 | `vault.toml` | no | state-gated access to daemon vault keys — see [hardening.md](hardening.md#state-gated-vault-keys) |
 | `trusted-callers.toml` | no | which scripts may authenticate to the daemon — see [hardening.md](hardening.md#the-daemon) |
 
-All eight are SHA-256 sealed into the genesis ledger entry at `init`, whether or
-not they exist.
+All eight are SHA-256 sealed into the genesis ledger entry at `init`, whether or not they exist.
 
-[`examples/minimal`](../examples/minimal) is the smallest working protocol, and
-the README's quick-start runs it. This page builds a larger one.
+[`examples/minimal`](../examples/minimal) is the smallest working protocol, and the README's quick-start runs it. 
+
+This page builds a larger one.
 
 ## a worked example: enforcing TDD
 
-Five files, wired together. Transitions sit in the middle: they reference state
-names for where the agent is and where it's going, sets from `protocol.toml` for
-tracking work, event types from `events.toml` for gate conditions, and
-`renders.toml` fires when transitions happen.
+Five files, wired together. Transitions sit in the middle: they reference state names for where the agent is and where it's going, sets from `protocol.toml` for tracking work, event types from `events.toml` for gate conditions, and `renders.toml` fires when transitions happen.
 
 ```
 states.toml            transitions.toml              events.toml
@@ -63,7 +58,7 @@ protocol.toml          │   set_covered──┐   │        └────�
                        renders.toml
 ```
 
-You don't need the whole picture up front. Each file earns its existence below.
+You don't need to grasp it all up front. Let's go piece by piece.
 
 ### states: where the agent is
 
@@ -87,12 +82,7 @@ label = "Verifying"
 terminal = true
 ```
 
-Exactly one state is `initial`, and the agent moves between states only where a
-transition exists. Marking the end states `terminal` is what quiets the
-no-outgoing-transition warning and gives lint L4 its targets; nothing forces a
-protocol to have one. `fix-and-retry` is here because tests fail
-sometimes and the honest thing is to loop back; the branching section below
-wires it up.
+Exactly one state is `initial`, and the agent moves between states only where a transition exists. Marking the end states `terminal` is what quiets the no-outgoing-transition warning. Nothing forces a protocol to have one. `fix-and-retry` is here because tests fail sometimes and the honest thing is to loop back (the branching section below wires it up).
 
 ### transitions: how the agent moves
 
@@ -149,21 +139,11 @@ command = "retry"
 gates = []
 ```
 
-The `any_of` on `tests-done` passes if the suite runs *or* someone recorded a
-`manual_test_override` event, because CI goes down and the escape hatch should
-be auditable rather than absent. The `k_of_n` requires 2 of 3 quality tools,
-because demanding mypy, pylint, and bandit all clear at once is how nothing ever
-ships.
+The `any_of` on `tests-done` passes if the suite runs *or* someone recorded a `manual_test_override` event, because CI goes down and the escape hatch should be auditable rather than absent. The `k_of_n` requires 2 of 3 quality tools, because demanding perfection is how nothing ever ships.
 
-Every gate is something sahjhan checks itself. `file_exists` looks at the disk.
-`command_succeeds` runs the suite — sahjhan runs it, not the agent. The agent
-self-reports nothing. Full gate reference: [gates.md](gates.md).
+Every gate is something sahjhan checks itself. `file_exists` looks at the disk. `command_succeeds` runs the suite. The agent self-reports nothing. Full gate reference: [gates.md](gates.md).
 
-`intent` is optional and worth writing. sahjhan prints it beside the failure —
-in `gate check`, in `status`, and when a `transition` is blocked — so the agent
-is told what to fix and why. Omit it and sahjhan generates a default from the
-gate type (for `query` gates that reference a named query, the query's own
-`intent` fills in first).
+`intent` is optional and worth writing. sahjhan prints it beside the failure so the agent is told what to fix and why. Omit it and sahjhan generates a default from the gate type (for `query` gates that reference a named query, the query's own `intent` fills in first).
 
 ### protocol.toml: paths, sets, aliases
 
@@ -188,40 +168,24 @@ values = ["unit-tests", "integration-tests"]
 "done" = "transition submit"
 ```
 
-`managed` lists directories the agent may not write to directly — the hooks
-block edits there, and it bounds what the manifest may track. The manifest
-tracks the files sahjhan itself writes (the ledger and rendered views), not the
-contents of `src/` or `tests/`. sahjhan's artifacts must themselves live under
-a managed path, which is why `data_dir` and `render_dir` sit inside `output/`
-rather than at the project root. `data_dir` holds the ledger, manifest, and
-ledger registry. `render_dir` is where rendered markdown lands.
+`managed` lists directories the agent may not write to directly. The hooks block edits there, and it bounds what the manifest may track. The manifest tracks the files sahjhan itself writes (the ledger and rendered views), not the contents of `src/` or `tests/`. sahjhan's artifacts must themselves live under a managed path, which is why `data_dir` and `render_dir` sit inside `output/` rather than at the project root. `data_dir` holds the ledger, manifest, and ledger registry. `render_dir` is where rendered markdown lands.
 
-A **set** is a checklist the agent can't skip items on. Declare the members, and
-the agent checks them off one at a time:
+A **set** is a checklist the agent can't skip items on. Declare the members, and the agent checks them off one at a time:
 
 ```bash
 $ sahjhan set complete test-suites unit-tests
 ```
 
-That records a `set_member_complete` event with `set=test-suites` and
-`member=unit-tests`. The `set_covered` gate asks whether every member has one.
-Its `event` and `field` parameters name which events count as check-offs; you'll
-almost always use the values shown above, since that's what `set complete`
-writes.
+That records a `set_member_complete` event with `set=test-suites` and `member=unit-tests`. The `set_covered` gate asks whether every member has one. Its `event` and `field` parameters name which events count as check-offs; you'll almost always use the values shown above, since that's what `set complete` writes.
 
 Aliases are shorthand. `sahjhan start` expands to `sahjhan transition start`.
 
-`protocol.toml` also carries `[queries]`, `[[boundaries]]`, `[attestation]`, and
-`[lint]` — all covered in [lint.md](lint.md) — plus `[guards.write_gated]`,
-covered in [hooks.md](hooks.md), and `[ledgers]`, covered in
+`protocol.toml` also carries `[queries]`, `[[boundaries]]`, `[attestation]`, and `[lint]`. Those are covered in [lint.md](lint.md). `[guards.write_gated]` is covered in [hooks.md](hooks.md), and `[ledgers]` is covered in
 [ledgers.md](ledgers.md).
 
 ### events: what may go in the ledger
 
-Without `events.toml`, any event type is accepted with any fields. Declaring a
-type gets its fields validated at recording time and turned into native Arrow
-columns for SQL. Undeclared types still pass through unvalidated — the schema
-constrains what it names, it doesn't close the vocabulary.
+Without `events.toml`, any event type is accepted with any fields. Declaring a type gets its fields validated at recording time and turned into native Arrow columns for SQL. Undeclared types still pass through unvalidated.
 
 ```toml
 # tdd-protocol/events.toml
@@ -241,13 +205,9 @@ fields = [
 ]
 ```
 
-The `pattern` regex on `severity` means the agent picks one of four values or
-gets rejected. Declaring `set_member_complete` doesn't change what `sahjhan set
-complete` records — that command writes its `set` and `member` fields directly,
-skipping validation — but the declaration is what turns those fields into SQL
-columns and gives lint its vocabulary entry.
+The `pattern` regex on `severity` means the agent picks one of four values or gets rejected. Declaring `set_member_complete` doesn't change what `sahjhan set complete` records because that command writes its `set` and `member` fields directly, skipping validation. But the declaration is what turns those fields into SQL columns and gives lint its vocabulary entry.
 
-Fields are required by default. Mark the ones that only matter sometimes:
+Fields are required by default. Mark the ones that only matter sometimes as `optional`:
 
 ```toml
 [events.finding_resolved]
@@ -259,19 +219,13 @@ fields = [
 ]
 ```
 
-Omit `evidence_path` and sahjhan accepts the event. Provide it and it's still
-checked against `pattern`. Deciding *when* the field matters is a job for your
-gates; the schema only decides whether to reject the event for leaving it out.
+Omit `evidence_path` and sahjhan accepts the event. Provide it and it's still checked against `pattern`. Deciding *when* the field matters is a job for your gates. The schema only decides whether to reject the event for leaving it out.
 
-Two more keys live here. `restricted = true` means the event needs an HMAC proof
-and `sahjhan event` will refuse it. `attestation = "<level>"` names how strong
-the evidence is, for lint L7. Both are in [hardening.md](hardening.md) and
-[lint.md](lint.md).
+Two more keys live here. `restricted = true` means the event needs an HMAC proof and `sahjhan event` will refuse it. `attestation = "<level>"` names how strong the evidence is. Those are covered in [hardening.md](hardening.md) and [lint.md](lint.md).
 
 ### renders: status files the agent can't write
 
-You want a `STATUS.md`. Normally the agent writes it, which means the agent
-decides what it says. Render it from the ledger instead.
+Say you want a `STATUS.md`, but you don't want the agent to gloss anything by narrating the file. You can have sahjhan materialize it instead.
 
 ```toml
 # tdd-protocol/renders.toml
@@ -287,21 +241,17 @@ trigger = "on_event"
 event_types = ["finding"]
 ```
 
-`on_transition` renders fire on every state change. `on_event` renders fire when
-the named event types are recorded. Templates are [Tera](https://keats.github.io/tera/)
-(Jinja2 syntax).
+`on_transition` renders fire on every state change. `on_event` renders fire when the named event types are recorded. Templates are [Tera](https://keats.github.io/tera/) (Jinja2 syntax).
 
-Templates receive the full event history as `events`, an array of objects with
-`seq`, `event_type`, `timestamp`, and `fields`, plus `state`, `protocol`, `sets`,
-`ledger_len`, and `violations`. Rather than guessing, dump it:
+Templates receive the full event history as `events`, an array of objects with `seq`, `event_type`, `timestamp`, and `fields`, plus `state`, `protocol`, `sets`, `ledger_len`, and `violations`.
+
+You can inspect what they see with:
 
 ```bash
 $ sahjhan render --dump-context
 ```
 
-Two custom filters ship with the engine. `where_eq` keeps array items whose
-attribute equals a value; `unique_by` deduplicates by a field, keeping the last
-occurrence. Both take dot-notation for nested fields:
+Two custom Tera filters ship with the engine. `where_eq` keeps array items whose attribute equals a value; `unique_by` deduplicates by a field, keeping the last occurrence. Both take dot-notation for nested fields:
 
 ```tera
 {% set resolved = events | where_eq(attribute="event_type", value="finding_resolved")
@@ -309,14 +259,11 @@ occurrence. Both take dot-notation for nested fields:
 Resolved: {{ resolved | length }}
 ```
 
-Renders can target a specific ledger by name or by template — see
-[ledgers.md](ledgers.md).
+Renders can target a specific ledger by name or by template, see [ledgers.md](ledgers.md).
 
 ## branching: two routes, one command
 
-Several transitions may share a `from` state and a `command`. sahjhan evaluates
-the candidates in declaration order and takes the first whose gates all pass, so
-the specific case goes first and the fallback goes last.
+Several transitions may share a `from` state and a `command`. sahjhan evaluates the candidates in declaration order and takes the first whose gates all pass, so the specific case goes first and the fallback goes last.
 
 ```toml
 # First candidate: strict gates
@@ -338,12 +285,9 @@ command = "submit"
 gates = []
 ```
 
-`submit` doesn't fail, it routes. The ledger records which candidate was taken,
-so afterward you can count the loops.
+`submit` doesn't fail, it routes. The ledger records which candidate was taken, so afterward you can count the loops.
 
-`sahjhan validate` warns when a branching command has no fallback — every
-candidate carries gates, so all of them can fail and the command becomes a dead
-end. Sometimes that's what you meant.
+`sahjhan validate` warns when a branching command has no fallback, as in every candidate carries gates, so all of them can fail and the command becomes a dead end. Sometimes that's what you meant.
 
 `sahjhan gate check submit` shows the candidates and which would match:
 
@@ -361,14 +305,9 @@ result: would take → fix-and-retry
 
 ## template variables
 
-Gate commands and SQL can carry `{{var}}` placeholders. Values come from the
-declared params of the state a candidate transition points *to* — the
-destination, not where the agent currently stands — and from config. In
-command-running gates the values are POSIX shell-escaped before interpolation;
-in `sql` and file-gate paths they interpolate plain.
+Gate commands and SQL can carry `{{var}}` placeholders, which gives them a lot of flexibility. Values come from the declared params of the state a candidate transition points *to* — the destination, not where the agent currently stands — and from config. In command-running gates the values are POSIX shell-escaped before interpolation. In `sql` and file-gate paths they interpolate plain.
 
-Declare a param on a state and say where it gets its value (it resolves when a
-transition targets that state):
+Declare a param on a state and say where it gets its value (it resolves when a transition targets that state):
 
 ```toml
 [states.reviewing]
@@ -382,30 +321,20 @@ params = [{ name = "current_perspective", set = "perspectives", source = "curren
 | `last_completed` | the most recently completed member |
 | `values` (default) | every member, comma-joined |
 
-The map handed to a gate also contains `paths.data_dir`, `paths.render_dir`,
-`paths.managed`, and each `sets.<name>` as a comma-joined string. Arguments on
-the command line override anything of the same name:
+The map handed to a gate also contains `paths.data_dir`, `paths.render_dir`, `paths.managed`, and each `sets.<name>` as a comma-joined string. Arguments on the command line override anything of the same name:
 
 ```bash
 $ sahjhan transition review current_perspective=security
 ```
 
-Positional arguments map onto the names a transition declares in `args`. A gate
-whose variables can't all be resolved is reported as *unevaluable* (`?`) instead
-of being run with a literal `{{var}}` in the string — see [gates.md](gates.md).
+Positional arguments map onto the names a transition declares in `args`. A gate whose variables can't all be resolved is reported as *unevaluable* (`?`) instead of being run with a literal `{{var}}` in the string. See [gates.md](gates.md).
 
 ## violations
 
-Nothing records a `protocol_violation` automatically — it's ledger vocabulary
-your protocol writes, typically via a `hooks.toml` rule with `auto_record` when
-a guard fires, or by hand when you catch something. The `no_violations` gate
-blocks while any are unresolved. Resolving one means recording the counterpart:
+Nothing records a `protocol_violation` automatically. It's ledger vocabulary your protocol writes, typically via a `hooks.toml` rule with `auto_record` when a guard fires, or by hand when you catch something. The `no_violations` gate blocks while any are unresolved. Resolving one means recording the counterpart:
 
 ```bash
 $ sahjhan event violation_resolved --field "detail=reverted unauthorized edit to src/main.rs"
 ```
 
-Resolution is counter-based, not paired: each `violation_resolved` cancels one
-`protocol_violation`, and the gate passes when the resolved count reaches the
-violation count. Both event types stay in the ledger permanently. The violations
-don't disappear, they get answered.
+Resolution is counter-based, not paired. Each `violation_resolved` cancels one `protocol_violation`, and the gate passes when the resolved count reaches the violation count. Both event types stay in the ledger permanently. The violations don't disappear, they get addressed.

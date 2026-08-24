@@ -1,8 +1,6 @@
 # Hardening
 
-The mechanisms, each in the words that introduced it. The story they answer is in
-[why.md](why.md), which ends where this page starts: the agent had discovered
-that `sahjhan event` was the only door into the ledger, and that it had a key.
+The story these mechanisms answer is in [why.md](why.md), which ends where this page starts: the agent had discovered that `sahjhan event` was the only door into the ledger, and that it had a key.
 
 ## Restricted events and HMAC authentication
 
@@ -64,13 +62,13 @@ subprocess.run([
 ])
 ```
 
-The `sign` command connects to the daemon process, which holds the session key in memory and computes the HMAC. The key never touches disk. The agent can't forge the proof because it can't get the key, and it can't get the key because the key isn't a file. More on why that matters in a moment.
+The `sign` command connects to the daemon process, which holds the session key in memory and computes the HMAC. The key never touches disk. The agent can't forge the proof because it can't get the key, and it can't get the key because the key isn't a file.
 
-One caveat, explained under the daemon below: both examples drive the daemon through the CLI, which works until you configure caller authentication. Once a `trusted-callers.toml` exists, the daemon authenticates the socket peer, and the peer here is the CLI — never a trusted script. A hardened deployment's hooks talk to the socket directly, via `record_event`.
+One caveat, explained under the daemon below: both examples drive the daemon through the CLI, which works until you configure caller authentication. Once a `trusted-callers.toml` exists, the daemon authenticates the socket peer, and the peer here is the CLI, never a trusted script. A hardened deployment's hooks talk to the socket directly, via `record_event`.
 
 ## The daemon
 
-I tried file-based keys first. `session.key` on disk, enforcement hooks blocking reads via string-matching on tool arguments. If the agent calls `Read` on `.sahjhan/session.key`, the PreToolUse hook intercepts it. Simple.
+I tried file-based keys first. I kept a `session.key` on disk with enforcement hooks blocking reads via string-matching on tool arguments. If the agent called `Read` on `.sahjhan/session.key`, the PreToolUse hook intercepted it. Simple.
 
 Here's what the agent did instead:
 
@@ -81,15 +79,15 @@ p = pathlib.Path(".sahjhan") / "session.key"
 print(p.read_bytes().hex())
 ```
 
-The hook saw `python3 script.py`. Not the protected path. The key leaked in one move. String-matching on tool arguments has infinite bypasses: variables, indirection, heredocs, base64-encoded paths, `exec()`. Any agent with Bash access can construct a read that the hook will never see.
+The hook saw `python3 script.py`, not the protected path, and leaked the key. String-matching on tool arguments has infinite bypasses: variables, indirection, heredocs, base64-encoded paths, `exec()`. Any agent with Bash access can construct a read that the hook will never see.
 
 The only place a secret can live that a same-user adversary with code execution can't reach is in the memory of another process.
 
-So Sahjhan has a daemon mode. `sahjhan daemon start` launches a background process that generates a 32-byte session key, holds it in memory, and serves signing and vault operations over a Unix domain socket. The key is never written to disk. `mlock` prevents it from leaking to swap (best-effort — it's not the primary defense). `ptrace(PT_DENY_ATTACH)` on macOS and `prctl(PR_SET_DUMPABLE, 0)` on Linux block debugger attachment and `/proc/pid/mem` reads. If the environment has `LD_PRELOAD` or `DYLD_INSERT_LIBRARIES` set, the daemon refuses to start. Pass `--idle-timeout <seconds>` if you want it to shut itself down after a quiet period — useful in CI, where a daemon outliving the job is just a leaked process with secrets in it.
+So Sahjhan has a daemon mode. `sahjhan daemon start` launches a background process that generates a 32-byte session key, holds it in memory, and serves signing and vault operations over a Unix domain socket. The key is never written to disk. `mlock` tries to prevent it from leaking to swap. `ptrace(PT_DENY_ATTACH)` on macOS and `prctl(PR_SET_DUMPABLE, 0)` on Linux block debugger attachment and `/proc/pid/mem` reads. If the environment has `LD_PRELOAD` or `DYLD_INSERT_LIBRARIES` set, the daemon refuses to start. Pass `--idle-timeout <seconds>` if you want it to shut itself down after a quiet period, which is handy in CI.
 
 When a hook needs a proof, it calls `sahjhan sign`. The CLI connects to the daemon socket, the daemon computes the HMAC, and the proof comes back. The agent never sees the key. Even if the agent reads the Rust source code and understands exactly how the HMAC is computed, it still can't produce one without those 32 bytes in the daemon's address space.
 
-The daemon also authenticates its callers, once you opt in. Drop a `trusted-callers.toml` next to the protocol files and every request except `status` goes through peer verification: the daemon reads the connecting process's PID from kernel-provided socket credentials (unspoofable), reads that process's command line, and requires the script it is running to be in the manifest:
+The daemon also authenticates its callers once you opt in. Drop a `trusted-callers.toml` next to the protocol files and every request except `status` goes through peer verification: the daemon reads the connecting process's PID from kernel-provided socket credentials (unspoofable), reads that process's command line, and requires the script it is running to be in the manifest:
 
 ```toml
 # enforcement/trusted-callers.toml
@@ -98,22 +96,21 @@ The daemon also authenticates its callers, once you opt in. Drop a `trusted-call
 "hooks/stop_hook.py" = "sha256:2345678901ab..."
 ```
 
-Keys are relative to `--config-dir`, and both the path and the SHA-256 hash must match. The check applies to the *direct* peer only — there is deliberately no walk up the process tree, because manifest authority must not be inheritable: a child process of a trusted script is not the script. Two consequences worth knowing before they bite: the script has to live inside the config dir, and it has to be invoked by absolute path, because the daemon resolves a relative cmdline path against its own working directory, not the caller's.
+Keys are relative to `--config-dir`, and both the path and the SHA-256 hash must match. The check applies to the *direct* peer only. There is deliberately no walk up the process tree, because manifest authority must not be inheritable: a child process of a trusted script is not itself trusted.
 
-The agent can't get a proof through the CLI — `sahjhan sign`'s socket peer is the CLI binary, which can never satisfy the manifest, whatever spawned it. It can't write a script into the trusted path (the bootstrap hook blocks writes to `enforcement/`). It can't modify a trusted script to do something else (hash won't match). It can't copy a trusted script somewhere and run it from there (path won't match).
+Trusted scripts have to live inside the config dir, and they have to be invoked by absolute path, because the daemon resolves a relative cmdline path against its own working directory, not the caller's.
 
-No manifest file means caller auth is off and the daemon serves every caller — the development default. A manifest with an empty `[callers]` table denies everyone.
+The agent can't get a proof through the CLI because `sahjhan sign`'s socket peer is the CLI binary, which can never satisfy the manifest, whatever spawned it. It can't write a script into the trusted path because the bootstrap hook blocks writes to `enforcement/`. It can't modify a trusted script to do something else because the hash won't match. And it can't copy a trusted script somewhere and run it from there because the paths won't match.
 
-The manifest itself is the root of trust here — it decides who may sign — so it lives inside the config seal (below) alongside the protocol files. Rewriting it to add your own caller and restarting the daemon still works *at the socket* — the daemon loads whatever file is on disk — but it stops being silent: the next command that opens the ledger re-hashes `trusted-callers.toml`, sees it drift from the sealed value, and refuses to run with a config integrity violation. That's detection, not prevention; the guarantee that an agent can't get here at all comes from the sandbox fuse below.
+If you don't provide the file, the daemon serves every caller. Providing the file with an empty `[callers]` table denies everyone.
 
-The vault handles more than keys. The quiz bank — the questions the hook uses to verify the agent actually read the code — lives in daemon memory too. The hook loads it at startup with `sahjhan vault store --name quiz-bank --file questions.json`, then retrieves questions with `sahjhan vault read --name quiz-bank` during the quiz. The file can then be deleted from disk — `vault store` doesn't delete it for you. No point in HMAC-protecting the answers if the agent can read the questions in advance, and no point in leaving a file on disk that doesn't need to exist.
+The manifest itself is the root of trust here. It decides who may sign, so it lives inside the config seal (see below) alongside the protocol files. Rewriting it to add your own caller and restarting the daemon still works *at the socket* because the daemon loads whatever file is on disk, but it stops being silent. The next command that opens the ledger re-hashes `trusted-callers.toml`, sees it drift from the sealed value, and refuses to run with a config integrity violation.
 
+The vault handles more than signing keys. It can act as a general purpose key-value store, and you can restrict it to trusted-callers if you don't want the agent to see the contents. For example, the quiz bank from the example in the README.md lives in the vault. `sahjhan vault store --name quiz-bank --file data.json` can load in a file, which you can then retrieve with `sahjhan vault read --name quiz-bank` during the quiz. Once it's loaded in, you can delete the file from disk. Or better yet, you can have a script build that kind of stuff on the fly, so there's nothing for an agent to see.
 
 ### State-gated vault keys
 
-A vault key can also be restricted to particular protocol states, declared in an
-optional `vault.toml` rather than in imperative hook code. The daemon derives the
-current state from the active ledger and rejects the operation otherwise.
+A vault key can also be restricted to particular protocol states, declared in an optional `vault.toml` rather than in imperative hook code. The daemon derives the current state from the active ledger and rejects the operation otherwise.
 
 ```toml
 # enforcement/vault.toml
@@ -124,51 +121,44 @@ writable_in_states = ["idle"]
 deletable_in_states = []
 ```
 
-Each of the three fields is independent, and each has three meanings: omitted
-means no constraint (which is how every key behaved before policies existed), an
-empty list means the operation is never permitted, and a list of states means
-only in those states. The example above loads the quiz bank once at the start of
-a run, reads it only while reviewing, and never lets it be deleted.
+If you don't include one of those fields, that action's unconstrained for the key. An empty list denies all. And a populated list limits actions on that key to only when sahjhan's in the listed states. This gives really fine-grained control over read, write, and delete. The example above loads the quiz bank once at the start of a run, reads it only while reviewing, and never lets it be deleted.
 
-This one is fail-closed: if the ledger state can't be determined, a gated
-operation is rejected rather than allowed, which is the opposite of how
-`enforcement_read` treats an unreadable ledger. `vault.toml` is one of the eight
-sealed config files, so a policy can't be loosened without a `reseal`.
+If the ledger state can't be determined, a gated operation is rejected rather than allowed. `vault.toml` is one of the eight sealed config files, so a policy can't be loosened without a `reseal`.
 
-Protocol scripts sometimes need their own scratch state — counters, timers, flags — that the agent shouldn't be able to read or edit. The daemon exposes `enforcement_read` / `enforcement_write` / `enforcement_update` over the socket for that. They live under a reserved `_`-prefixed vault namespace that `vault read` and `vault list` refuse to touch. Same process, different door, and the agent doesn't have a key to either.
+Protocol scripts sometimes need their own scratch state, like counters, timers, and flags that the agent shouldn't be able to read or edit. The daemon exposes `enforcement_read` / `enforcement_write` / `enforcement_update` over the socket for that. They live under a reserved `_`-prefixed vault namespace that `vault read` and `vault list` refuse to touch so agents are blocked.
 
-One key in that blob is special: `state`. Consumers used to write it themselves after parsing `sahjhan status`, which meant it was only as fresh as their last successful refresh — transitions advance the ledger, not the vault, and a hook that times out refreshing leaves the daemon serving a state many transitions old (holtz #57 wedged a session for 150+ turns this way). Since v0.14.0 the daemon ignores the stored value on read: `enforcement_read` resolves the active ledger, verifies its hash chain, derives the current state from the last `state_transition`, and overrides `state` in the response. If the ledger can't be resolved or fails verification, the stored bytes are served unchanged. There is deliberately no socket op to *write* the state — a CLI invoked by the agent can't authenticate as a trusted caller, and the ledger is already the source of truth.
+One key in that blob is special: `state`. `enforcement_read` resolves the active ledger, verifies its hash chain, derives the current state from the last `state_transition`, and overrides `state` in the response. If the ledger can't be resolved or fails verification, the stored bytes are served unchanged. There is deliberately no socket op to *write* the state: a CLI invoked by the agent can't authenticate as a trusted caller, and the ledger is already the source of truth.
 
-Recording an *event*, though, is different from writing that `state` key — and since v0.15.0 a trusted caller can do it over the socket with `record_event`. This exists because `restricted` events (like a `context_reset` attesting a `/clear` happened) previously had to go through `authed-event`: a hook asks the daemon to `sign` the event, then hands the proof to a separate `sahjhan authed-event` process to submit. That submitter is the bare CLI binary, and the daemon can't resolve *it* to a trusted script — its command line names a subcommand, not a manifest script — so the submit is rejected, and a swallowed exit code hid the failure. `record_event` collapses the two steps into one: the hook, already authenticated as a trusted caller on its own socket connection (exactly like `sign` and `enforcement_write`), asks the daemon to append the event directly. The daemon validates it against the consumer's `events.toml` and appends to the active ledger under the same exclusive lock the CLI uses. No proof to mint, hand off, or leak; no courier to authenticate. It's the ledger-write analog of `enforcement_write` — the peer's identity is the authorization.
+Recording an *event*, though, is different from writing that `state` key. Trusted callers can do it over the socket with `record_event`. The hook, already authenticated as a trusted caller on its own socket connection, asks the daemon to append the event directly. The daemon validates it against the consumer's `events.toml` and appends to the active ledger under the same exclusive lock the CLI uses.
 
-Relatedly, `sahjhan status --no-gates` skips transition gate evaluation. Plain `status` evaluates every candidate transition's gates to print `ready`/`blocked`, and `command_succeeds` gates can spawn test suites — poison for a hook running under a five-second timeout. With `--no-gates` you get state, sets, event count, and chain verification with no side effects; the transitions section is omitted and a warning says why.
+Relatedly, `sahjhan status --no-gates` skips transition gate evaluation. Plain `status` evaluates every candidate transition's gates to print `ready`/`blocked`, and `command_succeeds` gates can spawn test suites, whereas hooks run under a five-second timeout. With `--no-gates` you get state, sets, event count, and chain verification with no side effects.
 
-Kill the daemon and the secrets vanish. That's denial of service, not exfiltration. The daemon cleans up its socket and PID files on shutdown. If it dies uncleanly, stale files get cleaned on the next start.
+Kill the daemon and the secrets vanish. The daemon cleans up its socket and PID files on shutdown. If it dies uncleanly, stale files get cleaned on the next start.
 
 ## The boundary: the sandbox fuse
 
-Everything above is hardening, and it's worth being precise about what hardening means: a same-user process can ultimately defeat any peer inspection — fork a connected file descriptor into an exec of a genuine hook, rewrite its own command line, load code into a trusted interpreter. Caller authentication raises the cost. It cannot be the wall. The wall is the OS sandbox.
+Despite all of this hardening, a same-user process can ultimately defeat sahjhan by doing things like forking a connected file descriptor into an exec of a genuine hook, rewriting its own command line, or loading code into a trusted interpreter.
 
-Claude Code can run every Bash command inside a sandbox that blocks access to Unix sockets outside an allowlist. Confined that way, the agent can't reach the daemon socket at all — not to sign, not to probe, not to impersonate. The trusted hooks run outside the sandboxed Bash tool, so they still can.
+For stronger security guarantees, Claude Code can run every Bash command inside a sandbox that blocks access to Unix sockets outside an allowlist. Confined that way, the agent can't reach the daemon socket at all. The trusted hooks run outside the sandboxed Bash tool, so they still can.
 
-The fuse is how the daemon refuses to serve until that boundary actually exists. Arm it in the sealed `protocol.toml`:
+You can enforce it in `protocol.toml`:
 
 ```toml
 [daemon]
 require_sandbox = true
 ```
 
-An armed daemon checks, on every request except `status`, that the Claude Code settings demand the sandbox: effective `sandbox.enabled = true`, `allowUnsandboxedCommands = false`, and `failIfUnavailable = true` across the settings scopes (project `settings.local.json`, project `settings.json`, then `~/.claude/settings.json`, in that precedence), no scope allowlisting the daemon socket, no scope with a non-empty `excludedCommands`, and the socket itself outside the project root — `SAHJHAN_DAEMON_SOCKET` exists to put it there. Any check failing means the request is refused with `sandbox_required` and a machine-readable reason. Fail closed.
+An armed daemon checks, on every request except `status`, that the Claude Code settings demand the sandbox: effective `sandbox.enabled = true`, `allowUnsandboxedCommands = false`, and `failIfUnavailable = true` configured across the settings scopes (project `settings.local.json`, project `settings.json`, then `~/.claude/settings.json`, in that precedence), no scope allowlists the daemon socket, no scope has a non-empty `excludedCommands`, and the socket itself resides outside the project root. Otherwise, the request is refused with `sandbox_required` and a machine-readable reason.
 
-The fuse reads configuration, not kernel state — `failIfUnavailable = true` is required precisely so "the settings demand the sandbox" implies "it is on, or the session halted." It's evaluated fresh on every request, so the daemon starts serving the moment the boundary appears and stops the moment it goes away, and because `protocol.toml` is sealed, arming can't be silently undone. On Linux, blocking socket access additionally requires the optional seccomp filter (`@anthropic-ai/sandbox-runtime`), which the fuse cannot verify.
+On Linux, blocking socket access additionally requires the optional seccomp filter (`@anthropic-ai/sandbox-runtime`), which the fuse cannot verify.
 
 ## Config integrity
 
 So the ledger can't be edited. The hash chain works. Restricted events need a proof the agent can't forge. The session key lives in a process the agent can't reach. Everything is locked down.
 
-Everything except the TOML config files. You know, the ones that define every gate, every transition, every rule. `transitions.toml` is just a text file sitting in a directory the agent can write to. Remove a gate, lower a threshold, add `gates = []` to the one transition that matters — and Sahjhan's hardened ledger will faithfully enforce your gutted protocol. The vault door is six inches of steel. The wall next to it is drywall.
+Everything except the TOML config files. You know, the ones that define every gate, every transition, every rule. `transitions.toml` is just a text file sitting in a directory the agent can write to. Remove a gate, lower a threshold, add `gates = []` to the one transition that matters, and Sahjhan's hardened ledger will faithfully enforce your gutted protocol.
 
-On `sahjhan init`, Sahjhan SHA-256 hashes all eight sealed config files — the five protocol files, `hooks.toml`, `vault.toml`, and `trusted-callers.toml` — and stores those hashes in the genesis ledger entry. Every command that opens the ledger re-hashes and compares (commands that don't — `validate`, `lint`, `daemon start` — skip the check). One byte different — a gate removed, a timeout changed, a comment added to make the diff look innocent — and Sahjhan won't run:
+To mitigate this, on `sahjhan init`, Sahjhan SHA-256 hashes all eight sealed config files (the five protocol files, `hooks.toml`, `vault.toml`, and `trusted-callers.toml`) and stores those hashes in the genesis ledger entry. Every command that opens the ledger re-hashes and compares (commands that don't, like `validate`, `lint`, and `daemon start`, skip the check). If one byte's different Sahjhan won't run:
 
 ```
 error: config integrity violation:
@@ -178,7 +168,7 @@ Run 'sahjhan reseal' with a valid session key to update the seal,
 or 'sahjhan init' to start a new ledger.
 ```
 
-Config changes do happen legitimately. You add a state, tune a gate, fix a typo. `sahjhan reseal` updates the seal — but it requires an HMAC proof, same as restricted events. Without the session key, the agent can rewrite transitions.toml all day long. It just can't use it. The reseal event goes into the ledger, so you can see exactly when the rules changed and decide whether that was you or the agent getting creative.
+Config changes do happen legitimately during protocol development. `sahjhan reseal` updates the seal. It requires an HMAC proof, the same as restricted events. Without the session key, the agent can rewrite transitions.toml all day long. It just can't use it. The reseal event goes into the ledger, so you can see exactly when the rules changed and decide whether that was you or the agent getting creative.
 
 To reseal after a legitimate config change:
 
@@ -187,7 +177,7 @@ PROOF=$(sahjhan sign --event-type config_reseal)
 sahjhan reseal --proof "$PROOF"
 ```
 
-Same daemon, same signing mechanism, same key the agent can't reach. The payload is just the event type with no fields. The same caller-auth caveat applies: both steps ride CLI socket connections, so this recipe works only while `trusted-callers.toml` is unconfigured — with caller auth on, the daemon rejects the bare CLI and the reseal has to be driven from a trusted caller speaking the socket protocol.
+The payload is just the event type with no fields. This recipe works only while `trusted-callers.toml` is unconfigured. With caller auth on, the daemon rejects the bare CLI and the reseal has to be driven from a trusted caller speaking the socket protocol.
 
 ## Gate attestation
 
@@ -195,9 +185,9 @@ So the ledger can't be edited. Restricted events need proof. Config is sealed. W
 
 When a `command_succeeds` gate runs `python -m pytest tests/`, Sahjhan executes the command, checks the exit code, and records a `state_transition` event: "moved from implementing to verifying." That's it. The transition happened. But the ledger says nothing about *why* it was allowed. What command ran? What did it output? When? The evidence exists for about three hundred milliseconds inside a Rust struct, then gets thrown away.
 
-Which means: you can see that the agent transitioned, but you can't see that the tests actually passed. You're trusting the gate's boolean. That's better than trusting the agent, but it's still a gap you could drive a fabricated quiz result through.
+It's great to see that the agent transitioned, but you've got to know if the tests actually passed. You're trusting the gate's boolean. That's better than trusting the agent, but it's still a gap in traceability.
 
-Gate attestation closes it. When a `command_succeeds`, `command_output`, or `snapshot_compare` gate passes during a transition, Sahjhan now emits a `gate_attestation` event immediately after the `state_transition`:
+Gate attestation closes it. When a `command_succeeds`, `command_output`, or `snapshot_compare` gate passes during a transition, Sahjhan emits a `gate_attestation` event immediately after the `state_transition`:
 
 ```bash
 sahjhan log tail 2
@@ -205,7 +195,7 @@ sahjhan log tail 2
 # {"event_type": "gate_attestation", "fields": {"gate_type": "command_succeeds", "command": "python -m pytest tests/", "exit_code": "0", "stdout_hash": "a3c2e88d1f2b...", "wall_time_ms": "4523", "executed_at": "2026-03-30T14:23:07.123Z", "transition_command": "submit"}, ...}
 ```
 
-The `stdout_hash` is SHA-256 of the raw command output. The agent can't fabricate it because Sahjhan runs the command and computes the hash — the agent never touches either. For deterministic commands (most test suites, linters, build tools), replaying the command should reproduce the hash. That's an independently verifiable claim sitting in a hash-chained ledger.
+The `stdout_hash` is SHA-256 of the raw command output. The agent can't fabricate it because Sahjhan itself runs the command and computes the hash. For deterministic commands (most test suites, linters, build tools), replaying the command should reproduce the hash. That's an independently verifiable claim sitting in a hash-chained ledger.
 
 Every command and snapshot gate attests by default. If a gate runs something trivial that isn't worth recording (a warmup check, an `echo`), suppress it:
 
@@ -213,14 +203,14 @@ Every command and snapshot gate attests by default. If a gate runs something tri
 { type = "command_succeeds", cmd = "echo warmup", attest = false }
 ```
 
-The attestation event is `restricted` — mark it in your `events.toml` and the agent can't forge one via `sahjhan event`. It'll get the same rejection as a fabricated quiz result:
+The attestation event is `restricted`: mark it in your `events.toml` and the agent can't forge one via `sahjhan event`. It'll get the same rejection as a fabricated quiz result:
 
 ```bash
 sahjhan event gate_attestation --field gate_type=command_succeeds --field stdout_hash=abc123 ...
 # error: event type 'gate_attestation' is restricted. Use 'sahjhan authed-event' with a valid proof.
 ```
 
-The ledger now has two tiers of evidence: machine-attested (the gate ran, here's the hash) and agent-reported (I reviewed this, trust me). Different confidence levels, explicitly marked. An auditor can tell which is which. The agent can't blur the line.
+This means the ledger has two tiers of evidence, machine-attested (the gate ran, here's the hash), and agent-reported (I reviewed this, trust me), with different confidence levels that auditors can distinguish between.
 
 ## What the agent tries, and what happens
 
@@ -246,16 +236,8 @@ The ledger now has two tiers of evidence: machine-attested (the gate ran, here's
 
 ## What this doesn't do
 
-Sahjhan is not a sandbox. The agent runs as you, with your filesystem and your
-network, and the threat model is an agent taking the cheap way out rather than an
-attacker with a budget and a plan. The daemon raises the cost of extracting a key
-from "four lines of Python" to something meaningfully harder; the actual wall,
-when you need one, is the OS sandbox the fuse insists on. Anything that can
-attach to your session unsandboxed can do what you can do.
+Sahjhan is not a sandbox. The agent runs as you, with your filesystem and your network, and the threat model is an agent taking the cheap way out rather than an attacker with a budget and a plan. The daemon raises the cost of extracting a key from "four lines of Python" to something meaningfully harder; the actual wall, when you need one, is the OS sandbox the fuse insists on. Anything that can attach to your session unsandboxed can do what you can do.
 
-The seal covers eight config files. A gate that shells out to `scripts/check.py`
-is trusting a script outside the seal unless you also put it under
-`paths.managed` and let the manifest track it.
+The seal covers eight config files. A gate that shells out to `scripts/check.py` is trusting a script outside the seal unless you also put it under `paths.managed` and let the manifest track it.
 
-The perimeter — managed paths, write guards, stop hooks — depends on the harness
-actually calling the hooks. The ledger, the seal, and the gates don't.
+The perimeter of managed paths, write guards, and stop hooks depends on the harness actually calling the hooks. The ledger, the seal, and the gates don't rely on hooks.

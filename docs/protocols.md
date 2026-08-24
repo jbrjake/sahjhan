@@ -1,7 +1,7 @@
 # writing a protocol
 
 A protocol is a directory of TOML files, passed to the binary with
-`--config-dir` (default: `enforcement`). Three files are required, three are
+`--config-dir` (default: `enforcement`). Three files are required, five are
 optional.
 
 | file | required | what it declares |
@@ -87,8 +87,10 @@ label = "Verifying"
 terminal = true
 ```
 
-One state is `initial`, at least one is `terminal`, and the agent moves between
-them only where a transition exists. `fix-and-retry` is here because tests fail
+Exactly one state is `initial`, and the agent moves between states only where a
+transition exists. Marking the end states `terminal` is what quiets the
+no-outgoing-transition warning and gives lint L4 its targets; nothing forces a
+protocol to have one. `fix-and-retry` is here because tests fail
 sometimes and the honest thing is to loop back; the branching section below
 wires it up.
 
@@ -109,15 +111,12 @@ from = "writing-tests"
 to = "implementing"
 command = "tests-done"
 gates = [
-    { type = "file_exists", path = "tests/test_feature.py",
-      intent = "test file must exist on disk before implementation begins" },
+    { type = "file_exists", path = "tests/test_feature.py", intent = "test file must exist on disk before implementation begins" },
     { type = "any_of", intent = "tests must run or be explicitly overridden", gates = [
         { type = "command_succeeds", cmd = "python -m pytest tests/", timeout = 60 },
         { type = "ledger_has_event", event = "manual_test_override" },
     ]},
-    { type = "set_covered", set = "test-suites",
-      event = "set_member_complete", field = "member",
-      intent = "every test suite must be written before implementing" },
+    { type = "set_covered", set = "test-suites", event = "set_member_complete", field = "member", intent = "every test suite must be written before implementing" },
 ]
 
 # Happy path: tests pass + quality checks → advance
@@ -126,8 +125,7 @@ from = "implementing"
 to = "verifying"
 command = "submit"
 gates = [
-    { type = "command_succeeds", cmd = "python -m pytest tests/", timeout = 120,
-      intent = "all tests must pass before verification" },
+    { type = "command_succeeds", cmd = "python -m pytest tests/", timeout = 120, intent = "all tests must pass before verification" },
     { type = "k_of_n", k = 2, intent = "at least 2 of 3 code quality checks must pass", gates = [
         { type = "command_succeeds", cmd = "python -m mypy src/" },
         { type = "command_succeeds", cmd = "python -m pylint src/" },
@@ -161,9 +159,11 @@ Every gate is something sahjhan checks itself. `file_exists` looks at the disk.
 `command_succeeds` runs the suite — sahjhan runs it, not the agent. The agent
 self-reports nothing. Full gate reference: [gates.md](gates.md).
 
-`intent` is optional and worth writing. sahjhan prints it beside the failure when
-a gate blocks, so the agent is told what to fix. Omit it and sahjhan generates a
-default from the gate type.
+`intent` is optional and worth writing. `sahjhan gate check` and `status` print
+it beside the gate, so the agent can be told what to fix and why; a blocked
+`transition` prints only the failure reason. Omit it and sahjhan generates a
+default from the gate type (for `query` gates that reference a named query, the
+query's own `intent` fills in first).
 
 ### protocol.toml: paths, sets, aliases
 
@@ -175,9 +175,9 @@ version = "1.0.0"
 description = "Test-driven development enforcement"
 
 [paths]
-managed = ["src", "tests"]
-data_dir = ".sahjhan"
-render_dir = "."
+managed = ["output", "src", "tests"]
+data_dir = "output/.sahjhan"
+render_dir = "output"
 
 [sets.test-suites]
 description = "Test suites that must be written"
@@ -188,9 +188,13 @@ values = ["unit-tests", "integration-tests"]
 "done" = "transition submit"
 ```
 
-`managed` lists directories the agent may not write to directly; the manifest
-tracks their hashes and the hooks block edits. `data_dir` holds the ledger,
-manifest, and ledger registry. `render_dir` is where rendered markdown lands.
+`managed` lists directories the agent may not write to directly — the hooks
+block edits there, and it bounds what the manifest may track. The manifest
+tracks the files sahjhan itself writes (the ledger and rendered views), not the
+contents of `src/` or `tests/`. sahjhan's artifacts must themselves live under
+a managed path, which is why `data_dir` and `render_dir` sit inside `output/`
+rather than at the project root. `data_dir` holds the ledger, manifest, and
+ledger registry. `render_dir` is where rendered markdown lands.
 
 A **set** is a checklist the agent can't skip items on. Declare the members, and
 the agent checks them off one at a time:
@@ -214,8 +218,10 @@ covered in [hooks.md](hooks.md), and `[ledgers]`, covered in
 
 ### events: what may go in the ledger
 
-Without `events.toml`, any event type is accepted with any fields. With it,
-fields are validated at recording time and become native Arrow columns for SQL.
+Without `events.toml`, any event type is accepted with any fields. Declaring a
+type gets its fields validated at recording time and turned into native Arrow
+columns for SQL. Undeclared types still pass through unvalidated — the schema
+constrains what it names, it doesn't close the vocabulary.
 
 ```toml
 # tdd-protocol/events.toml
@@ -236,8 +242,10 @@ fields = [
 ```
 
 The `pattern` regex on `severity` means the agent picks one of four values or
-gets rejected. Declaring `set_member_complete` is what validates the events
-`sahjhan set complete` writes.
+gets rejected. Declaring `set_member_complete` doesn't change what `sahjhan set
+complete` records — that command writes its `set` and `member` fields directly,
+skipping validation — but the declaration is what turns those fields into SQL
+columns and gives lint its vocabulary entry.
 
 Fields are required by default. Mark the ones that only matter sometimes:
 
@@ -288,7 +296,7 @@ Templates receive the full event history as `events`, an array of objects with
 `ledger_len`, and `violations`. Rather than guessing, dump it:
 
 ```bash
-$ sahjhan render dump-context
+$ sahjhan render --dump-context
 ```
 
 Two custom filters ship with the engine. `where_eq` keeps array items whose
@@ -341,21 +349,26 @@ end. Sometimes that's what you meant.
 
 ```bash
 $ sahjhan gate check submit
-# candidate 1: implementing → verifying
-#   BLOCKED command_succeeds: 'python -m pytest tests/' exit 1
-#     intent: all tests must pass before verification
-# candidate 2: implementing → fix-and-retry
-#   all gates passed
-# result: implementing → fix-and-retry
+gate-check: submit
+candidate 1: implementing → verifying
+  ✗ command_succeeds: command 'python -m pytest tests/' exited with status 1 — all tests must pass before verification
+  ✗ k_of_n: only 0 of 2 required passed; failed: [command_succeeds: command succeeds: python -m mypy src/; command_succeeds: command succeeds: python -m pylint src/; command_succeeds: command succeeds: python -m bandit -r src/] — at least 2 of 3 code quality checks must pass
+  ✓ no unresolved protocol_violation events
+candidate 2: implementing → fix-and-retry
+  (no gates — always passes)
+result: would take → fix-and-retry
 ```
 
 ## template variables
 
 Gate commands and SQL can carry `{{var}}` placeholders. Values come from the
-current state's declared params and from config, and they're POSIX
-shell-escaped before interpolation.
+declared params of the state a candidate transition points *to* — the
+destination, not where the agent currently stands — and from config. In
+command-running gates the values are POSIX shell-escaped before interpolation;
+in `sql` and file-gate paths they interpolate plain.
 
-Declare a param on a state and say where it gets its value:
+Declare a param on a state and say where it gets its value (it resolves when a
+transition targets that state):
 
 ```toml
 [states.reviewing]
@@ -383,9 +396,10 @@ of being run with a literal `{{var}}` in the string — see [gates.md](gates.md)
 
 ## violations
 
-When an agent tampers with a managed file, the hooks record a
-`protocol_violation` event. The `no_violations` gate blocks while any are
-unresolved. Resolving one means recording the counterpart:
+Nothing records a `protocol_violation` automatically — it's ledger vocabulary
+your protocol writes, typically via a `hooks.toml` rule with `auto_record` when
+a guard fires, or by hand when you catch something. The `no_violations` gate
+blocks while any are unresolved. Resolving one means recording the counterpart:
 
 ```bash
 $ sahjhan event violation_resolved --field "detail=reverted unauthorized edit to src/main.rs"

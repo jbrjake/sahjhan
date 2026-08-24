@@ -35,7 +35,7 @@ sahjhan event <type> [--field K=V]        Record a protocol event
 sahjhan set status <set>                  Show set completion progress
 sahjhan set complete <set> <member>       Record set member completion
 sahjhan render                            Regenerate markdown views from the ledger
-sahjhan render dump-context               Dump the render context as JSON
+sahjhan render --dump-context             Dump the render context as JSON
 sahjhan mermaid [--rendered]              Protocol diagram: stateDiagram-v2, or ASCII
 ```
 
@@ -44,12 +44,12 @@ sahjhan mermaid [--rendered]              Protocol diagram: stateDiagram-v2, or 
 ## the ledger
 
 ```
-sahjhan log dump                          Print the ledger as JSONL
+sahjhan log dump                          Print every ledger entry (one-line digests)
 sahjhan log verify                        Validate hash chain integrity
 sahjhan log tail [N]                      Last N events                    [default: 10]
 sahjhan manifest verify                   Check tracked files against the manifest
 sahjhan manifest list                     Show tracked files and hashes
-sahjhan manifest restore <path>           Restore a file from its known-good state
+sahjhan manifest restore <path>           Print how to restore a tracked file (writes nothing)
 
 sahjhan query "<SQL>"                     SQL against the ledger
 sahjhan query --type <type> [--count]     Convenience: filter by event type
@@ -109,9 +109,14 @@ sahjhan hook eval --event <E> [--tool <T>] [--file <F>] [--output-text <text>]
 Exit code 1 is a protocol decision, not a failure — a blocked transition is
 sahjhan working. Exit code 2 means something that shouldn't have changed did.
 
+One wrinkle: a command line that fails to *parse* (unknown subcommand, missing
+required flag) also exits 2 — that's clap's convention, not an integrity
+signal. Exit 4 covers the usage errors sahjhan itself catches after parsing,
+like `reset` without `--confirm` or `lint --only` with an unknown check.
+
 ## the JSON envelope
 
-`--json` wraps every command's output in one shape:
+`--json` emits an envelope in one shape:
 
 ```json
 {"command":"status","ok":true,"schema_version":1,"data":{ ... }}
@@ -129,5 +134,10 @@ $ sahjhan --json status
 "to":"done"}]},"ok":true,"schema_version":1}
 ```
 
-`data` is per-command. `schema_version` is 1 and will change if the envelope
-does.
+`data` is per-command, and only the commands migrated to structured output
+carry one — `status`, `set status`, `log dump`/`log tail`, `gate check`,
+`manifest verify`, `hook eval`, `lint`, and `ledger activate`/`deactivate`. The
+rest print their human output first and follow it with an envelope holding just
+`command`/`ok`/`schema_version`. `query` is the odd one out: under `--json` it
+prints bare result rows with no envelope at all. `schema_version` is 1 and will
+change if the envelope does.

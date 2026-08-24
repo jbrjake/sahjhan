@@ -145,7 +145,9 @@ available_in_states = ["awaiting_clear"]
 
 `id` is opaque; the engine only reports it back to you. `available_in_states` is
 the window L2 checks against the reachability relation. A producer with no window
-makes no temporal claim, so L2 says nothing about it.
+makes no temporal claim — and one such producer is enough to silence L2 for that
+event entirely, other producers' windows included, since the event could always
+have come from the unconstrained one.
 
 By default L1 only errors on *restricted* events with no producer, because
 `sahjhan event` can record any declared non-restricted type and the engine would

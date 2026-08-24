@@ -12,8 +12,7 @@ from = "implementing"
 to = "verifying"
 command = "submit"
 gates = [
-    { type = "command_succeeds", cmd = "python -m pytest tests/", timeout = 120,
-      intent = "all tests must pass before verification" },
+    { type = "command_succeeds", cmd = "python -m pytest tests/", timeout = 120, intent = "all tests must pass before verification" },
     { type = "no_violations" },
 ]
 ```
@@ -27,33 +26,47 @@ The same gate types work inside `hooks.toml` rules — see [hooks.md](hooks.md).
 | `file_exists` | `path` | The file is on disk. Not "I created it." On disk. |
 | `files_exist` | `paths` | Every listed file is on disk. |
 | `command_succeeds` | `cmd`, `timeout`, `attest` | sahjhan runs the command. Exit 0 or no deal. |
-| `command_output` | `cmd`, `expect`, `timeout`, `attest` | sahjhan runs the command; stdout must match `expect`. |
-| `ledger_has_event` | `event`, `min_count`, `max_count`, `filter` | At least `min_count` (and at most `max_count`) events of this type. |
+| `command_output` | `cmd`, `expect`, `timeout`, `attest` | sahjhan runs the command; trimmed stdout must equal `expect` exactly. |
+| `ledger_has_event` | `event`, `min_count`, `max_count`, `filter` | At least `min_count` (and strictly fewer than `max_count`) events of this type. |
 | `ledger_has_event_since` | `event`, `since`, `min_count`, `filter` | The event was recorded since a reference point. |
 | `ledger_lacks_event` | `event`, `filter` | Zero matching events. The inverse, for "must not have done X". |
-| `set_covered` | `set`, `event`, `field` | Every member of the set has a matching event. |
+| `set_covered` | `set`, `event`, `field` | Every member of the set has a matching event — one whose `set` field names this set. |
 | `min_elapsed` | `event`, `seconds` | N seconds since the last event of that type. |
 | `no_violations` | (none) | No unresolved `protocol_violation` events. |
-| `field_not_empty` | `field` | The named field of the event being recorded is present and non-blank. |
+| `field_not_empty` | `field` | The named field of the event being recorded is present and non-empty. Currently inert — see below. |
 | `snapshot_compare` | `cmd`, `extract`, `compare`, `reference`, `timeout`, `attest` | Compare a live value against a recorded baseline. |
 | `query` | `sql` *or* `query`, `expect` | SQL against the ledger, evaluated by DataFusion. |
 
 Every type also accepts `intent`, a sentence explaining why the gate exists.
-sahjhan prints it beside the failure when the gate blocks, so the agent is told
-what to fix rather than that something failed. Omit it and sahjhan generates a
-default from the gate type.
+`sahjhan gate check` and `status` print it beside the failure, so the agent is
+told what to fix rather than that something failed (a blocked `transition`
+prints only the failure reason). Omit it and sahjhan generates a default from
+the gate type; a `query` gate that references a named query inherits the
+query's `intent` first.
 
 ### notes on the ones with sharp edges
 
 **`min_elapsed` proves the agent owns a clock.** By itself that's all it proves.
 Ask me how I know. Pair it with a gate that requires evidence.
 
-**`max_count` on `ledger_has_event`** turns the gate into a budget: at most three
-`fix_commit` events before the run has to do something else.
+**`max_count` on `ledger_has_event`** turns the gate into a budget. The ceiling
+is exclusive: `max_count = 3` keeps passing through the second `fix_commit`
+event and fails once the third lands, forcing the run to do something else.
 
 **`since` on `ledger_has_event_since`** takes either `"last_transition"` or an
 event type name. Given an event type, it measures from the last occurrence of
-that type, falling back to the last transition if there isn't one.
+that type; if there has never been one, the baseline is the start of the run
+(seq 0), not the last transition — so the whole ledger counts.
+
+**`set_covered` counts only events that name the set.** An entry counts when its
+`set` field equals the gate's set *and* the configured `field` is present. Point
+`event` at a custom type and that type still has to carry `set = "<name>"`, or
+coverage never accrues.
+
+**`field_not_empty` is currently inert.** It reads the payload of the event
+being recorded, and no evaluation path — transitions, `gate check`, `status`,
+hooks — supplies one, so today it always fails. Listed for completeness, not
+for use.
 
 **`filter`** is a key/value map matched against the event's fields, so
 `ledger_has_event` can ask for a `finding` with `severity=CRITICAL` rather than
@@ -77,7 +90,7 @@ off." "At least 2 of 3 scanners." "No regressions recorded." Wrap gates:
 | --- | --- | --- |
 | `any_of` | `gates` | any child passes (OR) |
 | `all_of` | `gates` | every child passes (explicit AND) |
-| `not` | `gate` | the single child fails (NOT) |
+| `not` | `gates` | the single child fails (NOT) |
 | `k_of_n` | `k`, `gates` | at least `k` children pass |
 
 ```toml
@@ -95,12 +108,13 @@ off." "At least 2 of 3 scanners." "No regressions recorded." Wrap gates:
 ]}
 ```
 
-`not` takes a single child under `gate`, not a list:
+`not` uses the same `gates` list as the others, but it must hold exactly one
+child:
 
 ```toml
-{ type = "not", intent = "no regressions before release", gate = {
-    type = "ledger_has_event", event = "regression"
-}}
+{ type = "not", intent = "no regressions before release", gates = [
+    { type = "ledger_has_event", event = "regression" },
+]}
 ```
 
 Composites nest: an `any_of` can hold an `all_of` holding leaf gates. The depth
@@ -108,24 +122,27 @@ limit is whatever you can still read six months from now, which in practice is
 about two levels. sahjhan won't stop you going deeper.
 
 `sahjhan validate` checks that composites are well-formed — `any_of` and `all_of`
-need a `gates` array, `not` needs a single `gate`, `k_of_n` needs a positive `k`
-no larger than the number of children. It catches bad syntax, not bad logic.
+need a `gates` array, `not` needs exactly one child in its `gates`, `k_of_n`
+needs a positive `k` no larger than the number of children. It catches bad
+syntax, not bad logic.
 
 ## template variables
 
-Gate `cmd` and `sql` strings may contain `{{var}}` placeholders. Values are
-resolved from the current state's declared params, from command-line arguments,
-and from config (`paths.*`, `sets.<name>`). Values are POSIX shell-escaped
-before interpolation into a command, and passed raw into SQL. Where the values
-come from is covered in [protocols.md](protocols.md#template-variables).
+Gate `cmd` and `sql` strings — and the file gates' `path`/`paths` — may contain
+`{{var}}` placeholders. Values are resolved from the destination state's
+declared params, from command-line arguments, and from config (`paths.*`,
+`sets.<name>`). Values are POSIX shell-escaped before interpolation into a
+command, and passed raw into SQL and file paths. Where the values come from is
+covered in [protocols.md](protocols.md#template-variables).
 
 Two behaviors matter when debugging:
 
-- A value that fails its event-field `pattern` is rejected before it reaches the
-  shell.
+- In `cmd` and `sql`, a value that fails its event-field `pattern` is rejected
+  before it reaches the shell. The file gates skip this check.
 - A placeholder that can't be resolved makes the gate **unevaluable** rather than
-  failing it, so a gate is never run with a literal `{{var}}` in the string and
-  never reports a misleading failure.
+  running it with a literal `{{var}}` in the string, so it never reports a
+  misleading failure. An unevaluable gate still blocks the transition — the
+  difference is the reporting (`?` instead of `✗`), not the outcome.
 
 ## dry-running a gate
 
@@ -143,7 +160,7 @@ Three statuses. `✓` passed, `✗` failed, `?` unevaluable — the third meanin
 gate needs a template variable you didn't supply:
 
 ```bash
-$ sahjhan gate check "set complete perspective"
+$ sahjhan gate check advance
   ✓ SQL: SELECT count(*) >= 2 FROM events WHERE type='iteration_complete'
   ? query: unevaluable (requires arg: current_perspective)
   ? query: unevaluable (requires arg: current_perspective)

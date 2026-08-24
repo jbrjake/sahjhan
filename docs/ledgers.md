@@ -18,9 +18,9 @@ sahjhan query --glob "docs/runs/*/ledger.jsonl" \
 sahjhan query --type finding --count
 ```
 
-Fields declared in `events.toml` become native Arrow columns, so there's no JSON
-parsing at query time. Define `severity` in the event schema and it's a real
-column you filter and group on. `--glob` adds a `_source` column naming the file
+Fields declared in `events.toml` become native Arrow columns, so SQL never digs
+values out of JSON strings. Define `severity` in the event schema and it's a
+real column you filter and group on. `--glob` adds a `_source` column naming the file
 each row came from. `--format` takes `table`, `json`, `csv`, or `jsonl`.
 
 The same SQL works as a gate condition, evaluated against the live ledger every
@@ -51,8 +51,9 @@ sahjhan query --glob "*.jsonl" "SELECT type, count(*) FROM events GROUP BY 1"
 ```
 
 Stateful ledgers are bound to the state machine; event-only ledgers just
-accumulate. Both are hash-chained. `--ledger` and `--ledger-path` work on every
-command.
+accumulate. Both are hash-chained. `--ledger` and `--ledger-path` steer every
+command that reads or writes the ledger; the exception is `ledger checkpoint`,
+which takes `--name` or falls back to the active marker and ignores them.
 
 `sahjhan ledger list` shows what's registered, `ledger verify` re-checks a
 chain, `ledger remove` unregisters without deleting the file, and `ledger import`
@@ -71,27 +72,27 @@ path_template = "runs/{template.instance_id}/ledger.jsonl"
 
 ```bash
 $ sahjhan ledger create --from run 25
-run-25 created at runs/25/ledger.jsonl
+created: run-25
 
 $ sahjhan ledger create --from run 26
-run-26 created at runs/26/ledger.jsonl
+created: run-26
 ```
 
-The name is derived (`run-25`), the path expands from the pattern, and the
-registry records which template each ledger came from, so renders and queries can
-find them by template rather than by name. `{template.name}` works in the pattern
-too.
+The name is derived (`run-25`), the path expands from the pattern
+(`runs/25/ledger.jsonl`), and the registry records which template each ledger
+came from, so renders can find them by template rather than by name
+(`ledger_template` in `renders.toml`). Queries have no template selector —
+reach for `--glob` there. `{template.name}` works in the pattern too.
 
-For a singleton that doesn't need instantiating, use `path`:
+A `[ledgers.X]` entry can carry a fixed `path` instead of a `path_template`,
+but it's a declaration only — nothing creates or registers that ledger, and
+`ledger create --from` refuses it. For a singleton, create it directly with
+`ledger create --name project --path project.jsonl`.
 
-```toml
-[ledgers.project]
-description = "Project-wide findings"
-path = "project.jsonl"
-```
-
-`sahjhan validate` checks that path patterns use valid placeholders and that
-singleton paths don't collide.
+`sahjhan validate` checks that each `[ledgers.X]` carries exactly one of `path`
+or `path_template`, and that a `path_template` contains
+`{template.instance_id}`. It doesn't reject unknown placeholders or check paths
+for collisions.
 
 ## the active ledger
 
@@ -101,7 +102,7 @@ unless you say otherwise."
 
 ```bash
 $ sahjhan ledger activate run-25
-run-25 is now the active ledger
+Activated ledger: run-25
 
 $ sahjhan event finding --field id=BH-042 --field severity=HIGH
 # recorded to run-25, no flag needed
@@ -118,7 +119,7 @@ Resolution order, highest priority first:
 1. `--ledger-path <path>`
 2. `--ledger <name>`
 3. the active-ledger marker (a warning if it names something unregistered)
-4. the registry default, else `data_dir/ledger.jsonl`
+4. the first registry entry (`init` registers `default` first), else `data_dir/ledger.jsonl`
 
 `sahjhan status` prints which ledger it read and why, so you don't spend twenty
 minutes wondering where your events went:
@@ -132,5 +133,5 @@ Ledger: default (no active-ledger marker)
 ## checkpoints
 
 `sahjhan ledger checkpoint` writes a checkpoint event into the chain, defaulting
-to the active ledger. `[checkpoints] interval = 100` in `protocol.toml` makes it
-periodic.
+to the active ledger. Checkpoints happen when you ask: `[checkpoints] interval`
+parses in `protocol.toml` but nothing reads it yet.

@@ -1,14 +1,12 @@
 # sahjhan
 
-**real guardrails for agents**
+sahjhan is a protocol enforcement engine. You describe your process in TOML text files as states, the transitions from one state to another, and the conditions that must be met to move between them. Then a compiled Rust binary tries to hold you to it.
 
-sahjhan is a protocol enforcement engine. You describe your process in TOML as states, the transitions from one state to another, and the conditions that must be met to move between them. Then a compiled Rust binary tries to hold you to it.
+Every step lands in a hash-chained append-only ledger. Condition tests let sahjhan do real work to check the results. It can run your test suite, look at the disk, count events, or run SQL over the ledger entries to decide how to move between states.
 
-Every step lands in a hash-chained append-only ledger. The conditions let sahjhan do real work to check the results. They can do things like run your test suite, look at the disk, count events, or run SQL over the ledger entries.
+Agents have to interact with the ledger via sahjhan's CLI. They can't modify it directly. You can declare that specific ledger entries can't be added by an agent or any process they control at all, so you can make decisions on evidence they can't forge.
 
-Agents talk to the CLI and get no other way in. You can even declare that specific ledger entries can't be added by an agent or any process they control, so you can make decisions on evidence they can't forge.
-
-It exists because [agents can't be trusted](docs/why.md).
+sahjhan exists because [agents can't be trusted](docs/why.md).
 
 ## quick-start
 
@@ -48,14 +46,14 @@ $ sahjhan log tail 3
 [2026-08-19T20:04:11.961Z] seq=4 type=state_transition hash=c56535329cde {command=complete, from=working, to=done}
 ```
 
-*Every terminal transcript in this file is pasted from a real run of the binary at v0.20.1.*
+*Every terminal transcript in this file is pasted from a real run of the binary at v0.21.0.*
 
 ## install
 
 Binaries for macOS and Linux in arm64 and x86_64 are on the [releases page](https://github.com/jbrjake/sahjhan/releases):
 
 ```bash
-gh release download v0.20.1 -R jbrjake/sahjhan -p "sahjhan-aarch64-apple-darwin"
+gh release download v0.21.0 -R jbrjake/sahjhan -p "sahjhan-aarch64-apple-darwin"
 chmod +x sahjhan-aarch64-apple-darwin
 mv sahjhan-aarch64-apple-darwin /usr/local/bin/sahjhan
 ```
@@ -64,7 +62,7 @@ mv sahjhan-aarch64-apple-darwin /usr/local/bin/sahjhan
 
 ## writing a protocol
 
-A protocol is a directory of TOML files, pointed at with `--config-dir` (default: `enforcement`). Three are required and the rest are optional. Here's the one the quick-start ran, in full:
+A protocol is just a directory of TOML files. sahjhan looks for them in `./enforcement/` but point it anywhere with `--config-dir`. Three are required (the protocol itself, its states, and their transitions) and the rest are optional. Here's what the quick-start ran:
 
 ### states
 
@@ -109,7 +107,7 @@ gates = [
 
 A gate is something sahjhan checks itself, not something the agent reports. `file_exists` tests for presence on disk. `command_succeeds` runs a command, like your test suite. _sahjhan_ runs it, not the agent, and it captures the exit code and hashes the output to the ledger. `query` runs SQL against the live ledger, which lets you do some really sophisticated state-based conditions. There are thirteen types, plus four composites (`any_of`, `all_of`, `not`, `k_of_n`) for when a single condition won't say it. You can see them all in [docs/gates.md](docs/gates.md).
 
-Every gate takes an optional `intent`, a sentence explaining why it's there. sahjhan prints it when the gate blocks, so the agent gets told what to fix and why it's important rather than that something failed.
+Every gate takes an optional `intent` and a sentence explaining why it's there. That way, if it fails, the agent gets told what to fix and why it's important.
 
 ### sets
 
@@ -120,6 +118,7 @@ Sometimes the agent has to do a thing for every item in a list, like review file
 [protocol]
 name = "minimal"
 version = "1.0.0"
+description = "Minimal example protocol"
 
 [paths]
 managed = ["output"] # hooks block agents from touching these paths
@@ -137,11 +136,11 @@ values = ["tests", "lint"] # working -> done after both testing and linting
 
 That's the whole protocol the quick-start ran.
 
-The optional files you'll reach for next are `events.toml` (a schema for what may go in the ledger), `renders.toml` (markdown views generated from the ledger, which the agent never writes), and `hooks.toml` (rules evaluated on every tool call rather than only at transitions). Two more, `vault.toml` and `trusted-callers.toml`, only matter once the daemon is involved.
+`examples/minimal` also ships three of the optional files. Those `(1 rendered)` lines in the transcript come from its `renders.toml`. `events.toml` is a schema for what can go in the ledger. And `hooks.toml` includes rules evaluated on every tool call rather than only at transitions, like refusing to let the agent stop a session without finishing the protocol.
 
 ### events
 
-Without `events.toml` any event type is accepted with any fields. With it, fields are validated at recording time and become native SQL columns:
+Without `events.toml` any event type is accepted with any fields. With it, fields are validated and become native SQL columns you can query. It only applies to event types you declare, so you can mix and match schematized and unschematized events in your ledger.
 
 ```toml
 # enforcement/events.toml
@@ -265,7 +264,7 @@ The CLI is how we record evidence, and the agent can use the CLI. If the agent j
 
 If you mark an event as `restricted` in `events.toml`, the plain CLI won't take it. It has to arrive as an HMAC proof over the event type and its sorted fields, computed by a daemon that holds a 32-byte session key in memory and never writes it anywhere. The daemon also has a vault where secrets can be recorded.
 
-`trusted-callers.toml` lists script paths that can testify to restricted events and read and write vault secrets. The paths are relative to `--config-dir`, and the .toml also records their SHA-256 hashes so they can't be tampered with. When a trusted call is made, the daemon checks the caller's PID to make sure the agent didn't spawn the script and that it came from the right path.
+`trusted-callers.toml` lists script paths that can testify to restricted events and read and write vault secrets. The paths are relative to `--config-dir`, and the .toml also records their SHA-256 hashes so they can't be tampered with. When a trusted call is made, the daemon reads the connecting process's PID from kernel socket credentials and requires that process *itself* to be one of the listed scripts at the documented path, with a matching hash. Authority is not inheritable: a child of a trusted script is not trusted, and neither is the CLI.
 
 So let's say you want to prove an agent actually read a file. You can build a quiz bank of questions about the file, and store it in the vault where the agent can't see the answers.
 
@@ -287,9 +286,11 @@ $ sahjhan log tail 1
 [2026-08-19T21:04:43.102Z] seq=1 type=quiz_passed hash=e579285ae4ca {pass=true, score=5/5}
 ```
 
-The agent can read that entry, query it, and see the condition it satisfies. It can't produce the entry itself. It can't call `sign` (its parent is `bash`), can't modify `quiz.py` (the hash stops matching), can't drop a new script into the config dir (the bootstrap hook blocks writes there), and can't add itself to the manifest, because `trusted-callers.toml` is one of the sealed files and editing it takes a `reseal`...which takes the key it doesn't have.
+The agent can read that entry, query it, and see the condition it satisfies. It can't produce the entry itself. It can't call `sign` (the CLI is never a trusted caller, whatever spawned it). It can't modify `quiz.py` (the hash stops matching). It can't drop a new script into the config dir (the bootstrap hook blocks writes there). And it can't add itself to the manifest, because `trusted-callers.toml` is one of the sealed files, and editing it takes a `reseal`...which takes the key it doesn't have.
 
-Note: an absent or empty manifest means no restriction at all: the daemon serves every caller, so the file is opt-in, not a default. And a trusted script is trusted for everything, not per-operation. The granularity you get is which states a vault key is reachable in, via `vault.toml`. Both, plus `record_event` (which collapses sign-then-submit into one authenticated call), are in [docs/hardening.md](docs/hardening.md).
+If you want to trust everyone, simply omit the `trusted-callers.toml` altogether. If you don't want to trust anyone, include it with an empty `[callers]` table to deny-all. Be aware that a trusted script is trusted for _everything_, not per-operation. However, you can use `vault.toml` to control which states a vault key is reachable in. Those, as well as `record_event` (which collapses sign-then-submit into one authenticated call), are in [docs/hardening.md](docs/hardening.md).
+
+Caller authentication has its limits. A same-user process can ultimately defeat anything. The real boundary is the OS sandbox: if you set `require_sandbox` under `[daemon]`, the sahjhan daemon refuses every privileged operation unless the Claude Code sandbox is verifiably confining the agent. The details are in [docs/hardening.md](docs/hardening.md).
 
 ## what's actually protected
 
@@ -303,7 +304,7 @@ Each of these safeguards exists because an agent got past the one above it. The 
 | the session key | 32 bytes in daemon memory, never on disk; `mlock`, `ptrace` denied, preload env refused |
 | daemon callers | authenticated by kernel socket credentials against a hashed script manifest |
 | gate results | command and snapshot gates record exit code, wall time, and a SHA-256 of stdout the agent never touches |
-| managed files | tracked in a manifest whose own hash is in the ledger |
+| managed files | tracked in a SHA-256 manifest that also records the ledger's own hash |
 
 ## when this makes sense
 

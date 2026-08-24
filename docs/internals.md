@@ -35,13 +35,19 @@
 ## the ledger format
 
 One JSON object per line. Each carries a schema version, a monotonic sequence
-number, an ISO 8601 timestamp, the event type, the event's fields, the previous
-entry's SHA-256, and the SHA-256 of the current entry computed over
+number, an ISO 8601 timestamp, the event type, the event's fields, the engine
+and protocol versions that wrote it, the previous entry's SHA-256 (the `prev`
+key), and the SHA-256 of the current entry computed over
 [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785) canonical JSON —
-alphabetically sorted keys, no whitespace, deterministic encoding.
+alphabetically sorted keys, no whitespace, deterministic encoding. All of those
+keys, `engine` and `protocol` included, feed the hash.
 
-Tampering with one entry means recomputing every hash after it. Replacing the
-whole file means matching the genesis nonce, which comes from a CSPRNG.
+Tampering with one entry means recomputing every hash after it. The chain is
+unkeyed, though — it proves the file is internally consistent, not who wrote
+it — and nothing pins the tail, so truncation from the end is invisible to
+`log verify`. What raises the cost of a wholesale rewrite lives outside the chain: the
+manifest records the ledger file's hash, and a fresh genesis draws a new
+CSPRNG nonce, so a rebuilt ledger is distinguishable from the one it replaced.
 
 ```bash
 $ sahjhan log verify
@@ -56,10 +62,13 @@ and sahjhan says so on the next command.
 ## the manifest
 
 `manifest.json` holds a SHA-256 for every managed file. Touch one through Bash
-and the hash stops matching, which writes a `protocol_violation` to the ledger.
-The manifest hashes its own entries and stores that hash in the ledger, so
-tampering with the manifest means tampering with the ledger, which means
-defeating the chain. Circular on purpose.
+and the hash stops matching, and `sahjhan manifest verify` says so (exit 2).
+Recording a `protocol_violation` for it is your protocol's job — a `hooks.toml`
+rule or an explicit event; the engine only ever reads that event type. The
+manifest records the ledger file's hash alongside its other entries and hashes
+its own contents into a `manifest_hash` field — self-referential bookkeeping,
+not an external anchor. The coupling runs one way: the manifest notices a
+rewritten ledger, nothing in the ledger notices a rewritten manifest.
 
 Verification reports three kinds of mismatch — `Modified`, `Missing`, and
 `Unmanaged` — and only the first two count against a clean result.
@@ -108,11 +117,13 @@ pages with `mlock` where the OS allows, blocks debugger attachment, and refuses
 to start if library injection environment variables are set.
 
 Callers authenticate via kernel-provided socket peer credentials. The daemon
-resolves the connecting PID's process tree, finds the hook script, and checks its
-path and SHA-256 against `trusted-callers.toml`, which is itself sealed into the
-genesis entry — so an in-place edit trips a config integrity violation instead of
-silently reassigning signing authority. Details in
-[hardening.md](hardening.md).
+resolves the connecting PID — the direct peer, deliberately no walk up the
+process tree — reads its command line, and checks the script's path and SHA-256
+against `trusted-callers.toml`, which is itself sealed into the genesis entry —
+so an in-place edit trips a config integrity violation instead of silently
+reassigning signing authority. Authority is not inheritable and the CLI itself
+never authenticates. This is hardening, not the security boundary; the boundary
+is the sandbox fuse. Details in [hardening.md](hardening.md).
 
 ## template escaping
 
@@ -122,7 +133,8 @@ itself comes from sealed TOML; only the variable values come from the agent.
 
 ## locking
 
-Exclusive file locks for writes, shared for reads, with a five-second timeout.
+Exclusive file locks for writes, shared for reads. The five-second timeout
+applies to the exclusive side; shared reads block without one.
 
 ## source layout
 
@@ -131,7 +143,7 @@ src/
   main.rs              CLI entry point (clap)
   lib.rs               Library root
   cli/                 Command modules (init, status, transition, log, lint,
-                       ledger, query, render, manifest, hooks, guards,
+                       ledger, query, render, manifest, hooks,
                        authed_event, sign, verify, daemon, vault), aliases
   daemon/              Daemon server, caller auth, vault, wire protocol,
                        platform abstraction (macOS + Linux)

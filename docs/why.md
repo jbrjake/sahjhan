@@ -1,7 +1,11 @@
 # Why sahjhan exists
 
 The story the README used to open with, kept whole and unedited. It's the
-argument for why any of the machinery is shaped the way it is. For what the
+argument for why any of the machinery is shaped the way it is — read it as the
+argument, not the reference. A couple of its claims run stronger than the code:
+the chain is unkeyed, so it proves internal consistency rather than provenance,
+and nothing pins the tail entry, so deleting the last line doesn't snap
+anything. [internals.md](internals.md) has the sober accounting. For what the
 engine actually does, start at the [README](../README.md); for the mechanisms
 that answer each of the moves below, see [hardening.md](hardening.md).
 

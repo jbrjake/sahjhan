@@ -6,8 +6,9 @@ transitions it can edit files, run commands, write summaries, and claim
 completion, with sahjhan having no say. The protocol says "you must be in state X
 to do Y," and nothing was checking that on every tool use.
 
-Hooks close that gap. They're declared in `hooks.toml`, a sixth optional config
-file, sealed at init like the other five, and evaluated on every tool call.
+Hooks close that gap. They're declared in `hooks.toml`, an optional config
+file, sealed at init like the rest of the eight, and evaluated on every tool
+call.
 
 The agent can read `hooks.toml` and see exactly what will block it. That's fine.
 Knowing the rule doesn't help when a binary checks the ledger before the tool
@@ -64,8 +65,10 @@ narrow further by `tools`, `states`, `states_not`, and a path `filter`.
 
 ### gate hooks
 
-Any gate type that works in a transition works in a hook. The hook fires when the
-gate **fails**:
+Any gate type can appear in a hook, with one catch: hooks evaluate with no
+state params, so a gate templated on a state param never resolves — which makes
+it fire unconditionally. Only the `paths.*` and `sets.<name>` variables are
+available. The hook fires when the gate **fails**:
 
 ```toml
 [[hooks]]
@@ -145,17 +148,22 @@ punchlist that only updates in the finalized state.
 [[guards.write_gated]]
 path = "docs/SUMMARY.md"
 writable_in = ["finalized"]
-message = "SUMMARY.md can only be written after convergence. Current state: {current_state}."
+message = "SUMMARY.md can only be written after convergence."
 ```
 
 Checked during `hook eval` for Edit and Write. In `finalized` the write goes
 through; anywhere else it's blocked. `path` supports globs. This is
-conditional where `paths.managed` is absolute.
+conditional where `paths.managed` is absolute. One difference from hook rules:
+the `message` here is delivered verbatim — the `{current_state}` and `{count}`
+placeholders only interpolate in hook and monitor messages.
 
 ## monitors
 
 Monitors catch drift. They don't block, they warn, and the warning surfaces in
-every `hook eval` response until something changes.
+every `hook eval` response until something changes — in the `monitor_warnings`
+array. Note the generated Claude Code wrappers forward only `messages`, so
+today a monitor warning reaches whoever reads the JSON, not the agent behind
+the bridge.
 
 ```toml
 [[monitors]]

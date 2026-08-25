@@ -1,0 +1,20 @@
+version: 2
+
+# SHA-pinned actions rot silently: nothing tells you the pin is three CVEs
+# behind. Dependabot reads the `# vX.Y.Z` comment next to each pin, and opens a
+# PR that bumps the SHA and the comment together — so the pin stays reviewable
+# instead of becoming a fossil.
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "chore(ci)"
+
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "chore(deps)"

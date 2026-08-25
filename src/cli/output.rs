@@ -783,7 +783,9 @@ pub struct LedgerActivateData {
 
 impl Display for LedgerActivateData {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Activated ledger: {}", self.activated)
+        // `main` prints command text with `print!`, so a top-level command's
+        // output terminates its own line or the next thing written runs into it.
+        writeln!(f, "Activated ledger: {}", self.activated)
     }
 }
 
@@ -799,9 +801,9 @@ pub struct LedgerDeactivateData {
 impl Display for LedgerDeactivateData {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.deactivated {
-            write!(f, "Deactivated active ledger")
+            writeln!(f, "Deactivated active ledger")
         } else {
-            write!(f, "No active ledger to deactivate")
+            writeln!(f, "No active ledger to deactivate")
         }
     }
 }

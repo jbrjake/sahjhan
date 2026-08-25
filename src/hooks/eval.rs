@@ -47,6 +47,15 @@ pub struct HookEvalRequest {
     pub file: Option<String>,
     /// Agent output text (for Stop hooks).
     pub output_text: Option<String>,
+    /// Which actor made this tool call.
+    ///
+    /// Claude Code sets this on a hook event fired from inside a subagent and
+    /// omits it on the main thread, so `None` is the orchestrator — a real
+    /// actor like any other, never a wildcard. Exposed to hook gates as the
+    /// `{{agent_id}}` template variable so a gate can be scoped to the actor
+    /// that triggered it; without it a run-global gate is satisfied by any
+    /// concurrent sibling's work.
+    pub agent_id: Option<String>,
 }
 
 /// Aggregate result of hook evaluation.
@@ -367,11 +376,25 @@ fn eval_hook_condition(
 ) -> bool {
     // Gate-based hook: fire if gate fails
     if let Some(ref gate) = hook.gate {
+        // A hook gate used to evaluate with no variables at all, so its
+        // filters could only ever name constants written into the config. The
+        // request's actor is the one fact that separates concurrent callers:
+        // without it a run-global gate is satisfied by any sibling's work, and
+        // two agents under a TDD gate each pass on the other's failing test.
+        //
+        // `None` is the main thread, and binds to the empty string — a real
+        // actor like any other, never a wildcard that could swallow a
+        // subagent's evidence.
+        let mut state_params = HashMap::new();
+        state_params.insert(
+            "agent_id".to_string(),
+            request.agent_id.clone().unwrap_or_default(),
+        );
         let ctx = GateContext {
             ledger,
             config,
             current_state,
-            state_params: HashMap::new(),
+            state_params,
             working_dir: working_dir.to_path_buf(),
             event_fields: None,
         };
@@ -654,6 +677,7 @@ mod tests {
             tool: Some("Edit".to_string()),
             file: Some("src/main.rs".to_string()),
             output_text: None,
+            agent_id: None,
         };
         let result = resolve_tool_template("{tool.file_path}", &request);
         assert_eq!(result, "src/main.rs");
@@ -700,6 +724,7 @@ mod tests {
             tool: Some("Edit".to_string()),
             file: Some("output/foo.md".to_string()),
             output_text: None,
+            agent_id: None,
         };
         eval_managed_paths(&config, &req_under, &mut msgs);
         assert_eq!(msgs.len(), 1, "should block file under managed path");
@@ -711,6 +736,7 @@ mod tests {
             tool: Some("Edit".to_string()),
             file: Some("output-extra/foo.md".to_string()),
             output_text: None,
+            agent_id: None,
         };
         eval_managed_paths(&config, &req_sibling, &mut msgs2);
         assert_eq!(

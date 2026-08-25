@@ -125,6 +125,7 @@ fn test_hook_eval_no_hooks_allows() {
         tool: Some("Edit".to_string()),
         file: Some("src/main.rs".to_string()),
         output_text: None,
+        agent_id: None,
     };
 
     let result = evaluate_hooks(&config, &ledger, &request, dir.path());
@@ -171,6 +172,7 @@ fn test_hook_eval_gate_blocks_when_condition_not_met() {
         tool: Some("Edit".to_string()),
         file: Some("src/main.rs".to_string()),
         output_text: None,
+        agent_id: None,
     };
 
     let result = evaluate_hooks(&config, &ledger, &request, dir.path());
@@ -222,6 +224,7 @@ fn test_hook_eval_gate_allows_when_condition_met() {
         tool: Some("Edit".to_string()),
         file: Some("src/main.rs".to_string()),
         output_text: None,
+        agent_id: None,
     };
 
     let result = evaluate_hooks(&config, &ledger, &request, dir.path());
@@ -270,6 +273,7 @@ fn test_hook_eval_filter_excludes_test_files() {
         tool: Some("Edit".to_string()),
         file: Some("tests/my_test.rs".to_string()),
         output_text: None,
+        agent_id: None,
     };
 
     let result = evaluate_hooks(&config, &ledger, &request, dir.path());
@@ -282,6 +286,7 @@ fn test_hook_eval_filter_excludes_test_files() {
         tool: Some("Edit".to_string()),
         file: Some("src/main.rs".to_string()),
         output_text: None,
+        agent_id: None,
     };
 
     let result2 = evaluate_hooks(&config, &ledger, &request2, dir.path());
@@ -327,6 +332,7 @@ fn test_hook_eval_state_filtering() {
         tool: Some("Edit".to_string()),
         file: Some("src/main.rs".to_string()),
         output_text: None,
+        agent_id: None,
     };
 
     let result = evaluate_hooks(&config, &ledger, &request, dir.path());
@@ -366,6 +372,7 @@ fn test_hook_eval_monitor_warning() {
         tool: Some("Edit".to_string()),
         file: Some("src/main.rs".to_string()),
         output_text: None,
+        agent_id: None,
     };
 
     let result = evaluate_hooks(&config, &ledger, &request, dir.path());
@@ -399,6 +406,7 @@ fn test_hook_eval_write_gated_blocks() {
         tool: Some("Edit".to_string()),
         file: Some("src/main.rs".to_string()),
         output_text: None,
+        agent_id: None,
     };
 
     let result = evaluate_hooks(&config, &ledger, &request, dir.path());
@@ -450,6 +458,7 @@ fn test_hook_eval_stop_output_pattern() {
         output_text: Some(
             "I've finished most of the work. I'll skip the testing for now.".to_string(),
         ),
+        agent_id: None,
     };
 
     let result = evaluate_hooks(&config, &ledger, &request, dir.path());
@@ -463,6 +472,7 @@ fn test_hook_eval_stop_output_pattern() {
         tool: None,
         file: None,
         output_text: Some("All work is complete and tests pass.".to_string()),
+        agent_id: None,
     };
 
     let result2 = evaluate_hooks(&config, &ledger, &request2, dir.path());
@@ -482,6 +492,7 @@ fn test_hook_eval_managed_path_blocks() {
         tool: Some("Write".to_string()),
         file: Some("output/report.md".to_string()),
         output_text: None,
+        agent_id: None,
     };
 
     let result = evaluate_hooks(&config, &ledger, &request, dir.path());
@@ -542,6 +553,7 @@ fn test_hook_eval_auto_record() {
         tool: Some("Edit".to_string()),
         file: Some("src/lib.rs".to_string()),
         output_text: None,
+        agent_id: None,
     };
 
     let result = evaluate_hooks(&config, &ledger, &request, dir.path());
@@ -591,6 +603,7 @@ fn test_hook_eval_states_not_filtering() {
         tool: Some("Edit".to_string()),
         file: Some("src/main.rs".to_string()),
         output_text: None,
+        agent_id: None,
     };
 
     // In idle — should NOT fire (excluded by states_not)
@@ -637,6 +650,7 @@ fn test_hook_eval_event_count_check() {
         tool: Some("Edit".to_string()),
         file: Some("src/main.rs".to_string()),
         output_text: None,
+        agent_id: None,
     };
 
     let result = evaluate_hooks(&config, &ledger, &request, dir.path());
@@ -666,6 +680,7 @@ fn test_hook_eval_write_gated_allows_in_correct_state() {
         tool: Some("Edit".to_string()),
         file: Some("src/main.rs".to_string()),
         output_text: None,
+        agent_id: None,
     };
 
     let result = evaluate_hooks(&config, &ledger, &request, dir.path());
@@ -730,4 +745,129 @@ fn test_hook_eval_cli_no_hooks_allows() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let result: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(result["data"]["decision"], "allow");
+}
+
+// ---------------------------------------------------------------------------
+// Actor-scoped hook gates
+// ---------------------------------------------------------------------------
+
+/// Build a TDD-shaped hook: block Edit unless the *calling actor* recorded a
+/// failing test since the last transition.
+fn actor_scoped_tdd_hook() -> HookConfig {
+    HookConfig {
+        event: HookEvent::PreToolUse,
+        tools: Some(vec!["Edit".to_string()]),
+        states: None,
+        states_not: None,
+        action: Some("block".to_string()),
+        message: Some("Record a failing test first".to_string()),
+        gate: Some(sahjhan::config::GateConfig {
+            gate_type: "ledger_has_event_since".to_string(),
+            intent: None,
+            gates: vec![],
+            params: {
+                let mut p = HashMap::new();
+                p.insert(
+                    "event".to_string(),
+                    toml::Value::String("test_failed_before_fix".to_string()),
+                );
+                p.insert(
+                    "since".to_string(),
+                    toml::Value::String("last_transition".to_string()),
+                );
+                let mut filter = toml::map::Map::new();
+                filter.insert(
+                    "agent_id".to_string(),
+                    toml::Value::String("{{agent_id}}".to_string()),
+                );
+                p.insert("filter".to_string(), toml::Value::Table(filter));
+                p
+            },
+        }),
+        check: None,
+        auto_record: None,
+        filter: None,
+    }
+}
+
+fn record_failing_test(ledger: &mut Ledger, actor: &str) {
+    let mut fields = BTreeMap::new();
+    fields.insert("agent_id".to_string(), actor.to_string());
+    fields.insert("test_name".to_string(), "test_thing".to_string());
+    ledger.append("test_failed_before_fix", fields).unwrap();
+}
+
+fn edit_request(actor: Option<&str>) -> HookEvalRequest {
+    HookEvalRequest {
+        event: HookEvent::PreToolUse,
+        tool: Some("Edit".to_string()),
+        file: Some("src/main.rs".to_string()),
+        output_text: None,
+        agent_id: actor.map(|a| a.to_string()),
+    }
+}
+
+#[test]
+fn test_actor_scoped_gate_allows_the_agent_that_did_the_work() {
+    // The load-bearing half. Before filter values were resolved, "{{agent_id}}"
+    // was compared literally, matched no entry, and blocked even the agent
+    // holding the evidence — a gate nobody could satisfy.
+    let dir = tempdir().unwrap();
+    let mut config = base_config();
+    let mut ledger = setup_ledger_in_state(dir.path(), "working");
+    record_failing_test(&mut ledger, "agent-A");
+    config.hooks.push(actor_scoped_tdd_hook());
+
+    let result = evaluate_hooks(&config, &ledger, &edit_request(Some("agent-A")), dir.path());
+    assert_eq!(result.decision, "allow", "{:?}", result.messages);
+}
+
+#[test]
+fn test_actor_scoped_gate_blocks_a_sibling_riding_on_that_work() {
+    // P0.3's defect stated directly: run-global, agent-B's edit was authorised
+    // by agent-A's failing test, which is why the fix loop had to run 1-wide.
+    let dir = tempdir().unwrap();
+    let mut config = base_config();
+    let mut ledger = setup_ledger_in_state(dir.path(), "working");
+    record_failing_test(&mut ledger, "agent-A");
+    config.hooks.push(actor_scoped_tdd_hook());
+
+    let result = evaluate_hooks(&config, &ledger, &edit_request(Some("agent-B")), dir.path());
+    assert_eq!(result.decision, "block", "{:?}", result.messages);
+}
+
+#[test]
+fn test_the_orchestrator_is_an_actor_not_a_wildcard() {
+    // `None` binds to "", so the main thread neither inherits a subagent's
+    // evidence nor is exempted from the gate.
+    let dir = tempdir().unwrap();
+    let mut config = base_config();
+    let mut ledger = setup_ledger_in_state(dir.path(), "working");
+    record_failing_test(&mut ledger, "agent-A");
+    config.hooks.push(actor_scoped_tdd_hook());
+
+    let blocked = evaluate_hooks(&config, &ledger, &edit_request(None), dir.path());
+    assert_eq!(blocked.decision, "block", "{:?}", blocked.messages);
+
+    record_failing_test(&mut ledger, "");
+    let allowed = evaluate_hooks(&config, &ledger, &edit_request(None), dir.path());
+    assert_eq!(allowed.decision, "allow", "{:?}", allowed.messages);
+}
+
+#[test]
+fn test_an_unfiltered_gate_is_unchanged_by_actor_scoping() {
+    // The existing run-global behaviour has to survive: a gate with no filter
+    // must keep ignoring who is calling.
+    let dir = tempdir().unwrap();
+    let mut config = base_config();
+    let mut ledger = setup_ledger_in_state(dir.path(), "working");
+    record_failing_test(&mut ledger, "agent-A");
+    let mut hook = actor_scoped_tdd_hook();
+    if let Some(ref mut gate) = hook.gate {
+        gate.params.remove("filter");
+    }
+    config.hooks.push(hook);
+
+    let result = evaluate_hooks(&config, &ledger, &edit_request(Some("agent-B")), dir.path());
+    assert_eq!(result.decision, "allow", "{:?}", result.messages);
 }

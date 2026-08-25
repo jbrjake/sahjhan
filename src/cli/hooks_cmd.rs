@@ -98,6 +98,7 @@ pub fn cmd_hook_eval(
     tool: &Option<String>,
     file: &Option<String>,
     output_text: &Option<String>,
+    agent_id: &Option<String>,
     targeting: &LedgerTargeting,
 ) -> Box<dyn CommandOutput> {
     let config_path = resolve_config_dir(config_dir);
@@ -159,6 +160,7 @@ pub fn cmd_hook_eval(
         tool: tool.clone(),
         file: file.clone(),
         output_text: output_text.clone(),
+        agent_id: agent_id.clone(),
     };
 
     // Hook commands run from the project root, not the caller's cwd (#85).

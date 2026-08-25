@@ -362,6 +362,9 @@ enum HookAction {
         /// Agent output text (for Stop hooks)
         #[arg(long)]
         output_text: Option<String>,
+        /// Which actor made the tool call; omitted for the main thread
+        #[arg(long)]
+        agent_id: Option<String>,
     },
 }
 
@@ -615,12 +618,14 @@ fn main() {
                 tool,
                 file,
                 output_text,
+                agent_id,
             } => hooks_cmd::cmd_hook_eval(
                 &cli.config_dir,
                 &event,
                 &tool,
                 &file,
                 &output_text,
+                &agent_id,
                 &targeting,
             ),
         },

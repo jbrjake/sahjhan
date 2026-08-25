@@ -7,6 +7,7 @@
 // - [build-template-vars]       build_template_vars()       — build template variable map from GateContext
 // - [validate-template-fields]  validate_template_fields()  — validate {{var}} values against event field patterns
 // - [entry-matches-filter]      entry_matches_filter()      — check if a ledger entry matches all filter k/v pairs
+// - [gate-filter]               gate_filter()               — build a gate's filter map, resolving {{var}} in values
 
 use std::collections::HashMap;
 
@@ -16,6 +17,7 @@ use crate::config::GateConfig;
 use crate::ledger::entry::LedgerEntry;
 
 use super::evaluator::{GateContext, GateResult};
+use super::template::resolve_template_plain;
 
 // ---------------------------------------------------------------------------
 // Public dispatch
@@ -262,6 +264,35 @@ pub(super) fn validate_template_fields(template: &str, ctx: &GateContext) -> Res
     }
 
     Ok(())
+}
+
+// [gate-filter]
+/// Build a gate's optional field filter, resolving `{{var}}` in each value.
+///
+/// The three ledger gates each carried an identical copy of this extraction,
+/// and all three compared filter values *literally* — so a filter could only
+/// ever name a constant known when the config was written. A hook gate that
+/// must be scoped to the actor which triggered it needs the value to come
+/// from the request instead, which is what every other gate type already gets
+/// from `build_template_vars`.
+///
+/// A placeholder with no binding is left literal by `resolve_template_plain`,
+/// so it matches no entry and the gate fails closed rather than silently
+/// widening to every actor.
+pub(super) fn gate_filter(gate: &GateConfig, ctx: &GateContext) -> HashMap<String, String> {
+    let vars = build_template_vars(ctx);
+    gate.params
+        .get("filter")
+        .and_then(|v| v.as_table())
+        .map(|tbl| {
+            tbl.iter()
+                .filter_map(|(k, v)| {
+                    v.as_str()
+                        .map(|s| (k.clone(), resolve_template_plain(s, &vars)))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 // [entry-matches-filter]

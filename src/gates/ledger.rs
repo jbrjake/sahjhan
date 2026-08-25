@@ -9,13 +9,13 @@
 // - [eval-no-violations]           eval_no_violations()           — pass if no unresolved protocol_violation events
 // - [eval-field-not-empty]         eval_field_not_empty()         — pass if named event field is non-empty
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::config::GateConfig;
 
 use super::evaluator::{GateContext, GateResult};
-use super::types::entry_matches_filter;
+use super::types::{entry_matches_filter, gate_filter};
 
 // [eval-ledger-has-event]
 pub(super) fn eval_ledger_has_event(gate: &GateConfig, ctx: &GateContext) -> GateResult {
@@ -39,16 +39,7 @@ pub(super) fn eval_ledger_has_event(gate: &GateConfig, ctx: &GateContext) -> Gat
         .map(|n| n as u32);
 
     // Optional filter map: each key/value must match the deserialized payload.
-    let filter: HashMap<String, String> = gate
-        .params
-        .get("filter")
-        .and_then(|v| v.as_table())
-        .map(|tbl| {
-            tbl.iter()
-                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                .collect()
-        })
-        .unwrap_or_default();
+    let filter = gate_filter(gate, ctx);
 
     let matching = ctx
         .ledger
@@ -126,16 +117,7 @@ pub(super) fn eval_ledger_has_event_since(gate: &GateConfig, ctx: &GateContext) 
 
     // Optional field filter on the counted `event` (same semantics as
     // ledger_has_event) — e.g. only count events for the current perspective.
-    let filter: HashMap<String, String> = gate
-        .params
-        .get("filter")
-        .and_then(|v| v.as_table())
-        .map(|tbl| {
-            tbl.iter()
-                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                .collect()
-        })
-        .unwrap_or_default();
+    let filter = gate_filter(gate, ctx);
 
     // Resolve the baseline event type from `since`.
     let baseline_type = if since == "last_transition" {
@@ -203,16 +185,7 @@ pub(super) fn eval_ledger_lacks_event(gate: &GateConfig, ctx: &GateContext) -> G
         .and_then(|v| v.as_str())
         .unwrap_or("");
 
-    let filter: HashMap<String, String> = gate
-        .params
-        .get("filter")
-        .and_then(|v| v.as_table())
-        .map(|tbl| {
-            tbl.iter()
-                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                .collect()
-        })
-        .unwrap_or_default();
+    let filter = gate_filter(gate, ctx);
 
     let matching = ctx
         .ledger

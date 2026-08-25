@@ -1,5 +1,9 @@
 # sahjhan
 
+*"He says the restraining bolt has short-circuited his recording system. He suggests that if you remove it, he might be able to play the entire hologram."*
+
+---
+
 sahjhan is a protocol enforcement engine. You describe your process in TOML text files as states, the transitions from one state to another, and the conditions that must be met to move between them. Then a compiled Rust binary tries to hold you to it.
 
 Every step lands in a hash-chained append-only ledger. Condition tests let sahjhan do real work to check the results. It can run your test suite, look at the disk, count events, or run SQL over the ledger entries to decide how to move between states.

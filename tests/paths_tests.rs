@@ -175,7 +175,7 @@ fn test_path_is_under_tolerates_trailing_slashes_and_dot_segments() {
 fn test_path_is_under_refuses_parent_traversal() {
     // A key that climbs out of the tree it is spelled against cannot be
     // checked against anything, so it is never under a managed path.
-    assert!(!path_is_under("../STATUS.md", "docs/holtz"));
+    assert!(!path_is_under("../portfolio/STATUS.md", "docs/holtz"));
     assert!(!path_is_under("docs/holtz/../../etc/passwd", "docs/holtz"));
 }
 

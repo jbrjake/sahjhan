@@ -95,9 +95,17 @@ What lands in the ledger is the timestamped exit code and a SHA-256 of output we
 Binaries for macOS and Linux in arm64 and x86_64 are on the [releases page](https://github.com/jbrjake/sahjhan/releases):
 
 ```bash
-gh release download v0.23.0 -R jbrjake/sahjhan -p "sahjhan-aarch64-apple-darwin"
+curl -sSfLO https://github.com/jbrjake/sahjhan/releases/latest/download/sahjhan-aarch64-apple-darwin
 chmod +x sahjhan-aarch64-apple-darwin
 mv sahjhan-aarch64-apple-darwin /usr/local/bin/sahjhan
+```
+
+*Swap in `sahjhan-x86_64-apple-darwin`, `sahjhan-x86_64-unknown-linux-gnu`, or `sahjhan-aarch64-unknown-linux-gnu`.*
+
+Every release binary is attested:
+
+```bash
+gh attestation verify sahjhan-aarch64-apple-darwin --repo jbrjake/sahjhan
 ```
 
 `cargo build --release` works on source.

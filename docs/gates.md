@@ -44,6 +44,13 @@ something failed. Omit it and sahjhan generates a default from the gate type;
 a `query` gate that references a named query inherits the query's `intent`
 first.
 
+When a command gate fails, the output is attached below the failure
+line. If it's an error, it's the last 20 lines of stderr, capped at 2000 bytes.
+If stderr's empty and the gate is `command_succeeds`, it's stdout.
+`python: No module named pytest` reads different than a genuine test failure,
+and a bare exit code hides which one you got. `snapshot_compare` folds a shorter
+stderr snippet into the failure line instead.
+
 ### notes on the ones with sharp edges
 
 **`min_elapsed` proves the agent owns a clock.** By itself that's all it proves.
@@ -164,7 +171,7 @@ $ sahjhan gate check advance
   ✓ SQL: SELECT count(*) >= 2 FROM events WHERE type='iteration_complete'
   ? query: unevaluable (requires arg: current_perspective)
   ? query: unevaluable (requires arg: current_perspective)
-  ✗ ledger_has_event_since: no 'lens_sweep_started' event — sweep must begin
+  ✗ ledger_has_event_since: found 0 'lens_sweep_started' event(s) after last state_transition, need >= 1 — sweep must begin
 ```
 
 Gates with no template variables evaluate normally regardless.

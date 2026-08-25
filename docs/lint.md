@@ -14,7 +14,7 @@ sahjhan --config-dir enforcement lint --strict || exit 1
 $ sahjhan lint
 L2 error: transitions.toml: transition 'finish' (middle → late)
     gate 'ledger_has_event' requires event 'signed_off', but every producer runs only
-    in states that cannot precede 'middle' — hook:sign-off (in late)
+    in states that cannot precede 'middle' — hook[0] (in late)
     hint: widen the producer's available_in_states, or move the gate to a transition
           the producer can precede
 L4 error: states.toml: state 'anomaly'

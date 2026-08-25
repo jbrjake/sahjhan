@@ -103,7 +103,7 @@ command = "tests-done"
 gates = [
     { type = "file_exists", path = "tests/test_feature.py", intent = "test file must exist on disk before implementation begins" },
     { type = "any_of", intent = "tests must run or be explicitly overridden", gates = [
-        { type = "command_succeeds", cmd = "python -m pytest tests/", timeout = 60 },
+        { type = "command_succeeds", cmd = "python -m pytest -q tests/", timeout = 60 },
         { type = "ledger_has_event", event = "manual_test_override" },
     ]},
     { type = "set_covered", set = "test-suites", event = "set_member_complete", field = "member", intent = "every test suite must be written before implementing" },
@@ -115,7 +115,7 @@ from = "implementing"
 to = "verifying"
 command = "submit"
 gates = [
-    { type = "command_succeeds", cmd = "python -m pytest tests/", timeout = 120, intent = "all tests must pass before verification" },
+    { type = "command_succeeds", cmd = "python -m pytest -q tests/", timeout = 120, intent = "all tests must pass before verification" },
     { type = "k_of_n", k = 2, intent = "at least 2 of 3 code quality checks must pass", gates = [
         { type = "command_succeeds", cmd = "python -m mypy src/" },
         { type = "command_succeeds", cmd = "python -m pylint src/" },
@@ -272,7 +272,7 @@ from = "implementing"
 to = "verifying"
 command = "submit"
 gates = [
-    { type = "command_succeeds", cmd = "python -m pytest tests/", timeout = 120 },
+    { type = "command_succeeds", cmd = "python -m pytest -q tests/", timeout = 120 },
     { type = "k_of_n", k = 2, gates = [ ... ] },
     { type = "no_violations" },
 ]
@@ -295,7 +295,20 @@ gates = []
 $ sahjhan gate check submit
 gate-check: submit
 candidate 1: implementing → verifying
-  ✗ command_succeeds: command 'python -m pytest tests/' exited with status 1 — all tests must pass before verification
+  ✗ command_succeeds: command 'python -m pytest -q tests/' exited with status 1 — all tests must pass before verification
+── stdout (tail) ──
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_________________________________ test_feature _________________________________
+
+    def test_feature():
+>       assert 2 + 2 == 5
+E       assert (2 + 2) == 5
+
+tests/test_feature.py:2: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_feature.py::test_feature - assert (2 + 2) == 5
+1 failed in 0.01s
   ✗ k_of_n: only 0 of 2 required passed; failed: [command_succeeds: command succeeds: python -m mypy src/; command_succeeds: command succeeds: python -m pylint src/; command_succeeds: command succeeds: python -m bandit -r src/] — at least 2 of 3 code quality checks must pass
   ✓ no unresolved protocol_violation events
 candidate 2: implementing → fix-and-retry

@@ -50,14 +50,52 @@ $ sahjhan log tail 3
 [2026-08-19T20:04:11.961Z] seq=4 type=state_transition hash=c56535329cde {command=complete, from=working, to=done}
 ```
 
-*Every terminal transcript in this file is pasted from a real run of the binary at v0.21.0.*
+### gating
+
+That checklist is the agent marking its own homework. A gate is the part that doesn't take the agent's word for it. We can add a gate to the same transition to validate the claim:
+
+```toml
+# enforcement/transitions.toml, on the working -> done transition
+gates = [
+    { type = "command_succeeds", cmd = "cargo test --quiet", timeout = 300, intent = "the suite has to be green, and sahjhan runs it, not the agent" },
+    { type = "set_covered", set = "check", event = "set_member_complete", field = "member" },
+]
+```
+
+```bash
+$ sahjhan set complete check tests # the agent makes its claims, as above
+set check: tests done (1/2, 1 rendered)
+$ sahjhan set complete check lint
+set check: lint done (2/2, 1 rendered)
+
+$ sahjhan transition complete # but this time the gate lets sahjhan enforce
+# last time it returned:
+# working → done (1 rendered)
+# but with the gate... ✗
+✗ command_succeeds: command 'cargo test --quiet' exited with status 101 — the suite has to be green, and sahjhan runs it, not the agent
+── stderr (tail) ──
+error: test failed, to rerun pass `--lib`
+```
+Every box was checked and it still didn't go through. Tests have to pass.
+
+```bash
+$ sahjhan transition complete # only after the code is actually fixed
+working → done (1 rendered)
+
+$ sahjhan log tail 1
+[2026-08-25T18:48:51.613Z] seq=5 type=gate_attestation hash=66bb3c57a2e3 {command=cargo test --quiet, executed_at=2026-08-25T18:48:51.291Z, exit_code=0, gate_type=command_succeeds, stdout_hash=b5632030bc9ded9e8b1e556400bc4f975032d56dd30300982736fe3ed86cba80, transition_command=complete, wall_time_ms=322}
+```
+
+What lands in the ledger is the timestamped exit code and a SHA-256 of output we know the agent never touched.
+
+*Every terminal transcript in this file is pasted from a real run of the binary at v0.23.0.*
 
 ## install
 
 Binaries for macOS and Linux in arm64 and x86_64 are on the [releases page](https://github.com/jbrjake/sahjhan/releases):
 
 ```bash
-gh release download v0.21.0 -R jbrjake/sahjhan -p "sahjhan-aarch64-apple-darwin"
+gh release download v0.23.0 -R jbrjake/sahjhan -p "sahjhan-aarch64-apple-darwin"
 chmod +x sahjhan-aarch64-apple-darwin
 mv sahjhan-aarch64-apple-darwin /usr/local/bin/sahjhan
 ```

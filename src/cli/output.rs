@@ -27,6 +27,7 @@
 // - LedgerActivateData          — ledger activate output
 // - LedgerDeactivateData        — ledger deactivate output
 // - LintData                    — lint findings + counts
+// - [gate-failure-line]         gate_failure_line() — "<type>: <reason> — <intent>" for a blocked gate
 
 use std::collections::BTreeMap;
 use std::fmt::Display;
@@ -34,6 +35,25 @@ use std::fmt::Display;
 use serde::Serialize;
 
 pub const SCHEMA_VERSION: u64 = 1;
+
+/// Render a failed gate as `<gate_type>: <reason> — <intent>`.
+///
+/// A command or snapshot gate attaches its captured output to the reason,
+/// below the headline (`── stderr (tail) ──`). The intent explains the
+/// *headline*, so it belongs on that first line: appended to the whole reason
+/// it lands under the tail and reads as one more line of the command's own
+/// stderr, which is precisely the thing the tail exists to show verbatim.
+// [gate-failure-line]
+pub(crate) fn gate_failure_line(gate_type: &str, reason: &str, intent: Option<&str>) -> String {
+    let intent = intent.unwrap_or("gate condition must be met");
+    match reason.split_once('\n') {
+        Some((headline, detail)) => format!(
+            "{}: {} \u{2014} {}\n{}",
+            gate_type, headline, intent, detail
+        ),
+        None => format!("{}: {} \u{2014} {}", gate_type, reason, intent),
+    }
+}
 
 pub trait CommandOutput {
     fn to_json(&self) -> String;
@@ -300,13 +320,14 @@ impl Display for StatusData {
                     if g.passed {
                         writeln!(f, "    \u{2713} {}", g.description)?;
                     } else {
-                        let intent = g.intent.as_deref().unwrap_or("gate condition must be met");
                         writeln!(
                             f,
-                            "    \u{2717} {}: {} \u{2014} {}",
-                            g.gate_type,
-                            g.reason.as_deref().unwrap_or("failed"),
-                            intent
+                            "    \u{2717} {}",
+                            gate_failure_line(
+                                &g.gate_type,
+                                g.reason.as_deref().unwrap_or("failed"),
+                                g.intent.as_deref()
+                            )
                         )?;
                     }
                 }
@@ -446,12 +467,12 @@ impl Display for GateResultData {
         } else {
             write!(
                 f,
-                "\u{2717} {}: {} \u{2014} {}",
-                self.gate_type,
-                self.reason.as_deref().unwrap_or("failed"),
-                self.intent
-                    .as_deref()
-                    .unwrap_or("gate condition must be met")
+                "\u{2717} {}",
+                gate_failure_line(
+                    &self.gate_type,
+                    self.reason.as_deref().unwrap_or("failed"),
+                    self.intent.as_deref()
+                )
             )
         }
     }
@@ -832,5 +853,39 @@ impl Display for LintData {
                 self.checks_run.join(", ")
             )
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::gate_failure_line;
+
+    #[test]
+    fn intent_follows_a_single_line_reason() {
+        assert_eq!(
+            gate_failure_line(
+                "file_exists",
+                "file 'repro.log' not found",
+                Some("the repro has to be on disk")
+            ),
+            "file_exists: file 'repro.log' not found \u{2014} the repro has to be on disk"
+        );
+    }
+
+    #[test]
+    fn intent_stays_on_the_headline_above_captured_output() {
+        let reason = "command 'cargo test' exited with status 101\n\u{2500}\u{2500} stderr (tail) \u{2500}\u{2500}\nerror: test failed";
+        assert_eq!(
+            gate_failure_line("command_succeeds", reason, Some("the suite has to be green")),
+            "command_succeeds: command 'cargo test' exited with status 101 \u{2014} the suite has to be green\n\u{2500}\u{2500} stderr (tail) \u{2500}\u{2500}\nerror: test failed"
+        );
+    }
+
+    #[test]
+    fn missing_intent_falls_back() {
+        assert_eq!(
+            gate_failure_line("query", "expected true, got false", None),
+            "query: expected true, got false \u{2014} gate condition must be met"
+        );
     }
 }

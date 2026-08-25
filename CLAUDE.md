@@ -326,6 +326,7 @@ current directory. Reach for this module before writing
 | CLI entry point | `main.rs` | `[cli-main]` | clap arg parsing, alias resolution, dispatch; `--json` global flag |
 | Alias resolution | `cli/aliases.rs` | `[resolve-alias]`, `[expand-alias]` | Rewrite CLI args via protocol aliases; keys may name several words (`"defer low"`), widest key wins, a flag ends the key |
 | JSON output types | `cli/output.rs` | `CommandOutput`, `CommandResult<T>`, data structs | Structured output with JSON envelope (`schema_version: 1`) |
+| Gate failure line | `cli/output.rs` | `[gate-failure-line]` | `<type>: <reason> — <intent>` for a blocked gate; the intent stays on the headline so a command gate's attached output tail follows it rather than swallowing it. Used by `transition`, `batch`, `status`, `gate check` |
 | Shared helpers | `cli/commands.rs` | (see file index) | Exit codes, ledger targeting, config loading, active-ledger marker, `[compute-registry-path]`, `[status-cache-path]`, `[write-status-cache]` |
 | Path anchoring | `cli/commands.rs` | `[resolve-data-dir]`, `[resolve-project-root]` | Resolve `data_dir` and the project root; both delegate to `paths.rs` so they cannot drift |
 | Lint | `cli/lint.rs` | `[cmd-lint]` | Static integrity analysis; `--only <CHECK>`, `--strict`; exit 3 on errors |

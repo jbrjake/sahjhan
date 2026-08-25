@@ -241,11 +241,10 @@ pub fn cmd_batch(
                 }) => {
                     refused.push((
                         id.clone(),
-                        format!(
-                            "{}: {} \u{2014} {}",
-                            gate_type,
-                            reason,
-                            intent.as_deref().unwrap_or("gate condition must be met")
+                        crate::cli::output::gate_failure_line(
+                            &gate_type,
+                            &reason,
+                            intent.as_deref(),
                         ),
                     ));
                 }
@@ -253,11 +252,10 @@ pub fn cmd_batch(
                     let reason = candidates
                         .first()
                         .map(|c| {
-                            format!(
-                                "{}: {} \u{2014} {}",
-                                c.gate_type,
-                                c.reason,
-                                c.intent.as_deref().unwrap_or("gate condition must be met")
+                            crate::cli::output::gate_failure_line(
+                                &c.gate_type,
+                                &c.reason,
+                                c.intent.as_deref(),
                             )
                         })
                         .unwrap_or_else(|| "blocked".to_string());

@@ -180,10 +180,8 @@ pub fn cmd_transition(
             intent,
         }) => {
             eprintln!(
-                "\u{2717} {}: {} \u{2014} {}",
-                gate_type,
-                reason,
-                intent.as_deref().unwrap_or("gate condition must be met")
+                "\u{2717} {}",
+                crate::cli::output::gate_failure_line(&gate_type, &reason, intent.as_deref())
             );
             EXIT_GATE_FAILED
         }
@@ -194,11 +192,13 @@ pub fn cmd_transition(
         }) => {
             for c in &candidates {
                 eprintln!(
-                    "\u{2717} \u{2192} {} blocked by {}: {} \u{2014} {}",
+                    "\u{2717} \u{2192} {} blocked by {}",
                     c.target,
-                    c.gate_type,
-                    c.reason,
-                    c.intent.as_deref().unwrap_or("gate condition must be met")
+                    crate::cli::output::gate_failure_line(
+                        &c.gate_type,
+                        &c.reason,
+                        c.intent.as_deref()
+                    )
                 );
             }
             EXIT_GATE_FAILED

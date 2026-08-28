@@ -1,9 +1,21 @@
 # POSTMORTEM — 2026-08-19 — failed attempt at the trusted-caller fix
 
-**Uncommitted on purpose. Do not commit or push this file.** Same reason as
-`HANDOFF.md`: sahjhan is a public repo and the auth bypass described here is
-still unfixed. This file also records an attempted fix that was reverted, which
-is not something to publish either.
+**ARCHIVED 2026-08-28. Historical record only — do not treat anything below as
+current.** The bypass it describes was fixed in v0.21.0 (sandbox fuse,
+direct-peer auth, socket override); the design it rejects was superseded; the
+repo state it reports is nine days stale. Its "process rules, non-negotiable"
+were written for the session redesigning the daemon auth boundary and do not
+govern other work — importing them into an unrelated bug fix is what got this
+file archived.
+
+The header below is itself out of date: the file was committed in `746613d`
+along with the rest of the working notes, so it has been public since
+2026-08-23.
+
+> **Uncommitted on purpose. Do not commit or push this file.** Same reason as
+> `HANDOFF.md`: sahjhan is a public repo and the auth bypass described here is
+> still unfixed. This file also records an attempted fix that was reverted,
+> which is not something to publish either.
 
 ## State of the repo right now
 

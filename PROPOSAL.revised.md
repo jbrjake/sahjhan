@@ -7,8 +7,9 @@ attempts and their dead ends are recorded as *inputs*, not as a plan to build.
 
 ## Required reading before you start
 
-- **`POSTMORTEM.md`** and **`HANDOFF.md`** (repo root, uncommitted) — a **first
-  attempt at fixing this was built and then reverted**; the postmortem is why.
+- **`docs/archive/2026-08-19-trusted-caller-postmortem.md`** and **`HANDOFF.md`**
+  — a **first attempt at fixing this was built and then reverted**; the
+  postmortem is why. Both describe work superseded by the v0.21.0 fix.
   Read them before writing any code. (They were deliberately *not* read while
   writing this note, so their specifics aren't reflected here — they are prior art
   you must reconcile with.)
@@ -301,7 +302,8 @@ fresh solver must weigh them separately.
   protected *at all* by a drop-in, single-project plugin, or is the truthful
   deliverable "not fully," a clear statement of residual risk, and what enforcement
   it does/doesn't buy without a real OS boundary? Also reconcile with whatever
-  `POSTMORTEM.md` concluded about the reverted first attempt.
+  `docs/archive/2026-08-19-trusted-caller-postmortem.md` concluded about the
+  reverted first attempt.
 
 ---
 

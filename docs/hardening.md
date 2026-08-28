@@ -32,7 +32,92 @@ sahjhan event quiz_passed --field score=5/5 --field pass=true
 # error: event type 'quiz_passed' is restricted. Use 'sahjhan authed-event' with a valid proof.
 ```
 
-Restricted events go through `sahjhan authed-event`, which requires an HMAC-SHA256 proof. The proof is computed over the event type and sorted fields, separated by null bytes. To get the proof, the hook asks the daemon:
+Getting one into the ledger means asking the daemon to append it.
+
+### The hardened path: `record_event` over the socket
+
+JSON request/response:
+
+```python
+# enforcement/hooks/quiz.py — listed in trusted-callers.toml
+import json, os, socket
+
+SOCKET = os.environ.get("SAHJHAN_DAEMON_SOCKET") or "output/.sahjhan/daemon.sock"
+
+def daemon(request):
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(5)
+    try:
+        sock.connect(SOCKET)
+        sock.sendall((json.dumps(request) + "\n").encode())
+        response = json.loads(sock.makefile().readline())
+    finally:
+        sock.close()
+    if not response.get("ok"):
+        raise RuntimeError(f"{response.get('error')}: {response.get('message')}")
+    return response
+
+resp = daemon({
+    "op": "record_event",
+    "event_type": "quiz_passed",
+    "fields": {"score": "5/5", "pass": "true"},
+})
+print("recorded at seq", resp["data"]) # the reply's `data` is the sequence number of the new entry
+```
+
+```bash
+$ python3 /abs/path/to/enforcement/hooks/quiz.py
+recorded at seq 1
+```
+
+That `daemon()` function is the entire client. See [speaking the socket](#speaking-the-socket) for the wire format and the rest of the operations.
+
+The daemon validates the event against your own `events.toml` before it writes anything: an undeclared type or a field that violates its pattern gets rejected as an error. A shared lock with the CLI means a hook and a transition racing each other can't tear the chain. 
+
+What it deliberately doesn't check is `restricted`. That flag stops `sahjhan event` and stops a transition from emitting the type; it says nothing about this path. An authenticated caller records any declared event, restricted or not, because the manifest already answered the only question that matters here — what is on the other end of the socket. So `trusted-callers.toml` isn't extra credit once you're recording restricted events this way. It is the entire boundary.
+
+#### when the signer isn't the recorder
+
+`record_event` covers the case where the hook holding the evidence is the hook recording it. There's no gap for a proof to cover: the daemon is already authenticating that hook, and it needs nothing else. Recording is never what a proof is for.
+
+The gap opens when the evidence and the record are in different processes, with ground the agent can write in between. One hook grades, another decides. The claim has to sit in a file for a moment, and a file proves nothing about who wrote it. A proof does, and `verify` is the one operation that takes one back.
+
+So the daemon acts as notary. One hook signs its result and leaves it where the next will find it:
+
+```python
+# grade.py — signs the result, drops it where the next hook will pick it up
+fields = {"score": "5/5", "pass": "true"}
+proof = daemon({"op": "sign", "event_type": "quiz_passed", "fields": fields})["proof"]
+json.dump({"fields": fields, "proof": proof}, open("output/quiz-result.json", "w"))
+```
+
+The other sends the proof back before it will act on the claim:
+
+```python
+# gate.py — the file is agent-writable, so the proof is the only thing worth believing
+claim = json.load(open("output/quiz-result.json"))
+try:
+    daemon({"op": "verify", "event_type": "quiz_passed",
+            "fields": claim["fields"], "proof": claim["proof"]})
+except RuntimeError:
+    sys.exit("refusing a quiz result that doesn't match its proof")
+daemon({"op": "record_event", "event_type": "quiz_passed", "fields": claim["fields"]})
+```
+
+Edit the score on its way between the two and the second hook won't take it:
+
+```
+verify -> {"ok": true, "verified": true}
+verify -> {"ok": false, "error": "invalid_proof", "message": "proof does not match"}
+```
+
+Note what the last line of `gate.py` doesn't do: present the proof. The recording is authorized by `gate.py` being a listed caller, same as ever. The proof did one job, which was to let it believe a file it didn't write.
+
+Two things that job doesn't include. The proof carries no signer identity — every trusted caller's proof for the same tuple is byte-identical, so `verify` answers "something with socket access signed this," never "grade.py signed this." And it isn't replay protection: the payload is the event type plus sorted fields with no nonce, so a proof stays good for that exact tuple as long as the daemon lives. If you need either, put the signer's name or a nonce in the fields, where the proof covers them.
+
+### Driving it from the CLI
+
+Restricted events also go through `sahjhan authed-event`, which requires an HMAC-SHA256 proof. The proof is computed over the event type and sorted fields, separated by null bytes. To get the proof, the hook asks the daemon:
 
 ```bash
 # Inside the quiz hook (not the agent)
@@ -43,28 +128,16 @@ sahjhan authed-event quiz_passed \
     --proof "$PROOF"
 ```
 
-Or from Python:
-
-```python
-import subprocess
-
-proof = subprocess.check_output([
-    "sahjhan", "sign",
-    "--event-type", "quiz_passed",
-    "--field", "score=5/5",
-    "--field", "pass=true",
-]).decode().strip()
-
-subprocess.run([
-    "sahjhan", "authed-event", "quiz_passed",
-    "--field", "score=5/5", "--field", "pass=true",
-    "--proof", proof,
-])
-```
-
 The `sign` command connects to the daemon process, which holds the session key in memory and computes the HMAC. The key never touches disk. The agent can't forge the proof because it can't get the key, and it can't get the key because the key isn't a file.
 
-One caveat, explained under the daemon below: both examples drive the daemon through the CLI, which works until you configure caller authentication. Once a `trusted-callers.toml` exists, the daemon authenticates the socket peer, and the peer here is the CLI, never a trusted script. A hardened deployment's hooks talk to the socket directly, via `record_event`.
+What this recipe can't survive is caller authentication. Drop a `trusted-callers.toml` in place and both halves of it stop working:
+
+```bash
+$ sahjhan sign --event-type quiz_passed --field score=5/5 --field pass=true
+sign failed: caller not authenticated
+```
+
+The socket peer is the CLI, and the CLI can never be in the manifest, whatever spawned it — including a trusted hook that shells out to it. That isn't a limitation to work around. It's the whole mechanism, because `sahjhan sign` is exactly the door the agent would knock on. What a hardened deployment loses here is the CLI as a courier, not the proof itself.
 
 ## The daemon
 
@@ -135,6 +208,42 @@ Relatedly, `sahjhan status --no-gates` skips transition gate evaluation. Plain `
 
 Kill the daemon and the secrets vanish. The daemon cleans up its socket and PID files on shutdown. If it dies uncleanly, stale files get cleaned on the next start.
 
+## Speaking the socket
+
+Nothing generates a client for you. `sahjhan hook generate` writes four files — `pre_tool_hook.py`, `post_tool_hook.py`, `stop_hook.py`, and `_sahjhan_bootstrap.py` — and none of them opens the socket. The first three shell out to `sahjhan hook eval`, which needs no authentication, and the bootstrap is a self-contained path guard. So a trusted hook speaks the protocol by hand. The fifteen-line `daemon()` function [above](#the-hardened-path-record_event-over-the-socket) is the whole of it; there is nothing else to import.
+
+The protocol is newline-delimited JSON over a Unix `SOCK_STREAM`: one request object per line, one response line back, in order. A connection can carry several requests, and authentication happens once when it's opened, so a hook doing three things should keep one connection rather than reconnecting. Both directions are bounded at ten seconds, and the daemon serves connections one at a time — hold one open and idle and you're blocking every other hook.
+
+Every response is one flat object with `ok` telling you which kind it is. On failure you get a machine-readable `error` alongside the human `message`, plus a `reason` when authentication was what failed:
+
+```json
+{"ok":true,"pid":15163,"uptime_seconds":13,"vault_entries":0,"idle_seconds":0,"idle_timeout":300,"enforcement_active":false}
+{"ok":false,"error":"auth_failed","message":"caller not authenticated","reason":"pid_resolution_failed"}
+```
+
+Match on `error`, not on the prose. `auth_failed` means enforcement is broken and you should fail closed; `not_found` just means nothing is stored yet.
+
+| op | send | get back |
+| --- | --- | --- |
+| `record_event` | `event_type`, `fields` | `data` — seq of the new entry |
+| `sign` | `event_type`, `fields` | `proof` |
+| `verify` | `event_type`, `fields`, `proof` | `verified` |
+| `vault_store` | `name`, `data` | — |
+| `vault_read` | `name` | `data` |
+| `vault_delete` | `name` | — |
+| `vault_list` | — | `names` |
+
+The four `vault_*` ops carry one more condition: if `vault.toml` declares a policy for that key, the action also has to be permitted in the current ledger-derived state, or it comes back `state_forbidden`.
+
+| `enforcement_read` | — | `data` (with `state` overridden from the ledger) |
+| `enforcement_write` | `data` | — |
+| `enforcement_update` | `patch` | — |
+| `status` | — | `pid`, `uptime_seconds`, `vault_entries`, `idle_seconds`, `idle_timeout`, `enforcement_active` |
+
+That's the complete list. An unrecognized `op` comes back as a `parse_error` that names the valid ones. `status` is the only operation exempt from caller authentication, so it works as a health check from anywhere — which also means it's the one thing the agent can see.
+
+Both sides resolve the socket the same way: `SAHJHAN_DAEMON_SOCKET` if it's set and non-empty, otherwise `daemon.sock` inside `data_dir`. Set it. The default puts the socket inside the project, where the agent can delete it or squat the path between restarts, and an armed fuse refuses to serve there at all. Put it somewhere the sandbox denies writes to — keyed by a hash of the project path, if you run more than one checkout — and start the daemon and the hooks with the same value.
+
 ## The boundary: the sandbox fuse
 
 Despite all of this hardening, a same-user process can ultimately defeat sahjhan by doing things like forking a connected file descriptor into an exec of a genuine hook, rewriting its own command line, or loading code into a trusted interpreter.
@@ -148,7 +257,7 @@ You can enforce it in `protocol.toml`:
 require_sandbox = true
 ```
 
-An armed daemon checks, on every request except `status`, that the Claude Code settings demand the sandbox: effective `sandbox.enabled = true`, `allowUnsandboxedCommands = false`, and `failIfUnavailable = true` configured across the settings scopes (project `settings.local.json`, project `settings.json`, then `~/.claude/settings.json`, in that precedence), no scope allowlists the daemon socket, no scope has a non-empty `excludedCommands`, and the socket itself resides outside the project root. Otherwise, the request is refused with `sandbox_required` and a machine-readable reason.
+An armed daemon checks, on every request except `status`, that the Claude Code settings demand the sandbox: effective `sandbox.enabled = true`, `allowUnsandboxedCommands = false`, and `failIfUnavailable = true` configured across the settings scopes (project `settings.local.json`, project `settings.json`, then `~/.claude/settings.json`, in that precedence), no scope allowlists the daemon socket, no scope has a non-empty `excludedCommands`, and the socket itself resides outside the project root — which is what `SAHJHAN_DAEMON_SOCKET` is for. Otherwise, the request is refused with `sandbox_required` and a machine-readable reason.
 
 On Linux, blocking socket access additionally requires the optional seccomp filter (`@anthropic-ai/sandbox-runtime`), which the fuse cannot verify.
 
@@ -177,7 +286,15 @@ PROOF=$(sahjhan sign --event-type config_reseal)
 sahjhan reseal --proof "$PROOF"
 ```
 
-The payload is just the event type with no fields. This recipe works only while `trusted-callers.toml` is unconfigured. With caller auth on, the daemon rejects the bare CLI and the reseal has to be driven from a trusted caller speaking the socket protocol.
+The payload is just the event type with no fields. This recipe works only while `trusted-callers.toml` is unconfigured. With caller auth on, a trusted hook can still get the proof over the socket — it just has nowhere to spend it. `reseal` verifies through the daemon like everything else, and the peer it presents is the CLI:
+
+```bash
+# inside a trusted hook, holding a valid proof it signed for over the socket
+$ sahjhan reseal --proof "$PROOF"
+error: caller not authenticated
+```
+
+There's no `reseal` op on the wire to use instead, and the same goes for `reset`. Both are reachable only through the CLI, so do your resealing while caller auth is off and turn it on once the protocol has stopped changing.
 
 ## Gate attestation
 

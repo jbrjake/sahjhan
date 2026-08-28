@@ -205,7 +205,17 @@ pub(super) fn eval_ledger_has_event_since(gate: &GateConfig, ctx: &GateContext) 
                 continue;
             }
             let anchor = resolve_filter_spec(&anchor_spec, &candidate_vars(c, &vars));
-            if c.seq > baseline_seq(&anchor) {
+            // The candidate's own window: it counts unless a matching baseline
+            // landed after it. Walking back only as far as the candidate says
+            // the same thing as comparing against the last matching baseline —
+            // a candidate is never seq 0, that being genesis — and stops the
+            // scan at the first baseline that cannot have consumed it.
+            let consumed = baselines
+                .iter()
+                .rev()
+                .take_while(|b| b.seq > c.seq)
+                .any(|b| entry_matches_filter(b, &anchor));
+            if !consumed {
                 count += 1;
             }
         }

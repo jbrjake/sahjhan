@@ -8,6 +8,10 @@
 // - [validate-template-fields]  validate_template_fields()  — validate {{var}} values against event field patterns
 // - [entry-matches-filter]      entry_matches_filter()      — check if a ledger entry matches all filter k/v pairs
 // - [gate-filter]               gate_filter()               — build a gate's filter map, resolving {{var}} in values
+// - [filter-spec]               filter_spec()               — a gate's filter table as written, before resolution
+// - [resolve-filter-spec]       resolve_filter_spec()       — resolve {{var}} in a filter spec's values
+// - [candidate-refs]            candidate_refs()            — the {{event.<field>}} names a filter spec correlates on
+// - [candidate-vars]            candidate_vars()            — event.<field> bindings contributed by one ledger entry
 
 use std::collections::HashMap;
 
@@ -280,19 +284,79 @@ pub(super) fn validate_template_fields(template: &str, ctx: &GateContext) -> Res
 /// so it matches no entry and the gate fails closed rather than silently
 /// widening to every actor.
 pub(super) fn gate_filter(gate: &GateConfig, ctx: &GateContext) -> HashMap<String, String> {
-    let vars = build_template_vars(ctx);
+    resolve_filter_spec(&filter_spec(gate, "filter"), &build_template_vars(ctx))
+}
+
+// [filter-spec]
+/// A gate's key/value filter table as written, before any resolution.
+///
+/// Kept unresolved because the anchor-side filter (`since_filter`) may
+/// correlate on a field of the candidate event, and so has to be resolved once
+/// per candidate rather than once per gate. Non-string values are dropped:
+/// a ledger field is a string, so nothing else could ever match.
+pub(crate) fn filter_spec(gate: &GateConfig, key: &str) -> Vec<(String, String)> {
     gate.params
-        .get("filter")
+        .get(key)
         .and_then(|v| v.as_table())
         .map(|tbl| {
             tbl.iter()
-                .filter_map(|(k, v)| {
-                    v.as_str()
-                        .map(|s| (k.clone(), resolve_template_plain(s, &vars)))
-                })
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
                 .collect()
         })
         .unwrap_or_default()
+}
+
+// [resolve-filter-spec]
+/// Resolve `{{var}}` in each value of a filter spec.
+///
+/// An unbound placeholder is left literal by `resolve_template_plain`, so it
+/// matches no entry — which fails a candidate-side filter closed, and widens an
+/// anchor-side one. That asymmetry is why `since_filter` is checked where the
+/// config is loaded rather than trusted here.
+pub(super) fn resolve_filter_spec(
+    spec: &[(String, String)],
+    vars: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    spec.iter()
+        .map(|(k, v)| (k.clone(), resolve_template_plain(v, vars)))
+        .collect()
+}
+
+/// The prefix that makes a placeholder refer to the candidate event's own
+/// fields rather than to a state param: `{{event.finding_id}}`.
+pub(crate) const CANDIDATE_PREFIX: &str = "event.";
+
+// [candidate-refs]
+/// The `event.<field>` names a filter spec correlates on, deduplicated.
+///
+/// Empty means the spec resolves to one filter for the whole gate; non-empty
+/// means the window is per candidate.
+pub(crate) fn candidate_refs(spec: &[(String, String)]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for (_, value) in spec {
+        for placeholder in extract_placeholders(value) {
+            if let Some(field) = placeholder.strip_prefix(CANDIDATE_PREFIX) {
+                if !field.is_empty() && !out.iter().any(|f| f == field) {
+                    out.push(field.to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
+// [candidate-vars]
+/// Template bindings one ledger entry contributes as the candidate event:
+/// every field of the entry, under the `event.` prefix.
+pub(super) fn candidate_vars(
+    entry: &LedgerEntry,
+    base: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    let mut vars = base.clone();
+    for (k, v) in &entry.fields {
+        vars.insert(format!("{}{}", CANDIDATE_PREFIX, k), v.clone());
+    }
+    vars
 }
 
 // [entry-matches-filter]
@@ -311,19 +375,11 @@ pub(super) fn entry_matches_filter(entry: &LedgerEntry, filter: &HashMap<String,
 // ---------------------------------------------------------------------------
 
 /// Extract `{{placeholder}}` names from a template string.
+///
+/// The scan itself lives in `template.rs`; there is one copy so a placeholder
+/// this module validates is the same one that module resolves.
 fn extract_placeholders(template: &str) -> Vec<String> {
-    let mut names = Vec::new();
-    let mut rest = template;
-    while let Some(start) = rest.find("{{") {
-        let after_start = &rest[start + 2..];
-        if let Some(end) = after_start.find("}}") {
-            names.push(after_start[..end].to_string());
-            rest = &after_start[end + 2..];
-        } else {
-            break;
-        }
-    }
-    names
+    super::template::find_unresolved_vars(template)
 }
 
 /// Look up a field pattern from config.events for the given field name.

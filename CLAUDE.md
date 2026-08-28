@@ -62,7 +62,8 @@ Sahjhan is a protocol enforcement engine. It has:
 | Config validation | `config/mod.rs` | `[validate]` | Basic structural validation, plus `since` anchors (the check every command runs, including the two that seal) |
 | Deep validation | `config/mod.rs` | `[validate-deep]` | File existence, gate types, aliases, ledger template, hooks, monitors, write_gated, named-query checks |
 | Since anchor resolution | `config/mod.rs` | `[resolve-since-anchor]`, `SinceAnchorError` | `since` → the baseline event type, or why it names none: `last_transition`, or `last_event_of_type:<declared or engine event>`, and nothing else (#34) |
-| Since anchor walk | `config/mod.rs` | `[check-since-anchors]` | Recursive scan of a gate tree for `since` values that resolve to no baseline |
+| Gate window walk | `config/mod.rs` | `[check-gate-windows]` | Recursive scan of a gate tree for a window it cannot express: an unresolvable `since` (#34), a `since_filter` that can never match (#35), a `{{event.<field>}}` correlation in a candidate-side `filter` |
+| Anchor filter check | `config/mod.rs` | `[check-since-filter]`, `check_filter_field` | `since_filter` shape + both field sides against the declared vocabulary; silent where undecidable (engine events, events declared with no fields) (#35) |
 | Recursive gate validator | `config/mod.rs` | `[validate-gate]` | Validates composite (any_of, all_of, not, k_of_n) and leaf gates recursively |
 | Protocol metadata | `config/protocol.rs` | `ProtocolMeta`, `PathsConfig`, `SetConfig` | protocol.toml structures |
 | Ledger template | `config/protocol.rs` | `LedgerTemplateConfig` | `[ledgers]` section; path or path_template for template-based ledger creation |
@@ -99,6 +100,9 @@ Sahjhan is a protocol enforcement engine. It has:
 | Template var map | `gates/types.rs` | `[build-template-vars]` | Builds `{{var}}` map from state_params + config |
 | Field validation | `gates/types.rs` | `[validate-template-fields]` | Validates var values against event field patterns |
 | Entry filter | `gates/types.rs` | `[entry-matches-filter]` | Checks ledger entry against k/v filter |
+| Gate filter | `gates/types.rs` | `[gate-filter]` | A gate's candidate-side `filter`, `{{var}}` resolved |
+| Filter spec | `gates/types.rs` | `[filter-spec]`, `[resolve-filter-spec]` | A filter table as written, and its resolution — split because `since_filter` may resolve once per candidate (#35) |
+| Window correlation | `gates/types.rs` | `[candidate-refs]`, `[candidate-vars]`, `CANDIDATE_PREFIX` | `{{event.<field>}}` — the fields a `since_filter` keys the window on, and the bindings one candidate entry contributes. Shared with `[check-since-filter]` so validation and evaluation agree on what a correlation is (#35) |
 | Gate context | `gates/evaluator.rs` | `GateContext` | All inputs needed to evaluate a gate |
 | Gate attestation | `gates/evaluator.rs` | `GateAttestation` | Evidence from an external command execution (gate_type, command, exit_code, stdout_hash, wall_time_ms, executed_at) |
 | Gate result | `gates/evaluator.rs` | `GateResult` | Outcome: passed, evaluable, gate_type, description, reason, intent, attestation |
@@ -110,7 +114,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | File exists gate | `gates/file.rs` | `[eval-file-exists]` | Single file check |
 | Files exist gate | `gates/file.rs` | `[eval-files-exist]` | Multiple files check |
 | Ledger event gate | `gates/ledger.rs` | `[eval-ledger-has-event]` | N+ events of type; optional `max_count` for budget enforcement |
-| Event since gate | `gates/ledger.rs` | `[eval-ledger-has-event-since]` | Event since a reference point; the anchor goes through `[resolve-since-anchor]` and an unreadable one fails the gate rather than widening its window to seq 0 (#34) |
+| Event since gate | `gates/ledger.rs` | `[eval-ledger-has-event-since]` | Event since a reference point; the anchor goes through `[resolve-since-anchor]` and an unreadable one fails the gate rather than widening its window to seq 0 (#34). `since_filter` scopes *which* baseline the window starts at — per actor, or per candidate via `{{event.<field>}}` — so N concurrent actors get N windows (#35) |
 | Ledger lacks event gate | `gates/ledger.rs` | `[eval-ledger-lacks-event]` | Pass if NO matching events exist (negation gate) |
 | Set covered gate | `gates/ledger.rs` | `[eval-set-covered]` | All set members in ledger |
 | Min elapsed gate | `gates/ledger.rs` | `[eval-min-elapsed]` | Time since last event |
@@ -571,8 +575,10 @@ cli/commands.rs [load-config]
     → reads renders.toml (optional) → config/renders.rs RendersFile
     → reads hooks.toml (optional)   → config/hooks.rs HooksFile
   → config/mod.rs [validate] — structural checks
-    → config/mod.rs [check-since-anchors] — every transition gate + every hook gate, recursively
+    → config/mod.rs [check-gate-windows] — every transition gate + every hook gate, recursively
       → config/mod.rs [resolve-since-anchor] — "last_transition" | "last_event_of_type:<declared or engine event>"
+      → config/mod.rs [check-since-filter] — since_filter keys vs the baseline event's declared fields,
+                                             {{event.<field>}} correlations vs the counted event's
   → config/mod.rs [validate-deep] (via cmd_validate) — file/alias/gate/ledger checks
 ```
 
@@ -652,10 +658,10 @@ main.rs [cli-main]
 
 | Test file | Tests |
 |-----------|-------|
-| `tests/gate_tests.rs` | All gate types, template interpolation, field validation, StateParam source, attestation, `since` anchors failing closed (#34) |
+| `tests/gate_tests.rs` | All gate types, template interpolation, field validation, StateParam source, attestation, `since` anchors failing closed (#34), `since_filter` per-actor and per-candidate windows (#35) |
 | `tests/integration_tests.rs` | Full CLI end-to-end (init, transition, events, queries, renders, sets) |
 | `tests/chain_integrity_tests.rs` | Ledger hash chain, append, reload, tamper detection |
-| `tests/config_tests.rs` | Config loading, validation, hooks/monitors/write_gated validation, `since` anchor rejection in transition + hook + composite gates (#34) |
+| `tests/config_tests.rs` | Config loading, validation, hooks/monitors/write_gated validation, `since` anchor rejection in transition + hook + composite gates (#34), `since_filter` field/shape rejection and TOML round-trip (#35) |
 | `tests/state_machine_tests.rs` | StateMachine transitions, gates, sets |
 | `tests/query_tests.rs` | DataFusion SQL queries over ledger |
 | `tests/ledger_tests.rs` | LedgerEntry serialization, hashing, schema |

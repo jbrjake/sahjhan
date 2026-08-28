@@ -349,13 +349,14 @@ impl ProtocolConfig {
             }
         }
 
-        // 6. `since` anchors resolve. Checked here rather than in
-        // `validate_deep` because this is the validation every command runs,
-        // including `init` and `reseal` — the two that seal the config. An
-        // anchor the engine cannot recognize must not be sealable.
+        // 6. Gate windows resolve — `since` anchors and the filters that scope
+        // them. Checked here rather than in `validate_deep` because this is the
+        // validation every command runs, including `init` and `reseal` — the
+        // two that seal the config. A window the engine cannot read must not be
+        // sealable.
         for t in &self.transitions {
             for gate in &t.gates {
-                self.check_since_anchors(
+                self.check_gate_windows(
                     gate,
                     &format!("transitions.toml: transition '{}'", t.command),
                     &mut errors,
@@ -364,20 +365,27 @@ impl ProtocolConfig {
         }
         for (idx, hook) in self.hooks.iter().enumerate() {
             if let Some(ref gate) = hook.gate {
-                self.check_since_anchors(gate, &format!("hooks.toml: hook[{}]", idx), &mut errors);
+                self.check_gate_windows(gate, &format!("hooks.toml: hook[{}]", idx), &mut errors);
             }
         }
 
         errors
     }
 
-    /// Recursively check every `ledger_has_event_since` gate in a gate tree for
-    /// a `since` value that names no baseline.
+    /// Recursively check every gate in a tree for a window it cannot express.
     ///
-    /// Composite gates nest, so this walks children — an unrecognized anchor
-    /// buried in an `any_of` is the same defect as one at the top.
-    // [check-since-anchors]
-    fn check_since_anchors(&self, gate: &GateConfig, location: &str, errors: &mut Vec<String>) {
+    /// Three defects, each of which used to be silent and each of which makes a
+    /// gate *wider* than it reads:
+    ///
+    /// - a `since` value that names no baseline (sahjhan #34),
+    /// - a `since_filter` that can never match a baseline event (sahjhan #35),
+    /// - a candidate-side `filter` using the `{{event.<field>}}` correlation
+    ///   form, which only means anything on the anchor side.
+    ///
+    /// Composite gates nest, so this walks children — a defect buried in an
+    /// `any_of` is the same defect as one at the top.
+    // [check-gate-windows]
+    fn check_gate_windows(&self, gate: &GateConfig, location: &str, errors: &mut Vec<String>) {
         if gate.gate_type == "ledger_has_event_since" {
             // A missing `since` is reported by validate_deep's required-param
             // check; the default the gate applies is `last_transition`, which
@@ -387,10 +395,131 @@ impl ProtocolConfig {
                     errors.push(format!("{}: gate 'ledger_has_event_since' {}", location, e));
                 }
             }
+            self.check_since_filter(gate, location, errors);
         }
+
+        // A `filter` is matched against the counted event itself, so
+        // `{{event.<field>}}` there is either a tautology or a typo for a state
+        // param. It resolves to nothing either way.
+        let spec = crate::gates::types::filter_spec(gate, "filter");
+        for field in crate::gates::types::candidate_refs(&spec) {
+            errors.push(format!(
+                "{}: gate '{}' filter correlates on '{}{}', which only resolves \
+                 in since_filter — a filter is already matched against the \
+                 event it counts",
+                location,
+                gate.gate_type,
+                crate::gates::types::CANDIDATE_PREFIX,
+                field
+            ));
+        }
+
         for child in &gate.gates {
-            self.check_since_anchors(child, location, errors);
+            self.check_gate_windows(child, location, errors);
         }
+    }
+
+    /// Check a `ledger_has_event_since` gate's anchor-side filter.
+    ///
+    /// A `since_filter` naming a field no baseline event carries matches
+    /// nothing, and "no baseline matched" resolves to seq 0 — the same value as
+    /// "the baseline has not happened yet", which is the legitimate case for an
+    /// actor's first turn. The gate cannot tell those apart at run time, so a
+    /// typo silently widens the window to the whole run instead of narrowing it
+    /// to one actor. That is sahjhan #34's failure mode on a new surface, and
+    /// it is why this is an error where the config is sealed rather than a
+    /// diagnostic where the gate runs.
+    ///
+    /// The candidate-side `filter` needs no such check: a typo there matches no
+    /// event, which blocks the gate. Only the anchor side fails open.
+    // [check-since-filter]
+    fn check_since_filter(&self, gate: &GateConfig, location: &str, errors: &mut Vec<String>) {
+        let prefix = format!("{}: gate 'ledger_has_event_since'", location);
+        let Some(raw) = gate.params.get("since_filter") else {
+            return;
+        };
+        let Some(table) = raw.as_table() else {
+            errors.push(format!(
+                "{} since_filter must be a table of field = value pairs",
+                prefix
+            ));
+            return;
+        };
+        for (key, value) in table {
+            if !value.is_str() {
+                errors.push(format!(
+                    "{} since_filter '{}' must be a string — a ledger field is \
+                     a string, so nothing else can ever match",
+                    prefix, key
+                ));
+            }
+        }
+
+        let spec = crate::gates::types::filter_spec(gate, "since_filter");
+
+        // A key names a field of the *baseline* event: where the window starts.
+        let since = gate
+            .params
+            .get("since")
+            .and_then(|v| v.as_str())
+            .unwrap_or("last_transition");
+        if let Ok(baseline) = self.resolve_since_anchor(since) {
+            for (key, _) in &spec {
+                self.check_filter_field(baseline, key, "since_filter", &prefix, errors);
+            }
+        }
+
+        // A `{{event.<field>}}` placeholder names a field of the *counted*
+        // event: what the window is keyed on, per candidate.
+        let counted = gate
+            .params
+            .get("event")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        for field in crate::gates::types::candidate_refs(&spec) {
+            self.check_filter_field(counted, &field, "since_filter correlation", &prefix, errors);
+        }
+        for (key, value) in &spec {
+            if crate::gates::template::find_unresolved_vars(value)
+                .iter()
+                .any(|p| p == crate::gates::types::CANDIDATE_PREFIX)
+            {
+                errors.push(format!(
+                    "{} since_filter '{}' correlates on '{}' with no field name",
+                    prefix,
+                    key,
+                    crate::gates::types::CANDIDATE_PREFIX
+                ));
+            }
+        }
+    }
+
+    /// Report a filter field the protocol does not declare on `event_type`.
+    ///
+    /// Only decidable for an event declared with fields: the engine writes its
+    /// own events (`state_transition` and friends) without declaring them, and
+    /// an event declared with no fields says nothing about what it carries.
+    /// Undecidable stays silent.
+    fn check_filter_field(
+        &self,
+        event_type: &str,
+        field: &str,
+        surface: &str,
+        prefix: &str,
+        errors: &mut Vec<String>,
+    ) {
+        let Some(cfg) = self.events.get(event_type) else {
+            return;
+        };
+        if cfg.fields.is_empty() || cfg.fields.iter().any(|f| f.name == field) {
+            return;
+        }
+        errors.push(format!(
+            "{} {} names field '{}', which event '{}' does not declare \
+             (declare it under [[events.{}.fields]] — an anchor that matches \
+             nothing widens the window to the whole run rather than closing it)",
+            prefix, surface, field, event_type, event_type
+        ));
     }
 
     /// Resolve a `ledger_has_event_since` gate's `since` to the event type its

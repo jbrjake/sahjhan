@@ -1121,3 +1121,271 @@ fn test_validate_checks_since_anchor_in_hook_gate() {
         errors
     );
 }
+
+// ---------------------------------------------------------------------------
+// `since_filter` on ledger_has_event_since gates (sahjhan #35)
+//
+// The anchor-side filter is the one that fails *open*: a candidate-side
+// `filter` naming a field nothing carries matches no event and blocks the gate,
+// but an anchor filter that matches no baseline resolves to seq 0 — the same
+// value as "the baseline has not happened yet" — and widens the window to the
+// whole run. The gate cannot tell a typo from an actor's first turn. The config
+// can, so it is checked in `validate()`, which is what `init` and `reseal` run.
+// ---------------------------------------------------------------------------
+
+/// `examples/minimal` plus the concurrent-TDD vocabulary, with declared fields.
+fn tdd_vocab_config() -> sahjhan::config::ProtocolConfig {
+    let mut config = sahjhan::config::ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let declared: sahjhan::config::events::EventsFile = toml::from_str(
+        r#"
+[events.tdd_evidence]
+description = "An agent recorded a failing test before editing source"
+fields = [
+    { name = "agent_id", type = "string" },
+    { name = "finding_id", type = "string", optional = true },
+]
+
+[events.fix_commit]
+description = "An agent's fix landed"
+fields = [{ name = "agent_id", type = "string" }]
+"#,
+    )
+    .unwrap();
+    config.events.extend(declared.events);
+    config
+}
+
+/// A `ledger_has_event_since` gate over `tdd_evidence`, anchored on `since`.
+fn scoped_since_gate(since: &str, params: Vec<(&str, toml::Value)>) -> sahjhan::config::GateConfig {
+    let mut all = std::collections::HashMap::new();
+    all.insert(
+        "event".to_string(),
+        toml::Value::String("tdd_evidence".to_string()),
+    );
+    all.insert("since".to_string(), toml::Value::String(since.to_string()));
+    for (k, v) in params {
+        all.insert(k.to_string(), v);
+    }
+    sahjhan::config::GateConfig {
+        gate_type: "ledger_has_event_since".to_string(),
+        intent: None,
+        gates: vec![],
+        params: all,
+    }
+}
+
+fn filter_value(pairs: &[(&str, &str)]) -> toml::Value {
+    let mut t = toml::map::Map::new();
+    for (k, v) in pairs {
+        t.insert(k.to_string(), toml::Value::String(v.to_string()));
+    }
+    toml::Value::Table(t)
+}
+
+/// Replace the config's transitions with one carrying `gate`.
+fn with_gate(
+    mut config: sahjhan::config::ProtocolConfig,
+    gate: sahjhan::config::GateConfig,
+) -> sahjhan::config::ProtocolConfig {
+    config.transitions = vec![sahjhan::config::TransitionConfig {
+        integrity: None,
+        boundary: None,
+        from: "idle".to_string(),
+        to: "working".to_string(),
+        command: "begin".to_string(),
+        gates: vec![gate],
+        ..Default::default()
+    }];
+    config
+}
+
+#[test]
+fn test_validate_accepts_a_since_filter_over_declared_fields() {
+    let config = with_gate(
+        tdd_vocab_config(),
+        scoped_since_gate(
+            "last_event_of_type:fix_commit",
+            vec![
+                ("filter", filter_value(&[("agent_id", "{{agent_id}}")])),
+                (
+                    "since_filter",
+                    filter_value(&[("agent_id", "{{agent_id}}")]),
+                ),
+            ],
+        ),
+    );
+    let errors = config.validate();
+    assert!(
+        errors.is_empty(),
+        "a per-actor window over declared fields is valid: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_validate_rejects_since_filter_field_the_baseline_does_not_declare() {
+    let config = with_gate(
+        tdd_vocab_config(),
+        scoped_since_gate(
+            "last_event_of_type:fix_commit",
+            vec![(
+                "since_filter",
+                filter_value(&[("agnet_id", "{{agent_id}}")]),
+            )],
+        ),
+    );
+    let errors = config.validate();
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("agnet_id") && e.contains("fix_commit")),
+        "a typo'd anchor field must name the field and the baseline event: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_validate_rejects_since_filter_correlation_on_an_undeclared_field() {
+    let config = with_gate(
+        tdd_vocab_config(),
+        scoped_since_gate(
+            "last_event_of_type:fix_commit",
+            vec![(
+                "since_filter",
+                filter_value(&[("agent_id", "{{event.finding}}")]),
+            )],
+        ),
+    );
+    let errors = config.validate();
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("finding") && e.contains("tdd_evidence")),
+        "a correlation must name a field of the event being counted: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_validate_rejects_a_correlation_with_no_field_name() {
+    let config = with_gate(
+        tdd_vocab_config(),
+        scoped_since_gate(
+            "last_event_of_type:fix_commit",
+            vec![("since_filter", filter_value(&[("agent_id", "{{event.}}")]))],
+        ),
+    );
+    let errors = config.validate();
+    assert!(
+        errors.iter().any(|e| e.contains("no field name")),
+        "`{{{{event.}}}}` names nothing and resolves to nothing: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_validate_is_silent_on_a_since_filter_over_an_engine_event() {
+    // `state_transition` is written by the engine and declared nowhere, so what
+    // it carries is not decidable from config. Undecidable stays silent rather
+    // than guessing.
+    let config = with_gate(
+        tdd_vocab_config(),
+        scoped_since_gate(
+            "last_transition",
+            vec![(
+                "since_filter",
+                filter_value(&[("agent_id", "{{agent_id}}")]),
+            )],
+        ),
+    );
+    let errors = config.validate();
+    assert!(
+        errors.is_empty(),
+        "an engine event declares no fields to check against: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_validate_rejects_a_since_filter_that_is_not_a_table() {
+    let config = with_gate(
+        tdd_vocab_config(),
+        scoped_since_gate(
+            "last_event_of_type:fix_commit",
+            vec![("since_filter", toml::Value::String("agent_id".to_string()))],
+        ),
+    );
+    let errors = config.validate();
+    assert!(
+        errors.iter().any(|e| e.contains("must be a table")),
+        "a scalar since_filter is silently ignored otherwise: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_validate_rejects_the_correlation_prefix_in_a_candidate_filter() {
+    // `filter` is matched against the counted event itself, so a correlation
+    // there is a tautology at best and an unresolvable placeholder in practice.
+    let config = with_gate(
+        tdd_vocab_config(),
+        scoped_since_gate(
+            "last_event_of_type:fix_commit",
+            vec![(
+                "filter",
+                filter_value(&[("agent_id", "{{event.agent_id}}")]),
+            )],
+        ),
+    );
+    let errors = config.validate();
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("only resolves in since_filter")),
+        "a correlation in a candidate-side filter must be refused: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_validate_checks_a_since_filter_nested_in_a_composite_gate() {
+    let nested = sahjhan::config::GateConfig {
+        gate_type: "any_of".to_string(),
+        intent: None,
+        gates: vec![scoped_since_gate(
+            "last_event_of_type:fix_commit",
+            vec![("since_filter", filter_value(&[("agnet_id", "x")]))],
+        )],
+        params: std::collections::HashMap::new(),
+    };
+    let errors = with_gate(tdd_vocab_config(), nested).validate();
+    assert!(
+        errors.iter().any(|e| e.contains("agnet_id")),
+        "a defect buried in an any_of is the same defect: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_since_filter_round_trips_through_transitions_toml() {
+    // The param is flattened into `GateConfig.params`, so nothing declares it
+    // in a struct — this is the only place the TOML surface is pinned.
+    let file: sahjhan::config::transitions::TransitionsFile = toml::from_str(
+        r#"
+[[transitions]]
+from = "fixing"
+to = "fixing"
+command = "edit"
+gates = [
+    { type = "ledger_has_event_since", event = "tdd_evidence", since = "last_event_of_type:finding_resolved", filter = { agent_id = "{{agent_id}}" }, since_filter = { id = "{{event.finding_id}}" } },
+]
+"#,
+    )
+    .unwrap();
+    let gate = &file.transitions[0].gates[0];
+    let spec = gate.params.get("since_filter").unwrap().as_table().unwrap();
+    assert_eq!(
+        spec.get("id").and_then(|v| v.as_str()),
+        Some("{{event.finding_id}}")
+    );
+}

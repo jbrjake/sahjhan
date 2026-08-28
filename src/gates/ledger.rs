@@ -2,7 +2,7 @@
 //
 // ## Index
 // - [eval-ledger-has-event]        eval_ledger_has_event()        — pass if ledger contains N+ events of a type (optional max_count ceiling)
-// - [eval-ledger-has-event-since]  eval_ledger_has_event_since()  — pass if event exists since reference point (last_transition or custom event type)
+// - [eval-ledger-has-event-since]  eval_ledger_has_event_since()  — pass if event exists since reference point (last_transition or custom event type), optionally scoped by since_filter
 // - [eval-ledger-lacks-event]      eval_ledger_lacks_event()      — pass if ledger contains NO matching events (negation of ledger_has_event)
 // - [eval-set-covered]             eval_set_covered()             — pass if all set members appear in ledger
 // - [eval-min-elapsed]             eval_min_elapsed()             — pass if enough time has elapsed since last event
@@ -15,7 +15,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::config::GateConfig;
 
 use super::evaluator::{GateContext, GateResult};
-use super::types::{entry_matches_filter, gate_filter};
+use super::types::{
+    build_template_vars, candidate_refs, candidate_vars, entry_matches_filter, filter_spec,
+    gate_filter, resolve_filter_spec,
+};
 
 // [eval-ledger-has-event]
 pub(super) fn eval_ledger_has_event(gate: &GateConfig, ctx: &GateContext) -> GateResult {
@@ -97,10 +100,25 @@ pub(super) fn eval_ledger_has_event(gate: &GateConfig, ctx: &GateContext) -> Gat
 // means the config was never validated, and an anchor the engine cannot read
 // must not quietly become "the start of the run" (sahjhan #34).
 //
-// A missing baseline (a recognized anchor whose event has not happened yet) is
-// treated as the run start (seq 0), so the gate is evaluable from the first
-// event. `min_count` (default 1) sets how many matching events must exist
-// after the baseline.
+// `since_filter` scopes *which* baseline event the window starts at, the way
+// `filter` already scopes which events are counted. Without it the anchor is
+// global, so with N concurrent actors the gate is a per-run gate wearing a
+// filter: whichever actor moves first resets everyone's window (sahjhan #35).
+// Two forms, both resolved through the ordinary template vars:
+//
+//   since_filter = { agent_id = "{{agent_id}}" }        per-actor window
+//   since_filter = { id = "{{event.finding_id}}" }      per-candidate window
+//
+// The second correlates on a field of the candidate event itself, which makes
+// the window self-consuming: an event counts until a baseline event sharing
+// that field lands after it. A candidate that carries no value for a
+// correlated field is not counted — the window it would need cannot be
+// established, and an unscopeable candidate must not be an authorization.
+//
+// A missing baseline (a recognized anchor whose event has not happened yet,
+// or one no baseline matches) is treated as the run start (seq 0), so the
+// gate is evaluable from the first event. `min_count` (default 1) sets how
+// many matching events must exist after the baseline.
 pub(super) fn eval_ledger_has_event_since(gate: &GateConfig, ctx: &GateContext) -> GateResult {
     let event = gate
         .params
@@ -140,30 +158,76 @@ pub(super) fn eval_ledger_has_event_since(gate: &GateConfig, ctx: &GateContext) 
         }
     };
 
-    // Baseline seq = the last occurrence of baseline_type, else run start (0).
-    let threshold_seq = ctx
-        .ledger
-        .entries()
-        .iter()
-        .rev()
-        .find(|e| e.event_type == baseline_type)
-        .map(|e| e.seq)
-        .unwrap_or(0);
+    let vars = build_template_vars(ctx);
+    let anchor_spec = filter_spec(gate, "since_filter");
+    let correlated = candidate_refs(&anchor_spec);
 
-    let matching = ctx
+    let candidates: Vec<&crate::ledger::entry::LedgerEntry> = ctx
         .ledger
         .entries()
         .iter()
-        .filter(|e| e.event_type == event && e.seq > threshold_seq)
+        .filter(|e| e.event_type == event)
         .filter(|e| entry_matches_filter(e, &filter))
-        .count() as u64;
+        .collect();
+    let baselines: Vec<&crate::ledger::entry::LedgerEntry> = ctx
+        .ledger
+        .entries()
+        .iter()
+        .filter(|e| e.event_type == baseline_type)
+        .collect();
+
+    // Baseline seq = the last matching occurrence of baseline_type, else run
+    // start (0).
+    let baseline_seq = |anchor: &_| {
+        baselines
+            .iter()
+            .rev()
+            .find(|b| entry_matches_filter(b, anchor))
+            .map(|b| b.seq)
+            .unwrap_or(0)
+    };
+
+    // Candidates the correlation cannot place: they carry no value for a field
+    // the window is keyed on, so there is no window to test them against.
+    let mut unscopeable: u64 = 0;
+
+    let matching = if correlated.is_empty() {
+        // One window for the whole gate. An absent `since_filter` resolves to
+        // an empty filter, which every baseline matches — the pre-#35 behavior.
+        let anchor = resolve_filter_spec(&anchor_spec, &vars);
+        let threshold = baseline_seq(&anchor);
+        candidates.iter().filter(|c| c.seq > threshold).count() as u64
+    } else {
+        let mut count = 0u64;
+        for c in &candidates {
+            if correlated.iter().any(|f| !c.fields.contains_key(f)) {
+                unscopeable += 1;
+                continue;
+            }
+            let anchor = resolve_filter_spec(&anchor_spec, &candidate_vars(c, &vars));
+            if c.seq > baseline_seq(&anchor) {
+                count += 1;
+            }
+        }
+        count
+    };
     let found = matching >= min_count;
 
-    let since_desc = if since == "last_transition" {
+    let mut since_desc = if since == "last_transition" {
         "last state_transition".to_string()
     } else {
         format!("last '{}' event", baseline_type)
     };
+    if !anchor_spec.is_empty() {
+        // Print the scoping as written, correlation placeholders and all: what
+        // the window keys on is the part an operator needs to see.
+        let mut pairs: Vec<String> = anchor_spec
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, v))
+            .collect();
+        pairs.sort();
+        since_desc.push_str(&format!(" scoped to {{{}}}", pairs.join(", ")));
+    }
     let count_desc = if min_count > 1 {
         format!(">= {} '{}' events", min_count, event)
     } else {
@@ -178,10 +242,23 @@ pub(super) fn eval_ledger_has_event_since(gate: &GateConfig, ctx: &GateContext) 
         reason: if found {
             None
         } else {
-            Some(format!(
+            let mut reason = format!(
                 "found {} '{}' event(s) after {}, need >= {}",
                 matching, event, since_desc, min_count
-            ))
+            );
+            if unscopeable > 0 {
+                reason.push_str(&format!(
+                    " ({} '{}' event(s) carry no {} and could not be scoped)",
+                    unscopeable,
+                    event,
+                    correlated
+                        .iter()
+                        .map(|f| format!("'{}'", f))
+                        .collect::<Vec<_>>()
+                        .join("/")
+                ));
+            }
+            Some(reason)
         },
         intent: None,
         attestation: None,

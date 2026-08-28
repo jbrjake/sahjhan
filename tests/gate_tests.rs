@@ -3852,3 +3852,290 @@ fn test_query_gate_sql_and_named_query_conflict_fails() {
         result.reason
     );
 }
+
+// ---------------------------------------------------------------------------
+// ledger_has_event_since: `since_filter` scopes the window (sahjhan #35)
+//
+// `filter` scopes which events count; the anchor was always global. With N
+// concurrent actors that makes a per-actor gate a per-run gate wearing a
+// filter — whichever actor moves first resets everyone's window, and the
+// others lose an authorization they legitimately hold.
+// ---------------------------------------------------------------------------
+
+/// `examples/minimal` plus the event vocabulary the concurrent-TDD case needs.
+/// The declarations matter: `since` only resolves against a declared type, and
+/// the declared field lists are what `validate()` checks a `since_filter`
+/// against.
+fn _tdd_config() -> ProtocolConfig {
+    let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let declared: sahjhan::config::events::EventsFile = toml::from_str(
+        r#"
+[events.tdd_evidence]
+description = "An agent recorded a failing test before editing source"
+fields = [
+    { name = "agent_id", type = "string" },
+    { name = "finding_id", type = "string", optional = true },
+]
+
+[events.fix_commit]
+description = "An agent's fix landed"
+fields = [{ name = "agent_id", type = "string" }]
+
+[events.finding_resolved]
+description = "A finding was closed out"
+fields = [{ name = "id", type = "string" }]
+"#,
+    )
+    .unwrap();
+    config.events.extend(declared.events);
+    config
+}
+
+fn _entry(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+    pairs
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
+}
+
+/// A gate context standing in for one actor: `agent_id` is the template var
+/// `hook eval --agent-id` binds.
+fn _actor_ctx<'a>(
+    ledger: &'a Ledger,
+    config: &'a ProtocolConfig,
+    dir: &Path,
+    agent_id: &str,
+) -> GateContext<'a> {
+    let mut state_params = HashMap::new();
+    state_params.insert("agent_id".to_string(), agent_id.to_string());
+    GateContext {
+        ledger,
+        config,
+        current_state: "working",
+        state_params,
+        working_dir: dir.to_path_buf(),
+        event_fields: None,
+    }
+}
+
+fn _filter(pairs: &[(&str, &str)]) -> toml::Value {
+    let mut t = toml::map::Map::new();
+    for (k, v) in pairs {
+        t.insert(k.to_string(), toml::Value::String(v.to_string()));
+    }
+    toml::Value::Table(t)
+}
+
+#[test]
+fn test_since_filter_scopes_the_window_to_the_actor() {
+    // The holtz reproduction: two agents each record evidence, then agent-a's
+    // fix lands. Agent-b still holds the evidence it recorded, and must keep
+    // its authorization; agent-a has consumed its own and must lose it.
+    let dir = tempdir().unwrap();
+    let config = _tdd_config();
+    let mut ledger = Ledger::init(&dir.path().join("ledger.jsonl"), "test", "1.0.0").unwrap();
+    ledger
+        .append("tdd_evidence", _entry(&[("agent_id", "agent-a")]))
+        .unwrap();
+    ledger
+        .append("tdd_evidence", _entry(&[("agent_id", "agent-b")]))
+        .unwrap();
+    ledger
+        .append("fix_commit", _entry(&[("agent_id", "agent-a")]))
+        .unwrap();
+
+    let params = vec![
+        ("event", toml::Value::String("tdd_evidence".to_string())),
+        (
+            "since",
+            toml::Value::String("last_event_of_type:fix_commit".to_string()),
+        ),
+        ("filter", _filter(&[("agent_id", "{{agent_id}}")])),
+    ];
+
+    // Without a since_filter the anchor is global: agent-a's fix_commit ends
+    // agent-b's window too. This is the bug, pinned.
+    let unscoped = make_gate("ledger_has_event_since", params.clone());
+    assert!(
+        !evaluate_gate(
+            &unscoped,
+            &_actor_ctx(&ledger, &config, dir.path(), "agent-b")
+        )
+        .passed,
+        "a global anchor lets a sibling's event close agent-b's window"
+    );
+
+    // With one, each actor gets its own window over the same ledger.
+    let mut scoped_params = params;
+    scoped_params.push(("since_filter", _filter(&[("agent_id", "{{agent_id}}")])));
+    let scoped = make_gate("ledger_has_event_since", scoped_params);
+    assert!(
+        evaluate_gate(
+            &scoped,
+            &_actor_ctx(&ledger, &config, dir.path(), "agent-b")
+        )
+        .passed,
+        "agent-b holds evidence recorded after its own last fix_commit (it has none)"
+    );
+    assert!(
+        !evaluate_gate(
+            &scoped,
+            &_actor_ctx(&ledger, &config, dir.path(), "agent-a")
+        )
+        .passed,
+        "agent-a's own fix_commit consumed its own evidence — the window still closes"
+    );
+}
+
+#[test]
+fn test_since_filter_correlates_on_a_field_of_the_counted_event() {
+    // The window holtz could only write as raw SQL: evidence authorizes until a
+    // `finding_resolved` naming *that finding* lands after it. The correlation
+    // is between two event streams keyed on a field they share.
+    let dir = tempdir().unwrap();
+    let config = _tdd_config();
+    let mut ledger = Ledger::init(&dir.path().join("ledger.jsonl"), "test", "1.0.0").unwrap();
+    ledger
+        .append(
+            "tdd_evidence",
+            _entry(&[("agent_id", "agent-a"), ("finding_id", "f1")]),
+        )
+        .unwrap();
+    ledger
+        .append(
+            "tdd_evidence",
+            _entry(&[("agent_id", "agent-a"), ("finding_id", "f2")]),
+        )
+        .unwrap();
+    ledger
+        .append("finding_resolved", _entry(&[("id", "f1")]))
+        .unwrap();
+
+    let gate = make_gate(
+        "ledger_has_event_since",
+        vec![
+            ("event", toml::Value::String("tdd_evidence".to_string())),
+            (
+                "since",
+                toml::Value::String("last_event_of_type:finding_resolved".to_string()),
+            ),
+            ("filter", _filter(&[("agent_id", "{{agent_id}}")])),
+            ("since_filter", _filter(&[("id", "{{event.finding_id}}")])),
+        ],
+    );
+
+    // f1 is consumed; f2 is not. One live piece of evidence is enough.
+    assert!(
+        evaluate_gate(&gate, &_actor_ctx(&ledger, &config, dir.path(), "agent-a")).passed,
+        "resolving f1 must not consume the evidence for f2"
+    );
+
+    // Resolve f2 as well and every window closes.
+    ledger
+        .append("finding_resolved", _entry(&[("id", "f2")]))
+        .unwrap();
+    assert!(
+        !evaluate_gate(&gate, &_actor_ctx(&ledger, &config, dir.path(), "agent-a")).passed,
+        "with both findings resolved the actor holds no live evidence"
+    );
+}
+
+#[test]
+fn test_since_filter_does_not_count_a_candidate_it_cannot_scope() {
+    // A candidate carrying no value for a correlated field has no window to be
+    // tested against. Counting it would be an authorization the gate cannot
+    // place, so it does not count — and the failure says which field is missing
+    // rather than reporting an absence of evidence.
+    let dir = tempdir().unwrap();
+    let config = _tdd_config();
+    let mut ledger = Ledger::init(&dir.path().join("ledger.jsonl"), "test", "1.0.0").unwrap();
+    ledger
+        .append("tdd_evidence", _entry(&[("agent_id", "agent-a")]))
+        .unwrap();
+
+    let gate = make_gate(
+        "ledger_has_event_since",
+        vec![
+            ("event", toml::Value::String("tdd_evidence".to_string())),
+            (
+                "since",
+                toml::Value::String("last_event_of_type:finding_resolved".to_string()),
+            ),
+            ("since_filter", _filter(&[("id", "{{event.finding_id}}")])),
+        ],
+    );
+    let result = evaluate_gate(&gate, &_actor_ctx(&ledger, &config, dir.path(), "agent-a"));
+    assert!(
+        !result.passed,
+        "evidence with no finding_id cannot be scoped, so it cannot authorize"
+    );
+    let reason = result.reason.unwrap_or_default();
+    assert!(
+        reason.contains("finding_id") && reason.contains("could not be scoped"),
+        "the failure must name the field the window is keyed on: {}",
+        reason
+    );
+}
+
+#[test]
+fn test_since_filter_matching_no_baseline_measures_from_the_run_start() {
+    // An actor's first turn: nothing matches the anchor filter yet. That is the
+    // same seq 0 a not-yet-recorded anchor resolves to, and it is why a
+    // since_filter naming a field nothing carries is a config error rather than
+    // a gate-time diagnostic — here the two are indistinguishable.
+    let dir = tempdir().unwrap();
+    let config = _tdd_config();
+    let mut ledger = Ledger::init(&dir.path().join("ledger.jsonl"), "test", "1.0.0").unwrap();
+    ledger
+        .append("fix_commit", _entry(&[("agent_id", "agent-a")]))
+        .unwrap();
+    ledger
+        .append("tdd_evidence", _entry(&[("agent_id", "agent-b")]))
+        .unwrap();
+
+    let gate = make_gate(
+        "ledger_has_event_since",
+        vec![
+            ("event", toml::Value::String("tdd_evidence".to_string())),
+            (
+                "since",
+                toml::Value::String("last_event_of_type:fix_commit".to_string()),
+            ),
+            ("filter", _filter(&[("agent_id", "{{agent_id}}")])),
+            ("since_filter", _filter(&[("agent_id", "{{agent_id}}")])),
+        ],
+    );
+    assert!(
+        evaluate_gate(&gate, &_actor_ctx(&ledger, &config, dir.path(), "agent-b")).passed,
+        "agent-b has never committed a fix, so its whole run is the window"
+    );
+}
+
+#[test]
+fn test_since_filter_appears_in_the_gate_description() {
+    // `gate check` and a blocked transition print the description; an operator
+    // reading "since last 'fix_commit' event" with no scoping shown cannot tell
+    // whose window they are looking at.
+    let dir = tempdir().unwrap();
+    let config = _tdd_config();
+    let ledger = Ledger::init(&dir.path().join("ledger.jsonl"), "test", "1.0.0").unwrap();
+
+    let gate = make_gate(
+        "ledger_has_event_since",
+        vec![
+            ("event", toml::Value::String("tdd_evidence".to_string())),
+            (
+                "since",
+                toml::Value::String("last_event_of_type:fix_commit".to_string()),
+            ),
+            ("since_filter", _filter(&[("agent_id", "{{agent_id}}")])),
+        ],
+    );
+    let result = evaluate_gate(&gate, &_actor_ctx(&ledger, &config, dir.path(), "agent-a"));
+    assert!(
+        result.description.contains("scoped to")
+            && result.description.contains("agent_id={{agent_id}}"),
+        "the description must show what the window keys on: {}",
+        result.description
+    );
+}

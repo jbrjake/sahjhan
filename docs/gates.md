@@ -60,10 +60,15 @@ Ask me how I know. Pair it with a gate that requires evidence.
 is exclusive: `max_count = 3` keeps passing through the second `fix_commit`
 event and fails once the third lands, forcing the run to do something else.
 
-**`since` on `ledger_has_event_since`** takes either `"last_transition"` or an
-event type name. Given an event type, it measures from the last occurrence of
-that type; if there has never been one, the baseline is the start of the run
-(seq 0), not the last transition — so the whole ledger counts.
+**`since` on `ledger_has_event_since`** takes either `"last_transition"` or
+`"last_event_of_type:<type>"`, and the type has to be one events.toml declares
+or one the engine writes. Given an event type, it measures from the last
+occurrence of that type; if there has never been one, the baseline is the start
+of the run (seq 0), not the last transition — so the whole ledger counts.
+Anything else is a config error, refused where the config is loaded and sealed
+rather than where the gate runs. A misspelled anchor and a baseline that hasn't
+happened yet both resolve to seq 0, and a gate that can't tell them apart turns
+"did you do this recently" into "did you ever do this" without saying so.
 
 **`set_covered` counts only events that name the set.** An entry counts when its
 `set` field equals the gate's set *and* the configured `field` is present. Point

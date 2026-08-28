@@ -62,7 +62,7 @@ message = "Write a failing test before editing source files."
 [hooks.gate]
 type = "ledger_has_event_since"
 event = "failing_test"
-since = "fix_commit"
+since = "last_event_of_type:fix_commit"
 
 [hooks.filter]
 path_not_matches = "tests/*"

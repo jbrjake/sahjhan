@@ -7,6 +7,8 @@
 // - [validate]              ProtocolConfig::validate()       — basic structural validation
 // - [validate-deep]         ProtocolConfig::validate_deep()  — file/alias/gate/render/ledger/branching checks
 // - [validate-gate]         ProtocolConfig::validate_gate()  — recursive gate validator (composite + leaf)
+// - [resolve-since-anchor]  ProtocolConfig::resolve_since_anchor() — `since` form → baseline event type, or why not
+// - SinceAnchorError        — an unrecognized form, or a prefixed form naming an undeclared event type
 // - initial_state()         — find the state with initial = true
 // - [compute-config-seals]  compute_config_seals()           — SHA-256 hashes of all eight sealed config files
 
@@ -35,6 +37,40 @@ pub use vault_policy::{VaultAccess, VaultPolicy};
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
+
+/// Why a `ledger_has_event_since` gate's `since` value names no baseline.
+///
+/// Both variants used to resolve to seq 0 — the same value a recognized anchor
+/// whose event has not happened yet resolves to — which turned a typo into a
+/// window silently widened to the whole run (sahjhan #34).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SinceAnchorError {
+    /// Not one of the forms the engine knows how to read.
+    UnrecognizedForm(String),
+    /// `last_event_of_type:<type>` naming an event type nothing declares.
+    UndeclaredEvent(String),
+}
+
+impl std::fmt::Display for SinceAnchorError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SinceAnchorError::UnrecognizedForm(value) => write!(
+                f,
+                "has unrecognized since anchor '{}' (expected \"last_transition\" \
+                 or \"last_event_of_type:<event type>\")",
+                value
+            ),
+            SinceAnchorError::UndeclaredEvent(event_type) => write!(
+                f,
+                "anchors on undeclared event type '{}' (since = \
+                 \"last_event_of_type:{}\" — declare [events.{}] in events.toml)",
+                event_type, event_type, event_type
+            ),
+        }
+    }
+}
+
+impl std::error::Error for SinceAnchorError {}
 
 /// The unified configuration loaded from a protocol directory.
 #[derive(Debug, Clone)]
@@ -313,7 +349,81 @@ impl ProtocolConfig {
             }
         }
 
+        // 6. `since` anchors resolve. Checked here rather than in
+        // `validate_deep` because this is the validation every command runs,
+        // including `init` and `reseal` — the two that seal the config. An
+        // anchor the engine cannot recognize must not be sealable.
+        for t in &self.transitions {
+            for gate in &t.gates {
+                self.check_since_anchors(
+                    gate,
+                    &format!("transitions.toml: transition '{}'", t.command),
+                    &mut errors,
+                );
+            }
+        }
+        for (idx, hook) in self.hooks.iter().enumerate() {
+            if let Some(ref gate) = hook.gate {
+                self.check_since_anchors(gate, &format!("hooks.toml: hook[{}]", idx), &mut errors);
+            }
+        }
+
         errors
+    }
+
+    /// Recursively check every `ledger_has_event_since` gate in a gate tree for
+    /// a `since` value that names no baseline.
+    ///
+    /// Composite gates nest, so this walks children — an unrecognized anchor
+    /// buried in an `any_of` is the same defect as one at the top.
+    // [check-since-anchors]
+    fn check_since_anchors(&self, gate: &GateConfig, location: &str, errors: &mut Vec<String>) {
+        if gate.gate_type == "ledger_has_event_since" {
+            // A missing `since` is reported by validate_deep's required-param
+            // check; the default the gate applies is `last_transition`, which
+            // is a recognized form, so there is nothing to say here.
+            if let Some(since) = gate.params.get("since").and_then(|v| v.as_str()) {
+                if let Err(e) = self.resolve_since_anchor(since) {
+                    errors.push(format!("{}: gate 'ledger_has_event_since' {}", location, e));
+                }
+            }
+        }
+        for child in &gate.gates {
+            self.check_since_anchors(child, location, errors);
+        }
+    }
+
+    /// Resolve a `ledger_has_event_since` gate's `since` to the event type its
+    /// baseline is the last occurrence of.
+    ///
+    /// Two forms are recognized, and nothing else:
+    ///
+    /// - `last_transition` — the last `state_transition`.
+    /// - `last_event_of_type:<type>` — the last `<type>`, where `<type>` is
+    ///   declared in events.toml or written by the engine itself.
+    ///
+    /// A recognized anchor whose baseline event has not happened yet still
+    /// resolves: the gate then measures from the start of the run (sahjhan #31).
+    /// That is only safe because the anchor itself was checked — "the event
+    /// hasn't happened" and "that isn't an event" are the same seq 0 to the
+    /// gate, and telling them apart is what this function is for (sahjhan #34).
+    // [resolve-since-anchor]
+    pub fn resolve_since_anchor<'a>(&self, since: &'a str) -> Result<&'a str, SinceAnchorError> {
+        if since == "last_transition" {
+            return Ok("state_transition");
+        }
+        match since.strip_prefix("last_event_of_type:") {
+            // `last_event_of_type:` with nothing after it names no type at all,
+            // which reads as a malformed anchor rather than a missing event.
+            Some("") => Err(SinceAnchorError::UnrecognizedForm(since.to_string())),
+            Some(event_type)
+                if self.events.contains_key(event_type) || events::is_engine_event(event_type) =>
+            {
+                Ok(event_type)
+            }
+            Some(event_type) => Err(SinceAnchorError::UndeclaredEvent(event_type.to_string())),
+            None => Err(SinceAnchorError::UnrecognizedForm(since.to_string())),
+        }
     }
 
     /// Deep validation that includes file-system and cross-reference checks.

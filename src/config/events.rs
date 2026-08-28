@@ -7,9 +7,29 @@
 // - EventConfig             — single event type definition; `restricted` marks HMAC-only events; `attestation` names its evidence strength
 // - EventFieldConfig        — field name, type, pattern, allowed values, optional flag
 // - ProducerConfig          — a declared producer of an event, with an optional state window
+// - ENGINE_EVENTS           — event types the engine itself writes; part of the vocabulary without being declared
+// - is_engine_event()       — whether an event type is one of those
 
 use serde::Deserialize;
 use std::collections::HashMap;
+
+/// Event types the engine writes on its own behalf. Nothing in a consumer's
+/// config produces these, they are never declared in events.toml, and their
+/// absence from it is not a defect — so anything asking "is this a real event
+/// type" has to admit them alongside the declared ones.
+pub const ENGINE_EVENTS: &[&str] = &[
+    "genesis",
+    "state_transition",
+    "gate_attestation",
+    "set_member_complete",
+    "checkpoint",
+    "config_reseal",
+];
+
+/// Whether `event` is written by the engine itself.
+pub fn is_engine_event(event: &str) -> bool {
+    ENGINE_EVENTS.contains(&event)
+}
 
 /// Wrapper for the full events.toml file.
 #[derive(Debug, Deserialize)]

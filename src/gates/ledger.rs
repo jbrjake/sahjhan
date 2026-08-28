@@ -93,10 +93,14 @@ pub(super) fn eval_ledger_has_event(gate: &GateConfig, ctx: &GateContext) -> Gat
 // `since` selects the baseline the count starts after:
 //   "last_transition"            -> the last state_transition (default)
 //   "last_event_of_type:<type>"  -> the last <type> event
-//   "<type>" (legacy bare form)  -> the last <type> event
-// A missing baseline (no such event yet) is treated as the run start (seq 0),
-// so the gate is evaluable from the first event. `min_count` (default 1) sets
-// how many matching events must exist after the baseline.
+// Anything else fails the gate: config validation rejects it, so reaching here
+// means the config was never validated, and an anchor the engine cannot read
+// must not quietly become "the start of the run" (sahjhan #34).
+//
+// A missing baseline (a recognized anchor whose event has not happened yet) is
+// treated as the run start (seq 0), so the gate is evaluable from the first
+// event. `min_count` (default 1) sets how many matching events must exist
+// after the baseline.
 pub(super) fn eval_ledger_has_event_since(gate: &GateConfig, ctx: &GateContext) -> GateResult {
     let event = gate
         .params
@@ -119,14 +123,21 @@ pub(super) fn eval_ledger_has_event_since(gate: &GateConfig, ctx: &GateContext) 
     // ledger_has_event) — e.g. only count events for the current perspective.
     let filter = gate_filter(gate, ctx);
 
-    // Resolve the baseline event type from `since`.
-    let baseline_type = if since == "last_transition" {
-        "state_transition"
-    } else if let Some(t) = since.strip_prefix("last_event_of_type:") {
-        t
-    } else {
-        // Legacy bare event-type form.
-        since
+    // Resolve the baseline event type from `since`. Fails closed: an anchor
+    // that names nothing blocks rather than widening the window to seq 0.
+    let baseline_type = match ctx.config.resolve_since_anchor(since) {
+        Ok(t) => t,
+        Err(e) => {
+            return GateResult {
+                passed: false,
+                evaluable: true,
+                gate_type: "ledger_has_event_since".to_string(),
+                description: format!("'{}' event exist(s) since an unreadable anchor", event),
+                reason: Some(format!("gate {}", e)),
+                intent: None,
+                attestation: None,
+            };
+        }
     };
 
     // Baseline seq = the last occurrence of baseline_type, else run start (0).

@@ -995,6 +995,143 @@ fn test_ledger_has_event_since_missing_baseline_counts_from_start() {
     assert!(evaluate_gate(&gate, &ctx).passed);
 }
 
+// ledger_has_event_since: an anchor the engine cannot read fails the gate
+// (sahjhan #34). Every value below used to resolve to seq 0 — the same baseline
+// as a recognized-but-not-yet-recorded anchor — which widened the window from
+// "since <anchor>" to "since the start of the run" with nothing said.
+
+/// A ledger where the two readings disagree: with the window scoped to the last
+/// transition there is no `resolved` after it, but counting from the run start
+/// finds one. A gate that passes here has widened its window.
+fn _widening_ledger(path: &Path) -> Ledger {
+    let mut ledger = Ledger::init(path, "test", "1.0.0").unwrap();
+    ledger.append("resolved", BTreeMap::new()).unwrap();
+    let mut trans_fields = BTreeMap::new();
+    trans_fields.insert("from".to_string(), "idle".to_string());
+    trans_fields.insert("to".to_string(), "working".to_string());
+    trans_fields.insert("command".to_string(), "begin".to_string());
+    ledger.append("state_transition", trans_fields).unwrap();
+    ledger
+}
+
+#[test]
+fn test_ledger_has_event_since_unrecognized_anchor_fails_closed() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger = _widening_ledger(&dir.path().join("ledger.jsonl"));
+
+    // The table from sahjhan #34: a typo'd anchor, an empty one, the wrong
+    // case, a space for the underscore, a number, and the bare event-type form
+    // that made all of them look plausible.
+    for since in [
+        "totally_not_a_real_anchor",
+        "",
+        "LAST_TRANSITION",
+        "last transition",
+        "42",
+        "last_event_of_type:",
+        "resolved",
+    ] {
+        let gate = make_gate(
+            "ledger_has_event_since",
+            vec![
+                ("event", toml::Value::String("resolved".to_string())),
+                ("since", toml::Value::String(since.to_string())),
+            ],
+        );
+        let ctx = _since_ctx(&ledger, &config, dir.path());
+        let result = evaluate_gate(&gate, &ctx);
+        assert!(
+            !result.passed,
+            "since = {:?} must fail the gate, not widen its window",
+            since
+        );
+        let reason = result.reason.unwrap_or_default();
+        assert!(
+            reason.contains(since) || since.is_empty(),
+            "the failure must name the value it could not read; got: {}",
+            reason
+        );
+    }
+}
+
+#[test]
+fn test_ledger_has_event_since_undeclared_anchor_type_fails_closed() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger = _widening_ledger(&dir.path().join("ledger.jsonl"));
+
+    let gate = make_gate(
+        "ledger_has_event_since",
+        vec![
+            ("event", toml::Value::String("resolved".to_string())),
+            (
+                "since",
+                toml::Value::String("last_event_of_type:nonexistent_event_type".to_string()),
+            ),
+        ],
+    );
+    let ctx = _since_ctx(&ledger, &config, dir.path());
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(
+        !result.passed,
+        "an undeclared anchor type is indistinguishable from a typo — fail closed"
+    );
+    assert!(
+        result
+            .reason
+            .unwrap_or_default()
+            .contains("nonexistent_event_type"),
+        "the failure must name the undeclared type"
+    );
+}
+
+#[test]
+fn test_ledger_has_event_since_recognized_anchors_still_resolve() {
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger = _widening_ledger(&dir.path().join("ledger.jsonl"));
+    let ctx = _since_ctx(&ledger, &config, dir.path());
+
+    // last_transition: the `resolved` precedes the transition, so nothing counts.
+    let gate = make_gate(
+        "ledger_has_event_since",
+        vec![
+            ("event", toml::Value::String("resolved".to_string())),
+            ("since", toml::Value::String("last_transition".to_string())),
+        ],
+    );
+    assert!(!evaluate_gate(&gate, &ctx).passed);
+
+    // A declared type with no rows yet still resolves to the run start, so the
+    // `resolved` at seq 1 counts. Same seq 0 as a typo used to produce, but now
+    // only reachable through an anchor the engine recognizes (sahjhan #31).
+    let gate = make_gate(
+        "ledger_has_event_since",
+        vec![
+            ("event", toml::Value::String("resolved".to_string())),
+            (
+                "since",
+                toml::Value::String("last_event_of_type:check_done".to_string()),
+            ),
+        ],
+    );
+    assert!(evaluate_gate(&gate, &ctx).passed);
+
+    // An engine-written type is part of the vocabulary without being declared.
+    let gate = make_gate(
+        "ledger_has_event_since",
+        vec![
+            ("event", toml::Value::String("resolved".to_string())),
+            (
+                "since",
+                toml::Value::String("last_event_of_type:state_transition".to_string()),
+            ),
+        ],
+    );
+    assert!(!evaluate_gate(&gate, &ctx).passed);
+}
+
 // ---------------------------------------------------------------------------
 // set_covered
 // ---------------------------------------------------------------------------
@@ -3407,8 +3544,8 @@ fn test_attestation_stdout_hash_is_deterministic() {
 
 #[test]
 fn test_ledger_has_event_since_custom_event() {
-    // transition → fix_commit → failing_test
-    // Gate: has "failing_test" since "fix_commit" → should PASS
+    // transition → check_done → failing_test
+    // Gate: has "failing_test" since the last "check_done" → should PASS
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     let ledger_path = dir.path().join("ledger.jsonl");
@@ -3419,14 +3556,17 @@ fn test_ledger_has_event_since_custom_event() {
     trans_fields.insert("to".to_string(), "working".to_string());
     trans_fields.insert("command".to_string(), "begin".to_string());
     ledger.append("state_transition", trans_fields).unwrap();
-    ledger.append("fix_commit", BTreeMap::new()).unwrap();
+    ledger.append("check_done", BTreeMap::new()).unwrap();
     ledger.append("failing_test", BTreeMap::new()).unwrap();
 
     let gate = make_gate(
         "ledger_has_event_since",
         vec![
             ("event", toml::Value::String("failing_test".to_string())),
-            ("since", toml::Value::String("fix_commit".to_string())),
+            (
+                "since",
+                toml::Value::String("last_event_of_type:check_done".to_string()),
+            ),
         ],
     );
     let ctx = GateContext {
@@ -3439,14 +3579,14 @@ fn test_ledger_has_event_since_custom_event() {
     };
     assert!(
         evaluate_gate(&gate, &ctx).passed,
-        "should pass: failing_test exists after fix_commit"
+        "should pass: failing_test exists after check_done"
     );
 }
 
 #[test]
 fn test_ledger_has_event_since_custom_event_fail() {
-    // transition → failing_test → fix_commit
-    // Gate: has "failing_test" since "fix_commit" → should FAIL
+    // transition → failing_test → check_done
+    // Gate: has "failing_test" since the last "check_done" → should FAIL
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     let ledger_path = dir.path().join("ledger.jsonl");
@@ -3458,13 +3598,16 @@ fn test_ledger_has_event_since_custom_event_fail() {
     trans_fields.insert("command".to_string(), "begin".to_string());
     ledger.append("state_transition", trans_fields).unwrap();
     ledger.append("failing_test", BTreeMap::new()).unwrap();
-    ledger.append("fix_commit", BTreeMap::new()).unwrap();
+    ledger.append("check_done", BTreeMap::new()).unwrap();
 
     let gate = make_gate(
         "ledger_has_event_since",
         vec![
             ("event", toml::Value::String("failing_test".to_string())),
-            ("since", toml::Value::String("fix_commit".to_string())),
+            (
+                "since",
+                toml::Value::String("last_event_of_type:check_done".to_string()),
+            ),
         ],
     );
     let ctx = GateContext {
@@ -3477,16 +3620,19 @@ fn test_ledger_has_event_since_custom_event_fail() {
     };
     assert!(
         !evaluate_gate(&gate, &ctx).passed,
-        "should fail: failing_test is before fix_commit"
+        "should fail: failing_test is before check_done"
     );
 }
 
 #[test]
 fn test_ledger_has_event_since_custom_event_fallback() {
-    // No "fix_commit" baseline exists → count from the run start (seq 0), NOT
+    // No "check_done" baseline exists → count from the run start (seq 0), NOT
     // from the last transition. failing_test recorded BEFORE the transition
     // must still count. (Before the fix this fell back to last_transition and
     // would have FAILED here — the removed quirk.)
+    //
+    // This is the case sahjhan #34 had to preserve while rejecting typos: a
+    // declared event type that has not been recorded yet still resolves.
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     let ledger_path = dir.path().join("ledger.jsonl");
@@ -3503,7 +3649,10 @@ fn test_ledger_has_event_since_custom_event_fallback() {
         "ledger_has_event_since",
         vec![
             ("event", toml::Value::String("failing_test".to_string())),
-            ("since", toml::Value::String("fix_commit".to_string())),
+            (
+                "since",
+                toml::Value::String("last_event_of_type:check_done".to_string()),
+            ),
         ],
     );
     let ctx = GateContext {

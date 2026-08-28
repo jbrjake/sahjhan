@@ -984,3 +984,140 @@ fn test_validate_named_query_with_empty_sql_is_error() {
         errors
     );
 }
+
+// ---------------------------------------------------------------------------
+// `since` anchors on ledger_has_event_since gates (sahjhan #34)
+//
+// An unrecognized anchor used to resolve to seq 0 — the same baseline as a
+// recognized anchor whose event has not happened yet — so a typo widened the
+// gate's window to the whole run and nothing said so. These run in `validate()`
+// rather than `validate_deep()` because that is the check every command makes,
+// including the two that seal the config.
+// ---------------------------------------------------------------------------
+
+/// A `ledger_has_event_since` gate anchored on `since`.
+fn since_gate(since: &str) -> sahjhan::config::GateConfig {
+    let mut params = std::collections::HashMap::new();
+    params.insert(
+        "event".to_string(),
+        toml::Value::String("resolved".to_string()),
+    );
+    params.insert("since".to_string(), toml::Value::String(since.to_string()));
+    sahjhan::config::GateConfig {
+        gate_type: "ledger_has_event_since".to_string(),
+        intent: None,
+        gates: vec![],
+        params,
+    }
+}
+
+#[test]
+fn test_validate_rejects_unrecognized_since_anchor() {
+    // The table from sahjhan #34, plus the bare event-type form that made every
+    // one of them look like a legitimate spelling.
+    for since in [
+        "totally_not_a_real_anchor",
+        "",
+        "LAST_TRANSITION",
+        "last transition",
+        "42",
+        "last_event_of_type:",
+        "check_done",
+    ] {
+        let errors = config_with_gate(since_gate(since)).validate();
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("unrecognized since anchor")
+                    && e.contains("transitions.toml")
+                    && e.contains("transition 'begin'")),
+            "since = {:?} must be a config error naming the file and transition: {:?}",
+            since,
+            errors
+        );
+    }
+}
+
+#[test]
+fn test_validate_rejects_since_anchor_on_undeclared_event_type() {
+    let errors =
+        config_with_gate(since_gate("last_event_of_type:nonexistent_event_type")).validate();
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("undeclared event type") && e.contains("nonexistent_event_type")),
+        "an anchor on an undeclared event type is indistinguishable from a typo: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_validate_accepts_recognized_since_anchors() {
+    for since in [
+        "last_transition",
+        // Declared in examples/minimal/events.toml.
+        "last_event_of_type:check_done",
+        // Written by the engine, so never declared anywhere.
+        "last_event_of_type:set_member_complete",
+    ] {
+        let errors = config_with_gate(since_gate(since)).validate();
+        assert!(
+            errors.is_empty(),
+            "since = {:?} is a recognized anchor: {:?}",
+            since,
+            errors
+        );
+    }
+}
+
+#[test]
+fn test_validate_checks_since_anchor_nested_in_composite_gate() {
+    let mut params = std::collections::HashMap::new();
+    params.insert("k".to_string(), toml::Value::Integer(1));
+    let nested = sahjhan::config::GateConfig {
+        gate_type: "k_of_n".to_string(),
+        intent: None,
+        gates: vec![sahjhan::config::GateConfig {
+            gate_type: "any_of".to_string(),
+            intent: None,
+            gates: vec![since_gate("last transition")],
+            params: std::collections::HashMap::new(),
+        }],
+        params,
+    };
+    let errors = config_with_gate(nested).validate();
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("unrecognized since anchor") && e.contains("last transition")),
+        "a bad anchor buried in a composite gate is the same defect: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_validate_checks_since_anchor_in_hook_gate() {
+    use sahjhan::config::hooks::*;
+    let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    config.hooks.push(HookConfig {
+        event: HookEvent::PreToolUse,
+        tools: Some(vec!["Edit".to_string()]),
+        states: None,
+        states_not: None,
+        action: Some("block".to_string()),
+        message: Some("blocked".to_string()),
+        gate: Some(since_gate("last transition")),
+        check: None,
+        auto_record: None,
+        filter: None,
+    });
+    let label = format!("hooks.toml: hook[{}]", config.hooks.len() - 1);
+    let errors = config.validate();
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains(&label) && e.contains("unrecognized since anchor")),
+        "a hook gate's anchor is checked too, and reported against hooks.toml: {:?}",
+        errors
+    );
+}

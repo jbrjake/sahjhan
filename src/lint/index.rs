@@ -4,7 +4,6 @@
 // Everything here is read out of config — no ledger, no execution.
 //
 // ## Index
-// - ENGINE_EVENTS         — event types the engine itself writes
 // - Producer              — one thing that can record an event, with its availability window
 // - ProducerIndex         — event -> producers (declared + inferred + engine)
 // - [build-producers]     ProducerIndex::build()   — assemble from events.toml, emits, hooks
@@ -17,21 +16,10 @@ use std::collections::{HashMap, HashSet};
 
 use crate::config::{GateConfig, ProtocolConfig};
 
-/// Event types the engine writes on its own behalf. Nothing in a consumer's
-/// config produces these, and their absence is never a config defect.
-pub const ENGINE_EVENTS: &[&str] = &[
-    "genesis",
-    "state_transition",
-    "gate_attestation",
-    "set_member_complete",
-    "checkpoint",
-    "config_reseal",
-];
-
-/// Whether `event` is written by the engine itself.
-pub fn is_engine_event(event: &str) -> bool {
-    ENGINE_EVENTS.contains(&event)
-}
+// The engine's own event vocabulary lives with the rest of the vocabulary, in
+// config::events — the `since` anchor validator needs it too, and one list is
+// the point.
+pub use crate::config::events::{is_engine_event, ENGINE_EVENTS};
 
 /// Something that can record an event.
 ///

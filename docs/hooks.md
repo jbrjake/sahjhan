@@ -49,7 +49,7 @@ Every hook matches on `event` (`PreToolUse`, `PostToolUse`, `Stop`) and may narr
 
 ### gate hooks
 
-Any gate type can appear in a hook, with one catch: hooks evaluate with no state params, so a gate templated on a state param never resolves, which makes it fire unconditionally. Only the `paths.*` and `sets.<name>` variables are available. The hook fires when the gate **fails**:
+Hooks fire when a gate **fails**. Any gate type can appear in a hook, with one catch: hooks don't get most state params. Only `agent_id`, `paths.*`, and `sets.<name>` are available. `agent_id` comes from `hook eval --agent-id`, which Claude Code sets on a hook fired inside a subagent and omits on the main thread.
 
 ```toml
 [[hooks]]
@@ -71,6 +71,59 @@ path_not_matches = "tests/*"
 The filter means the hook only applies to source files. Edit `tests/test_thing.py` and it steps aside. Edit `src/main.py` with no `failing_test` event since the last `fix_commit`, and it blocks.
 
 Globs support `*`, `**`, and `*.ext`, in both `path_matches` and `path_not_matches`.
+
+### one gate, several agents
+
+That hook is written for one agent at a time. Run three fix agents at once and
+it stops meaning what it says: `filter` scopes the gate to the actor asking, but
+the anchor is still global, so the first agent to land a fix ends everyone's
+window. The others are blocked mid-fix holding evidence they recorded
+correctly, and the escape the message prints is unreachable because their fix is
+already written.
+
+The solution is a `since_filter` that scopes the window from the resolution of the
+finding the evidence is about, so an agent's authorization is consumed by its own
+work and nobody else's:
+
+```toml
+[hooks.gate]
+type = "ledger_has_event_since"
+event = "tdd_evidence"
+since = "last_event_of_type:finding_resolved"
+filter = { agent_id = "{{agent_id}}" }
+since_filter = { id = "{{event.finding_id}}" }
+```
+
+Two agents, one ledger. agent-a recorded evidence for `f1`, agent-b for `f2`,
+and `f1` has since been resolved:
+
+```console
+$ sahjhan hook eval --event PreToolUse --tool Edit --file src/fix.rs --agent-id agent-a
+{
+  "decision": "block",
+  "messages": [
+    {
+      "source": "hook",
+      "rule_index": 0,
+      "action": "block",
+      "message": "record a failing test for this finding first"
+    }
+  ],
+  "auto_records": [],
+  "monitor_warnings": []
+}
+
+$ sahjhan hook eval --event PreToolUse --tool Edit --file src/fix.rs --agent-id agent-b
+{
+  "decision": "allow",
+  "messages": [],
+  "auto_records": [],
+  "monitor_warnings": []
+}
+```
+
+See [`since_filter` in gates.md](gates.md#notes-on-the-ones-with-sharp-edges)
+for the two forms and why both field names have to be declared.
 
 ### check hooks
 

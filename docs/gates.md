@@ -28,7 +28,7 @@ The same gate types work inside `hooks.toml` rules — see [hooks.md](hooks.md).
 | `command_succeeds` | `cmd`, `timeout`, `attest` | sahjhan runs the command. Exit 0 or no deal. |
 | `command_output` | `cmd`, `expect`, `timeout`, `attest` | sahjhan runs the command; trimmed stdout must equal `expect` exactly. |
 | `ledger_has_event` | `event`, `min_count`, `max_count`, `filter` | At least `min_count` (and strictly fewer than `max_count`) events of this type. |
-| `ledger_has_event_since` | `event`, `since`, `min_count`, `filter` | The event was recorded since a reference point. |
+| `ledger_has_event_since` | `event`, `since`, `min_count`, `filter`, `since_filter` | The event was recorded since a reference point. |
 | `ledger_lacks_event` | `event`, `filter` | Zero matching events. The inverse, for "must not have done X". |
 | `set_covered` | `set`, `event`, `field` | Every member of the set has a matching event — one whose `set` field names this set. |
 | `min_elapsed` | `event`, `seconds` | N seconds since the last event of that type. |
@@ -69,6 +69,33 @@ Anything else is a config error, refused where the config is loaded and sealed
 rather than where the gate runs. A misspelled anchor and a baseline that hasn't
 happened yet both resolve to seq 0, and a gate that can't tell them apart turns
 "did you do this recently" into "did you ever do this" without saying so.
+
+**`since_filter` scopes where the window starts**, the way `filter` scopes what
+counts inside it. Without it the anchor is global, and with more than one actor
+in a run that makes a per-actor gates difficult to express:
+
+```toml
+# the window starts after this actor's own last fix_commit
+since_filter = { agent_id = "{{agent_id}}" }
+```
+
+The key names a field of the baseline event. The value's an ordinary template
+variable. 
+
+```toml
+# the window starts after the resolution of the finding this evidence is about
+since_filter = { id = "{{event.finding_id}}" }
+```
+
+As a convenience, `{{event.<field>}}` reads fields from the event in focus.
+That runs per candidate rather than only once per gate, which is what
+makes the window self-consuming. A piece of evidence can let a gate pass only
+until another event of the same type lands. An event carrying no value for a
+listed field is not counted.
+
+Both field names have to be declared in events.toml, and this is checked when
+the config is sealed. Be careful: a `since_filter` that matches nothing resolves
+to seq 0, the first turn. A typo here widens a gate to apply to the entire run.
 
 **`set_covered` counts only events that name the set.** An entry counts when its
 `set` field equals the gate's set *and* the configured `field` is present. Point

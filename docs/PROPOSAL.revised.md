@@ -13,7 +13,7 @@ attempts and their dead ends are recorded as *inputs*, not as a plan to build.
   Read them before writing any code. (They were deliberately *not* read while
   writing this note, so their specifics aren't reflected here — they are prior art
   you must reconcile with.)
-- **`PROPOSAL.md`** (repo root, Jon's original working note) — the original framing
+- **`PROPOSAL.md`** (Jon's original working note) — the original framing
   of the problem, focused on the daemon's per-connection "who is on the socket"
   question. This note supersedes its *approach* but not its problem statement.
 - **`CLAUDE.md`** — codebase map (module lookup tables, flow maps, anchors). Use it

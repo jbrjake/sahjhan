@@ -1096,6 +1096,45 @@ fn test_validate_checks_since_anchor_nested_in_composite_gate() {
 }
 
 #[test]
+fn test_validate_rejects_non_string_since_anchor() {
+    // TOML is typed, so `since = 42` is not the string "42": it misses
+    // `as_str()` entirely and used to read as an *absent* `since`, silently
+    // taking the `last_transition` default. That narrows rather than widens,
+    // but it is the same silent reinterpretation — and it sealed clean.
+    for value in [
+        toml::Value::Integer(42),
+        toml::Value::Boolean(true),
+        toml::Value::Float(1.5),
+        toml::Value::Array(vec![toml::Value::String("last_transition".to_string())]),
+    ] {
+        let mut gate = since_gate("last_transition");
+        let found = value.type_str();
+        gate.params.insert("since".to_string(), value.clone());
+        let errors = config_with_gate(gate).validate();
+        assert!(
+            errors.iter().any(|e| e.contains("non-string since anchor")
+                && e.contains(found)
+                && e.contains("transitions.toml")),
+            "since = {:?} must be a config error naming the type it found: {:?}",
+            value,
+            errors
+        );
+    }
+}
+
+#[test]
+fn test_validate_accepts_absent_since_anchor() {
+    // Absent is not the same defect: the gate documents `last_transition` as its
+    // default, and validate_deep reports the missing required param.
+    let mut gate = since_gate("last_transition");
+    gate.params.remove("since");
+    assert!(
+        config_with_gate(gate).validate().is_empty(),
+        "an absent `since` takes the documented default, which is a valid anchor"
+    );
+}
+
+#[test]
 fn test_validate_checks_since_anchor_in_hook_gate() {
     use sahjhan::config::hooks::*;
     let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();

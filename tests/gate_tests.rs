@@ -1087,6 +1087,66 @@ fn test_ledger_has_event_since_undeclared_anchor_type_fails_closed() {
 }
 
 #[test]
+fn test_ledger_has_event_since_non_string_anchor_fails_closed() {
+    // A ledger where the *default* anchor passes, so silently falling back to it
+    // is observable. `_widening_ledger` cannot show this: it blocks under
+    // `last_transition`, which is the same verdict as failing closed.
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let path = dir.path().join("ledger.jsonl");
+    let mut ledger = Ledger::init(&path, "test", "1.0.0").unwrap();
+    let mut trans_fields = BTreeMap::new();
+    trans_fields.insert("from".to_string(), "idle".to_string());
+    trans_fields.insert("to".to_string(), "working".to_string());
+    trans_fields.insert("command".to_string(), "begin".to_string());
+    ledger.append("state_transition", trans_fields).unwrap();
+    ledger.append("resolved", BTreeMap::new()).unwrap();
+    let ctx = _since_ctx(&ledger, &config, dir.path());
+
+    // Baseline: the default anchor passes on this ledger.
+    let gate = make_gate(
+        "ledger_has_event_since",
+        vec![
+            ("event", toml::Value::String("resolved".to_string())),
+            ("since", toml::Value::String("last_transition".to_string())),
+        ],
+    );
+    assert!(
+        evaluate_gate(&gate, &ctx).passed,
+        "fixture is only meaningful if the default anchor passes"
+    );
+
+    // TOML is typed: `since = 42` is not the string "42". It misses `as_str()`
+    // and used to read as an absent `since`, taking that default without a word.
+    for value in [
+        toml::Value::Integer(42),
+        toml::Value::Boolean(true),
+        toml::Value::Float(1.5),
+        toml::Value::Array(vec![toml::Value::String("last_transition".to_string())]),
+    ] {
+        let found = value.type_str();
+        let gate = make_gate(
+            "ledger_has_event_since",
+            vec![
+                ("event", toml::Value::String("resolved".to_string())),
+                ("since", value.clone()),
+            ],
+        );
+        let result = evaluate_gate(&gate, &ctx);
+        assert!(
+            !result.passed,
+            "since = {:?} must fail the gate, not quietly take the default",
+            value
+        );
+        assert!(
+            result.reason.unwrap_or_default().contains(found),
+            "the failure must name the type it found instead of a string: {:?}",
+            value
+        );
+    }
+}
+
+#[test]
 fn test_ledger_has_event_since_recognized_anchors_still_resolve() {
     let dir = tempdir().unwrap();
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();

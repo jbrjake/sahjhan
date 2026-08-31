@@ -96,9 +96,11 @@ pub(super) fn eval_ledger_has_event(gate: &GateConfig, ctx: &GateContext) -> Gat
 // `since` selects the baseline the count starts after:
 //   "last_transition"            -> the last state_transition (default)
 //   "last_event_of_type:<type>"  -> the last <type> event
-// Anything else fails the gate: config validation rejects it, so reaching here
-// means the config was never validated, and an anchor the engine cannot read
-// must not quietly become "the start of the run" (sahjhan #34).
+// Anything else fails the gate — including a value that is not a string at all,
+// since TOML's `since = 42` reads as an absent `since` and would otherwise take
+// the default. Config validation rejects both, so reaching here means the
+// config was never validated, and an anchor the engine cannot read must not
+// quietly become "the start of the run" or the default (sahjhan #34).
 //
 // `since_filter` scopes *which* baseline event the window starts at, the way
 // `filter` already scopes which events are counted. Without it the anchor is
@@ -125,11 +127,6 @@ pub(super) fn eval_ledger_has_event_since(gate: &GateConfig, ctx: &GateContext) 
         .get("event")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    let since = gate
-        .params
-        .get("since")
-        .and_then(|v| v.as_str())
-        .unwrap_or("last_transition");
     let min_count = gate
         .params
         .get("min_count")
@@ -142,8 +139,9 @@ pub(super) fn eval_ledger_has_event_since(gate: &GateConfig, ctx: &GateContext) 
     let filter = gate_filter(gate, ctx);
 
     // Resolve the baseline event type from `since`. Fails closed: an anchor
-    // that names nothing blocks rather than widening the window to seq 0.
-    let baseline_type = match ctx.config.resolve_since_anchor(since) {
+    // that names nothing blocks rather than widening the window to seq 0, and
+    // one that is not a string blocks rather than quietly taking the default.
+    let baseline_type = match ctx.config.resolve_gate_since(gate) {
         Ok(t) => t,
         Err(e) => {
             return GateResult {
@@ -223,7 +221,7 @@ pub(super) fn eval_ledger_has_event_since(gate: &GateConfig, ctx: &GateContext) 
     };
     let found = matching >= min_count;
 
-    let mut since_desc = if since == "last_transition" {
+    let mut since_desc = if baseline_type == "state_transition" {
         "last state_transition".to_string()
     } else {
         format!("last '{}' event", baseline_type)

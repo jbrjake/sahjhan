@@ -7,8 +7,9 @@
 // - [validate]              ProtocolConfig::validate()       — basic structural validation
 // - [validate-deep]         ProtocolConfig::validate_deep()  — file/alias/gate/render/ledger/branching checks
 // - [validate-gate]         ProtocolConfig::validate_gate()  — recursive gate validator (composite + leaf)
+// - [resolve-gate-since]    ProtocolConfig::resolve_gate_since()   — a gate's `since` param as written → baseline event type
 // - [resolve-since-anchor]  ProtocolConfig::resolve_since_anchor() — `since` form → baseline event type, or why not
-// - SinceAnchorError        — an unrecognized form, or a prefixed form naming an undeclared event type
+// - SinceAnchorError        — a non-string value, an unrecognized form, or a prefixed form naming an undeclared event type
 // - initial_state()         — find the state with initial = true
 // - [compute-config-seals]  compute_config_seals()           — SHA-256 hashes of all eight sealed config files
 
@@ -40,11 +41,15 @@ use std::path::Path;
 
 /// Why a `ledger_has_event_since` gate's `since` value names no baseline.
 ///
-/// Both variants used to resolve to seq 0 — the same value a recognized anchor
-/// whose event has not happened yet resolves to — which turned a typo into a
-/// window silently widened to the whole run (sahjhan #34).
+/// Every variant used to resolve to seq 0 or to the default anchor — both of
+/// them values a *correct* config also produces, which is what made a typo
+/// invisible rather than merely wrong (sahjhan #34).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SinceAnchorError {
+    /// Not a string at all: `since = 42` rather than `since = "42"`. TOML is
+    /// typed, so this never reached the anchor forms below — it read as an
+    /// absent `since` and took the default.
+    NotAString(String),
     /// Not one of the forms the engine knows how to read.
     UnrecognizedForm(String),
     /// `last_event_of_type:<type>` naming an event type nothing declares.
@@ -54,6 +59,12 @@ pub enum SinceAnchorError {
 impl std::fmt::Display for SinceAnchorError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            SinceAnchorError::NotAString(found) => write!(
+                f,
+                "has a non-string since anchor (found {}; expected the string \
+                 \"last_transition\" or \"last_event_of_type:<event type>\")",
+                found
+            ),
             SinceAnchorError::UnrecognizedForm(value) => write!(
                 f,
                 "has unrecognized since anchor '{}' (expected \"last_transition\" \
@@ -388,12 +399,10 @@ impl ProtocolConfig {
     fn check_gate_windows(&self, gate: &GateConfig, location: &str, errors: &mut Vec<String>) {
         if gate.gate_type == "ledger_has_event_since" {
             // A missing `since` is reported by validate_deep's required-param
-            // check; the default the gate applies is `last_transition`, which
-            // is a recognized form, so there is nothing to say here.
-            if let Some(since) = gate.params.get("since").and_then(|v| v.as_str()) {
-                if let Err(e) = self.resolve_since_anchor(since) {
-                    errors.push(format!("{}: gate 'ledger_has_event_since' {}", location, e));
-                }
+            // check; the default it resolves to is `last_transition`, which is
+            // a recognized form, so there is nothing to say here.
+            if let Err(e) = self.resolve_gate_since(gate) {
+                errors.push(format!("{}: gate 'ledger_has_event_since' {}", location, e));
             }
             self.check_since_filter(gate, location, errors);
         }
@@ -458,12 +467,9 @@ impl ProtocolConfig {
         let spec = crate::gates::types::filter_spec(gate, "since_filter");
 
         // A key names a field of the *baseline* event: where the window starts.
-        let since = gate
-            .params
-            .get("since")
-            .and_then(|v| v.as_str())
-            .unwrap_or("last_transition");
-        if let Ok(baseline) = self.resolve_since_anchor(since) {
+        // An unreadable `since` is already reported by the caller, and there is
+        // no baseline to check these keys against, so stay quiet about it here.
+        if let Ok(baseline) = self.resolve_gate_since(gate) {
             for (key, _) in &spec {
                 self.check_filter_field(baseline, key, "since_filter", &prefix, errors);
             }
@@ -536,6 +542,35 @@ impl ProtocolConfig {
     /// That is only safe because the anchor itself was checked — "the event
     /// hasn't happened" and "that isn't an event" are the same seq 0 to the
     /// gate, and telling them apart is what this function is for (sahjhan #34).
+    /// Resolve a gate's `since` **parameter as written** to its baseline event
+    /// type — the one place the parameter is read, so validation and evaluation
+    /// cannot disagree about what a gate's window is.
+    ///
+    /// Three readings, and the whole point of #34 is that they used to be
+    /// indistinguishable at the point it matters:
+    ///
+    /// - absent → `last_transition`, the gate's documented default;
+    /// - a string → whatever [`Self::resolve_since_anchor`] makes of it;
+    /// - anything else → an error. TOML is typed, so `since = 42` is not the
+    ///   string `"42"`: it misses `as_str()` and reads as an *absent* `since`,
+    ///   silently taking the default. That direction narrows rather than widens,
+    ///   but it is the same defect — a value no author intended, applied without
+    ///   a word, sealing clean. An anchor the engine cannot read must not be
+    ///   sealable, whichever way it happens to move the window.
+    // [resolve-gate-since]
+    pub fn resolve_gate_since<'a>(
+        &self,
+        gate: &'a GateConfig,
+    ) -> Result<&'a str, SinceAnchorError> {
+        match gate.params.get("since") {
+            None => Ok("state_transition"),
+            Some(value) => match value.as_str() {
+                Some(since) => self.resolve_since_anchor(since),
+                None => Err(SinceAnchorError::NotAString(value.type_str().to_string())),
+            },
+        }
+    }
+
     // [resolve-since-anchor]
     pub fn resolve_since_anchor<'a>(&self, since: &'a str) -> Result<&'a str, SinceAnchorError> {
         if since == "last_transition" {

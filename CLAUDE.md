@@ -18,6 +18,38 @@ When you modify any source file in this repository, you MUST update documentatio
 
 ---
 
+## ISSUE CLOSURE RULE
+
+**This is a BLOCKING requirement, with the same standing as the rule above.**
+
+`Closes #N` in a commit message closes the issue and explains nothing. A
+downstream consumer then sees a closed issue with no idea what changed or what
+to do about it. **Posting the resolution comment is part of closing the issue.**
+
+Before pushing anything whose commits say `Closes #N` / `Fixes #N`, run
+`gh issue view <N> --json comments` for each and post a comment carrying:
+
+1. **The commits, and the release version it shipped in.** Not "fixed on main" —
+   a consumer cannot pin to a branch. If the release isn't cut yet, say so and
+   come back when it is.
+2. **What changed behaviorally.** If the issue filed a reproduction, re-run it
+   against the *shipped binary* and paste the result as a before/after table.
+3. **Breaking changes, written as the migration to perform** — the old spelling,
+   the new spelling, and what happens to a config that still has the old one.
+4. **A "for downstream consumers" line:** what workaround they can now delete.
+5. **Cross-links** to sibling issues fixed in the same release.
+
+An existing comment written before the fix landed (or before a follow-up commit)
+is **stale**, not done. Supersede it with a new comment; do not leave it.
+
+**Why:** On 2026-08-31, #34 and #35 closed with v0.24.0. #35 had zero comments
+and #34 had only a note saying "unpushed at the time of writing" — no release
+named, predating the follow-up that finished the fix. The downstream consumer
+was left with nothing. The rule lives here because it kept being agreed to in
+conversation and then lost with the session.
+
+---
+
 ## Quick Reference
 
 ```

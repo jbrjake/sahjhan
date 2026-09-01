@@ -75,6 +75,159 @@ fn test_project_root_falls_back_to_cwd_for_absolute_data_dir() {
 }
 
 // ---------------------------------------------------------------------------
+// project_root_from: linked git worktrees (#47)
+//
+// `data_dir` is run state, so it is gitignored, so no worktree ever contains
+// one. A worktree that is not nested under the main checkout therefore has no
+// ancestor holding it, and anchoring it on itself points every system-owned
+// path at a directory nothing has written to.
+//
+// These build the on-disk shapes git produces rather than shelling out to it,
+// so they are fast and stay readable about *which byte* the decision turns on;
+// `test_sibling_worktree_reaches_the_projects_ledger` in integration_tests.rs
+// runs the same case against real `git worktree add` to keep the fabrication
+// honest.
+// ---------------------------------------------------------------------------
+
+/// A main checkout at `<tmp>/proj` — `.git` directory, `data_dir` present.
+fn project_with_repo() -> tempfile::TempDir {
+    let dir = tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("proj/docs/holtz/.sahjhan")).unwrap();
+    std::fs::create_dir_all(dir.path().join("proj/.git")).unwrap();
+    dir
+}
+
+/// Link `<tmp>/<at>` to `<tmp>/proj` the way `git worktree add` does: a `.git`
+/// file pointing at an admin directory under the shared repository, and a
+/// `commondir` in it naming that repository (relative, as git writes it).
+fn link_worktree(tmp: &Path, at: &str, name: &str) -> PathBuf {
+    let wt = tmp.join(at);
+    std::fs::create_dir_all(&wt).unwrap();
+    let admin = tmp.join("proj/.git/worktrees").join(name);
+    std::fs::create_dir_all(&admin).unwrap();
+    std::fs::write(admin.join("commondir"), "../..\n").unwrap();
+    std::fs::write(
+        wt.join(".git"),
+        format!("gitdir: {}\n", admin.to_string_lossy()),
+    )
+    .unwrap();
+    wt
+}
+
+/// Both sides canonicalized — macOS spells the tempdir `/var/...` and its
+/// realpath `/private/var/...`, and resolving `commondir` produces the latter.
+fn assert_same_dir(got: PathBuf, want: &Path) {
+    assert_eq!(
+        got.canonicalize().unwrap(),
+        want.canonicalize().unwrap(),
+        "anchored on {:?}, wanted {:?}",
+        got,
+        want
+    );
+}
+
+#[test]
+fn test_sibling_worktree_anchors_on_the_main_checkout() {
+    // The #47 reproduction: `git worktree add ../wt`, run a command from it.
+    // Nothing above `<tmp>/wt` holds the data_dir, and before the fix that made
+    // the worktree its own project — so every command resolved to a ledger
+    // that does not exist and exited 2 without saying why.
+    let dir = project_with_repo();
+    let wt = link_worktree(dir.path(), "wt", "wt");
+
+    assert_same_dir(
+        project_root_from("docs/holtz/.sahjhan", &wt),
+        &dir.path().join("proj"),
+    );
+}
+
+#[test]
+fn test_sibling_worktree_anchors_the_same_from_a_subdirectory_of_it() {
+    // A fix agent works in `src/`, not at the worktree root.
+    let dir = project_with_repo();
+    let wt = link_worktree(dir.path(), "wt", "wt");
+    std::fs::create_dir_all(wt.join("src/deep/nest")).unwrap();
+
+    assert_same_dir(
+        project_root_from("docs/holtz/.sahjhan", &wt.join("src/deep/nest")),
+        &dir.path().join("proj"),
+    );
+}
+
+#[test]
+fn test_nested_worktree_still_anchors_by_walking_up() {
+    // The layout Claude Code's `isolation: "worktree"` produces, and the case
+    // that worked before the fix: the walk-up passes through the main checkout
+    // and finds the data_dir, so no git resolution happens at all. Asserted
+    // uncanonicalized on purpose — this path must return the ancestor exactly
+    // as the caller spelled it.
+    let dir = project_with_repo();
+    let proj = dir.path().join("proj");
+    std::fs::create_dir_all(proj.join(".worktrees")).unwrap();
+    let wt = link_worktree(dir.path(), "proj/.worktrees/fix-1", "fix-1");
+
+    assert_eq!(project_root_from("docs/holtz/.sahjhan", &wt), proj);
+}
+
+#[test]
+fn test_submodule_does_not_anchor_on_its_superproject() {
+    // The check that cost the consumer a separate bug to find. A submodule also
+    // has a `.git` *file*, and its gitdir also lives under the superproject —
+    // but it carries no `commondir`, because a submodule is its own repository
+    // and deserves its own ledger. Following `gitdir:` without looking would
+    // hand every submodule the superproject's state.
+    let dir = project_with_repo();
+    let sub = dir.path().join("sub");
+    std::fs::create_dir_all(&sub).unwrap();
+    let admin = dir.path().join("proj/.git/modules/sub");
+    std::fs::create_dir_all(&admin).unwrap();
+    std::fs::write(
+        sub.join(".git"),
+        format!("gitdir: {}\n", admin.to_string_lossy()),
+    )
+    .unwrap();
+
+    assert_eq!(project_root_from("docs/holtz/.sahjhan", &sub), sub);
+}
+
+#[test]
+fn test_unresolvable_git_file_anchors_on_the_caller() {
+    // Every unreadable shape leaves the caller exactly where it was before the
+    // fix — this runs on the failure path of an anchor every command computes,
+    // so it may not introduce a new way to fail.
+    let dir = project_with_repo();
+    let tmp = dir.path();
+
+    let cases: [(&str, &str); 3] = [
+        ("garbage", "not a gitdir pointer at all\n"),
+        ("empty-pointer", "gitdir:\n"),
+        ("dangling", "gitdir: /nonexistent/admin/dir\n"),
+    ];
+    for (name, content) in cases {
+        let d = tmp.join(name);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join(".git"), content).unwrap();
+        assert_eq!(
+            project_root_from("docs/holtz/.sahjhan", &d),
+            d,
+            "{} should have anchored on itself",
+            name
+        );
+    }
+}
+
+#[test]
+fn test_directory_in_no_repository_at_all_anchors_on_itself() {
+    // Unchanged, and stated separately from the fresh-`init` case above because
+    // this is the one the worktree resolution must not disturb.
+    let dir = tempdir().unwrap();
+    let loose = dir.path().join("loose");
+    std::fs::create_dir_all(&loose).unwrap();
+
+    assert_eq!(project_root_from("docs/holtz/.sahjhan", &loose), loose);
+}
+
+// ---------------------------------------------------------------------------
 // The invariant that keeps the two derivations from drifting
 // ---------------------------------------------------------------------------
 

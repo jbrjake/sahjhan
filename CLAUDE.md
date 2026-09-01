@@ -252,7 +252,10 @@ current directory. Reach for this module before writing
 
 | Concept | File | Anchor/Item | Purpose |
 |---------|------|-------------|---------|
-| Project root | `paths.rs` | `[project-root]` | Ancestor of cwd that holds the relative `data_dir` — the anchor |
+| Project root | `paths.rs` | `[project-root]` | Ancestor of cwd that holds the relative `data_dir` — the anchor; falls back to the main worktree when cwd is a linked one (#47) |
+| Walk-up | `paths.rs` | `[walk-up]` | The ancestor search itself, or `None`; run once from cwd and once from the main worktree, so the retry is the same walk rather than a second spelling of it |
+| Linked worktree | `paths.rs` | `[linked-worktree]` | The main worktree behind the nearest `.git` *file*; a `.git` directory means the walk-up already covered it. Filesystem reads only — no `git` subprocess, and every unreadable case returns `None` (#47) |
+| Git common dir | `paths.rs` | `[git-common-dir]` | `gitdir:` → `commondir` → the directory holding the shared `.git`. The `commondir` check is what separates a linked worktree from a submodule, which has a `.git` file too and is its own repository (#47) |
 | Data dir | `paths.rs` | `[data-dir]` | `project_root_from(..).join(data_dir)`; one derivation, so the two cannot drift |
 | Manifest key | `paths.rs` | `[manifest-key]` | Project-root-relative key for a managed file |
 | Containment | `paths.rs` | `[path-under]` | Component-wise "is under" (not string `starts_with`); refuses `..` |
@@ -442,14 +445,35 @@ Where a managed file's *name* comes from, and why it must not come from the cwd.
 
 ```
 config paths.data_dir  (e.g. "docs/holtz/.sahjhan", relative)
-  → paths.rs [project-root]        ← walk UP from cwd to the ancestor holding it
+  → paths.rs [project-root]        ← [walk-up] from cwd to the ancestor holding it
       │                              this ancestor IS the project root
+      │  no ancestor holds it? → [linked-worktree] → [git-common-dir] → [walk-up] again
+      │                              from the MAIN worktree (#47); still nothing → cwd
       ├→ paths.rs [data-dir]         = project_root.join(data_dir)   ← ledger, manifest, registry live here
       ├→ paths.rs [manifest-key]     = file.strip_prefix(project_root) ← every manifest entry key
       │    → manifest/tracker.rs [manifest-track]  ← refuses a key outside managed_paths (E13)
       ├→ manifest/verify.rs [verify] ← base_dir for resolving those same keys
       └→ state/machine.rs StateMachine::new  ← working_dir for `command_succeeds` gates
 ```
+
+**Why the walk-up alone is not enough (#47).** `data_dir` holds run state, so it
+is gitignored, so `git worktree add` never produces it. A worktree nested inside
+the main checkout is fine — the walk passes through the checkout and finds the
+directory there — but a *sibling* worktree has no ancestor holding it and used
+to anchor on itself, resolving every system-owned path to somewhere nothing has
+ever been written. Same repository, same config, same `--config-dir`; exit 2 on
+every command, saying only that a file was missing. So the walk falls back to
+resolving a `.git` **file** to its main worktree and walking up from there.
+
+The `commondir` check in `[git-common-dir]` is load-bearing, not defensive: a
+submodule also replaces `.git` with a file pointing under the superproject, and
+following that pointer would quietly hand every submodule the superproject's
+ledger. A linked worktree's gitdir carries `commondir`; a submodule's does not.
+Everything unreadable — a `.git` file that is not a pointer, a dangling gitdir,
+an absent `commondir` — returns `None` and leaves the caller anchored exactly
+where it was before the fix. This runs on the failure path of an anchor every
+command computes, including `hook eval` on every tool call, which is why it
+reads files rather than forking `git`.
 
 **The one opt-out, and why it is per gate (#46).** The anchor above answers
 "where is the project", which is what almost every gate wants. It cannot answer
@@ -727,7 +751,8 @@ main.rs [cli-main]
 | Test file | Tests |
 |-----------|-------|
 | `tests/gate_tests.rs` | All gate types, template interpolation, field validation, StateParam source, attestation, `since` anchors failing closed — unrecognized, undeclared, and non-string (#34), `since_filter` per-actor and per-candidate windows (#35), gate `anchor` — project default, caller opt-in on all three command gates, unreadable anchors failing closed, attested working_dir (#46) |
-| `tests/integration_tests.rs` | Full CLI end-to-end (init, transition, events, queries, renders, sets); gate anchoring from a nested worktree — the default unchanged from any cwd, `anchor = "caller"` differing, and the transition attesting where it ran (#46) |
+| `tests/integration_tests.rs` | Full CLI end-to-end (init, transition, events, queries, renders, sets); gate anchoring from a nested worktree — the default unchanged from any cwd, `anchor = "caller"` differing, and the transition attesting where it ran (#46); the project anchor against **real** `git worktree add` — a sibling worktree reaching the project's ledger and writing to it rather than growing one of its own, a nested worktree unaffected, a plain directory still anchoring on itself (#47) |
+| `tests/paths_tests.rs` | Project-root anchoring: the walk-up from every subdirectory, manifest keys with one spelling, component-wise containment (holtz #85); linked worktrees with the on-disk shapes git writes — sibling and nested, a submodule's `commondir`-less gitdir not anchoring on its superproject, every unreadable `.git` file anchoring on the caller (#47) |
 | `tests/chain_integrity_tests.rs` | Ledger hash chain, append, reload, tamper detection |
 | `tests/config_tests.rs` | Config loading, validation, hooks/monitors/write_gated validation, `since` anchor rejection in transition + hook + composite gates, incl. non-string values (#34), `since_filter` field/shape rejection and TOML round-trip (#35), gate `anchor` rejection — unrecognized, non-string, on a gate that runs no command, on a composite, and nested in one (#46) |
 | `tests/state_machine_tests.rs` | StateMachine transitions, gates, sets |

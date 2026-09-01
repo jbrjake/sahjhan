@@ -6,10 +6,9 @@ use assert_cmd::Command;
 use predicates::prelude::*;
 use tempfile::tempdir;
 
-/// Create a temp directory with the minimal example config and run `init`.
-fn setup_initialized_dir() -> tempfile::TempDir {
-    let dir = tempdir().unwrap();
-    let config_dir = dir.path().join("enforcement");
+/// Lay the minimal example protocol out under `root` as `enforcement/`.
+fn copy_minimal_config(root: &std::path::Path) {
+    let config_dir = root.join("enforcement");
     std::fs::create_dir_all(&config_dir).unwrap();
     for file in &[
         "protocol.toml",
@@ -31,7 +30,13 @@ fn setup_initialized_dir() -> tempfile::TempDir {
         .unwrap();
     }
     // Also create the output directory
-    std::fs::create_dir_all(dir.path().join("output")).unwrap();
+    std::fs::create_dir_all(root.join("output")).unwrap();
+}
+
+/// Create a temp directory with the minimal example config and run `init`.
+fn setup_initialized_dir() -> tempfile::TempDir {
+    let dir = tempdir().unwrap();
+    copy_minimal_config(dir.path());
 
     Command::cargo_bin("sahjhan")
         .unwrap()
@@ -3133,4 +3138,158 @@ fn test_caller_anchored_transition_records_where_the_gate_ran() {
         "and it must be the caller's tree, not the project root:\n{}",
         stdout
     );
+}
+
+// ---------------------------------------------------------------------------
+// The project anchor and linked git worktrees (sahjhan #47)
+//
+// These drive real `git worktree add`, because the defect is about a layout
+// git produces and the fix reads bytes git writes. The hermetic version of the
+// same cases — including the submodule distinction — is in paths_tests.rs.
+// ---------------------------------------------------------------------------
+
+/// Run `git` in `cwd`, asserting it succeeded.
+fn git_in(cwd: &std::path::Path, args: &[&str]) {
+    // An identity is passed in rather than assumed: `commit` needs one and a CI
+    // runner has none configured.
+    let out = std::process::Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .env("GIT_AUTHOR_NAME", "sahjhan tests")
+        .env("GIT_AUTHOR_EMAIL", "tests@example.invalid")
+        .env("GIT_COMMITTER_NAME", "sahjhan tests")
+        .env("GIT_COMMITTER_EMAIL", "tests@example.invalid")
+        .output()
+        .expect("git must be on PATH for the worktree tests");
+    assert!(
+        out.status.success(),
+        "git {:?} failed: {}",
+        args,
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// A real repository at `<tmp>/proj`, initialized, with `data_dir` gitignored.
+///
+/// The gitignore is the whole point: `output/` holds run state, so it is not
+/// committed, so no worktree of this repository ever contains it.
+fn setup_repo_with_ledger() -> tempfile::TempDir {
+    let dir = tempdir().unwrap();
+    let proj = dir.path().join("proj");
+    copy_minimal_config(&proj);
+    std::fs::write(proj.join(".gitignore"), "output/\n").unwrap();
+
+    git_in(&proj, &["init", "-q"]);
+    git_in(&proj, &["add", "-A"]);
+    git_in(&proj, &["commit", "-qm", "protocol"]);
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "init"])
+        .current_dir(&proj)
+        .assert()
+        .success();
+
+    dir
+}
+
+/// `git worktree add` at `at`, returning the new worktree's path.
+fn add_worktree(dir: &tempfile::TempDir, at: &str, branch: &str) -> std::path::PathBuf {
+    let proj = dir.path().join("proj");
+    let wt = dir.path().join(at);
+    git_in(
+        &proj,
+        &["worktree", "add", "-q", "-b", branch, wt.to_str().unwrap()],
+    );
+    wt
+}
+
+#[test]
+fn test_sibling_worktree_reaches_the_projects_ledger() {
+    // The #47 reproduction, end to end: same repository, same config, same
+    // `--config-dir`, only the directory differs. It used to exit 2 with
+    // "Cannot open ledger: No such file or directory" and say nothing about
+    // why the directory mattered.
+    let dir = setup_repo_with_ledger();
+    let wt = add_worktree(&dir, "wt", "fix");
+
+    // The config is committed, so the worktree has its own copy of it — which
+    // is how a consumer actually invokes this, and which the config seal has
+    // to accept because the bytes are identical.
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "status"])
+        .current_dir(&wt)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("state: idle"));
+}
+
+#[test]
+fn test_event_from_a_sibling_worktree_lands_in_the_projects_ledger() {
+    // Reaching *a* ledger is not the claim — reaching *the* ledger is. A second
+    // one created next to the caller would satisfy the test above and still be
+    // the bug, so assert both that the event is in the project's ledger and
+    // that the worktree grew no data directory of its own.
+    let dir = setup_repo_with_ledger();
+    let wt = add_worktree(&dir, "wt", "fix");
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "event", "check_done"])
+        .current_dir(&wt)
+        .assert()
+        .success();
+
+    let output = Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "log", "dump"])
+        .current_dir(dir.path().join("proj"))
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("check_done"),
+        "the event recorded from the worktree is missing from the project's ledger:\n{}",
+        stdout
+    );
+
+    assert!(
+        !wt.join("output/.sahjhan").exists(),
+        "the worktree must not have been given a ledger of its own"
+    );
+}
+
+#[test]
+fn test_nested_worktree_still_reaches_the_projects_ledger() {
+    // The layout Claude Code's `isolation: "worktree"` produces, which worked
+    // before the fix by walking up through the main checkout. It must still
+    // work by that route — the git resolution is a fallback, not a takeover.
+    let dir = setup_repo_with_ledger();
+    let nested = add_worktree(&dir, "proj/.worktrees/fix-1", "fix");
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "status"])
+        .current_dir(&nested)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("state: idle"));
+}
+
+#[test]
+fn test_directory_outside_any_repository_still_anchors_on_itself() {
+    // The case the fix must not disturb: `init` in a plain directory creates
+    // the data_dir relative to the caller, repository or no repository.
+    let dir = tempdir().unwrap();
+    copy_minimal_config(dir.path());
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "init"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    assert!(dir.path().join("output/.sahjhan/ledger.jsonl").exists());
 }

@@ -95,6 +95,15 @@ rather than registered as a file nobody can find. Gate commands run from that
 same root, so a `cmd` written relative to the project resolves the same way for
 whoever invokes it.
 
+One gate can opt out. `anchor = "caller"` on a `command_succeeds`,
+`command_output`, or `snapshot_compare` gate runs that command in the directory
+sahjhan was invoked from instead, as it's the only way to ask "does *this actor's*
+tree carry the commit" when several actors are working in separate worktrees. The
+directory is threaded through the gate context rather than read from the process
+at the point the command runs, so it's an input rather than a global, and an
+`anchor` the engine can't read fails the gate instead of quietly landing back at
+the project root. See [gates.md](gates.md#notes-on-the-ones-with-sharp-edges).
+
 This was a real bug. Two derivations of one fact disagreed — the walk-up found
 the root for `data_dir` while manifest keys were re-derived from
 `std::env::current_dir()` at five call sites. A `cd` into a subdirectory then

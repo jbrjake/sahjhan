@@ -309,10 +309,12 @@ Gate attestation closes it. When a `command_succeeds`, `command_output`, or `sna
 ```bash
 sahjhan log tail 2
 # {"event_type": "state_transition", "fields": {"from": "implementing", "to": "verifying", "command": "submit"}, ...}
-# {"event_type": "gate_attestation", "fields": {"gate_type": "command_succeeds", "command": "python -m pytest tests/", "exit_code": "0", "stdout_hash": "a3c2e88d1f2b...", "wall_time_ms": "4523", "executed_at": "2026-03-30T14:23:07.123Z", "transition_command": "submit"}, ...}
+# {"event_type": "gate_attestation", "fields": {"gate_type": "command_succeeds", "command": "python -m pytest tests/", "exit_code": "0", "stdout_hash": "a3c2e88d1f2b...", "wall_time_ms": "4523", "executed_at": "2026-03-30T14:23:07.123Z", "working_dir": "/Users/you/proj", "transition_command": "submit"}, ...}
 ```
 
 The `stdout_hash` is SHA-256 of the raw command output. The agent can't fabricate it because Sahjhan itself runs the command and computes the hash. For deterministic commands (most test suites, linters, build tools), replaying the command should reproduce the hash. That's an independently verifiable claim sitting in a hash-chained ledger.
+
+The `working_dir` is where the command ran. Usually the project root, but it can change to [`anchor = "caller"`](gates.md#notes-on-the-ones-with-sharp-edges), which runs in whatever directory sahjhan was invoked from.
 
 Every command and snapshot gate attests by default. If a gate runs something trivial that isn't worth recording (a warmup check, an `echo`), suppress it:
 

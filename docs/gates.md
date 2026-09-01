@@ -25,8 +25,8 @@ The same gate types work inside `hooks.toml` rules — see [hooks.md](hooks.md).
 | --- | --- | --- |
 | `file_exists` | `path` | The file is on disk. Not "I created it." On disk. |
 | `files_exist` | `paths` | Every listed file is on disk. |
-| `command_succeeds` | `cmd`, `timeout`, `attest` | sahjhan runs the command. Exit 0 or no deal. |
-| `command_output` | `cmd`, `expect`, `timeout`, `attest` | sahjhan runs the command; trimmed stdout must equal `expect` exactly. |
+| `command_succeeds` | `cmd`, `timeout`, `attest`, `anchor` | sahjhan runs the command. Exit 0 or no deal. |
+| `command_output` | `cmd`, `expect`, `timeout`, `attest`, `anchor` | sahjhan runs the command; trimmed stdout must equal `expect` exactly. |
 | `ledger_has_event` | `event`, `min_count`, `max_count`, `filter` | At least `min_count` (and strictly fewer than `max_count`) events of this type. |
 | `ledger_has_event_since` | `event`, `since`, `min_count`, `filter`, `since_filter` | The event was recorded since a reference point. |
 | `ledger_lacks_event` | `event`, `filter` | Zero matching events. The inverse, for "must not have done X". |
@@ -34,7 +34,7 @@ The same gate types work inside `hooks.toml` rules — see [hooks.md](hooks.md).
 | `min_elapsed` | `event`, `seconds` | N seconds since the last event of that type. |
 | `no_violations` | (none) | No unresolved `protocol_violation` events. |
 | `field_not_empty` | `field` | The named field of the event being recorded is present and non-empty. Currently inert — see below. |
-| `snapshot_compare` | `cmd`, `extract`, `compare`, `reference`, `timeout`, `attest` | Compare a live value against a recorded baseline. |
+| `snapshot_compare` | `cmd`, `extract`, `compare`, `reference`, `timeout`, `attest`, `anchor` | Compare a live value against a recorded baseline. |
 | `query` | `sql` *or* `query`, `expect` | SQL against the ledger, evaluated by DataFusion. |
 
 Every type also accepts `intent`, a sentence explaining why the gate exists.
@@ -114,6 +114,34 @@ any finding at all.
 **`attest`** defaults to true on the three gates that execute something. See
 [gate attestation](hardening.md#gate-attestation) for what gets recorded and
 why. Set `attest = false` to skip it on a warmup or an `echo`.
+
+**`anchor` sets a gate's reference-frame to its caller's** A `cmd` normally
+runs at the project root (the ancestor holding your `data_dir`) no matter
+where sahjhan was invoked. 
+
+That's not helpful if you want to know if the caller's own tree satisfies
+the condition. Run three fix agents concurrently in three git worktrees and
+a gate reading `git log -1` is true for at most one of them, whichever tree
+the project root points at. The others would be blocked by an unpassable gate.
+
+So instead you set the anchor:
+
+```toml
+# the commit at the caller's HEAD references the item being closed
+{ type = "command_succeeds", cmd = "git log -1 --format=%B | grep -q '{{item_id}}'",
+  anchor = "caller", intent = "commit must reference the punchlist item" }
+```
+
+`anchor = "project"` is the default and can be omitted. `anchor = "caller"`
+runs the command in the directory that sahjhan was called in.
+
+Anchor are per *leaf*: put it on a gate with a `cmd`, not on the `any_of` wrapping
+three of them.
+
+The attestation records which tree the command ran in, since the same `cmd` can be
+true in one and false in another.
+
+See [path anchoring](internals.md#path-anchoring).
 
 **`query`** takes inline `sql` or the name of a predicate declared once under
 `[queries]`. Two gates that must agree about the same fact should be the same

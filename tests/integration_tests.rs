@@ -3141,6 +3141,227 @@ fn test_caller_anchored_transition_records_where_the_gate_ran() {
 }
 
 // ---------------------------------------------------------------------------
+// Emit anchoring: a transition's derivation commands (sahjhan #48)
+//
+// The other half of #46. A transition runs its gates' commands *and* its emits'
+// value derivations; giving only the first an anchor let one transition make two
+// claims about two different trees, and record the wrong one as fact.
+// ---------------------------------------------------------------------------
+
+/// The #48 layout: a project whose HEAD is unrelated to the work, and a nested
+/// worktree that carries the fix. `head` and `log` stand in for
+/// `git rev-parse HEAD` and `git log -1 --format=%B` so the test needs no git.
+fn setup_emit_anchor_dir() -> tempfile::TempDir {
+    let dir = tempdir().unwrap();
+    let config_dir = dir.path().join("enforcement");
+    std::fs::create_dir_all(&config_dir).unwrap();
+
+    std::fs::write(
+        config_dir.join("protocol.toml"),
+        r#"
+[protocol]
+name = "emit-anchor-test"
+version = "1.0.0"
+description = "Emit anchoring test protocol"
+
+[paths]
+managed = ["output"]
+data_dir = "output/.sahjhan"
+render_dir = "output"
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        config_dir.join("states.toml"),
+        r#"
+[states.working]
+label = "Working"
+initial = true
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        config_dir.join("events.toml"),
+        r#"
+[events.finding_resolved]
+description = "A punchlist item was closed by a commit"
+fields = [
+    { name = "id", type = "string" },
+    { name = "commit_hash", type = "string" },
+]
+"#,
+    )
+    .unwrap();
+
+    // Both transitions gate on the caller's tree (#46) and derive a hash from a
+    // tree (#48). They differ only in whether the emit says where it runs.
+    std::fs::write(
+        config_dir.join("transitions.toml"),
+        r#"
+[[transitions]]
+from = "working"
+to = "working"
+command = "fix_commit_unanchored"
+args = ["item_id"]
+gates = [
+    { type = "command_succeeds", cmd = "grep -q '{{item_id}}' log", anchor = "caller", intent = "commit must reference the punchlist item" },
+]
+emits = [
+    { event = "finding_resolved", commands = { commit_hash = "cat head" }, fields = { id = "{{item_id}}", commit_hash = "{{commit_hash}}" } },
+]
+
+[[transitions]]
+from = "working"
+to = "working"
+command = "fix_commit"
+args = ["item_id"]
+gates = [
+    { type = "command_succeeds", cmd = "grep -q '{{item_id}}' log", anchor = "caller", intent = "commit must reference the punchlist item" },
+]
+emits = [
+    { event = "finding_resolved", anchor = "caller", commands = { commit_hash = "cat head" }, fields = { id = "{{item_id}}", commit_hash = "{{commit_hash}}" } },
+]
+"#,
+    )
+    .unwrap();
+
+    std::fs::create_dir_all(dir.path().join("output")).unwrap();
+    std::fs::write(dir.path().join("head"), "a131e39\n").unwrap();
+    std::fs::write(dir.path().join("log"), "chore: unrelated to any finding\n").unwrap();
+    let worktree = dir.path().join(".worktrees/fix-1");
+    std::fs::create_dir_all(&worktree).unwrap();
+    std::fs::write(worktree.join("head"), "afd0292\n").unwrap();
+    std::fs::write(worktree.join("log"), "fix(x): BH-101\n").unwrap();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "init"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    dir
+}
+
+/// Run `transition <command> BH-101` from the worktree, then dump the ledger.
+fn transition_from_worktree(dir: &tempfile::TempDir, command: &str) -> String {
+    let worktree = dir.path().join(".worktrees/fix-1");
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            dir.path().join("enforcement").to_str().unwrap(),
+            "transition",
+            command,
+            "BH-101",
+        ])
+        .current_dir(&worktree)
+        .assert()
+        .success();
+
+    let output = Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "log", "dump"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&output.stdout).to_string()
+}
+
+#[test]
+fn test_caller_anchored_emit_records_the_callers_commit() {
+    // The #48 reproduction. Before the fix this transition attested that the
+    // gate ran in the worktree and then, two lines later, stamped the project
+    // root's unrelated HEAD as the commit that resolved the finding.
+    let dir = setup_emit_anchor_dir();
+    let stdout = transition_from_worktree(&dir, "fix_commit");
+
+    assert!(
+        stdout.contains("afd0292"),
+        "the emit must derive from the tree that carries the fix:\n{}",
+        stdout
+    );
+    assert!(
+        !stdout.contains("a131e39"),
+        "and not from the project root, whose HEAD contains none of it:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("gate_attestation") && stdout.contains(".worktrees/fix-1"),
+        "the gate and the emit must now agree about which tree:\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn test_an_emit_with_no_anchor_still_derives_at_the_project() {
+    // The default is unchanged, and it is a choice the config now makes rather
+    // than one it cannot express: the gate is about the caller's tree, the emit
+    // about the project's, and both say so.
+    let dir = setup_emit_anchor_dir();
+    let stdout = transition_from_worktree(&dir, "fix_commit_unanchored");
+
+    assert!(
+        stdout.contains("a131e39"),
+        "an emit that says nothing about anchoring reads the project's tree:\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn test_an_unreadable_emit_anchor_writes_nothing() {
+    // Fails the emit rather than falling back to the project root, and because
+    // emits resolve before anything is appended, the transition is atomic: no
+    // state_transition, no attestation, no half-recorded finding.
+    let dir = setup_emit_anchor_dir();
+    let transitions = dir.path().join("enforcement/transitions.toml");
+    let text = std::fs::read_to_string(&transitions).unwrap();
+    std::fs::write(
+        &transitions,
+        text.replace(
+            "anchor = \"caller\", commands",
+            "anchor = \"callr\", commands",
+        ),
+    )
+    .unwrap();
+
+    let worktree = dir.path().join(".worktrees/fix-1");
+    let output = Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            dir.path().join("enforcement").to_str().unwrap(),
+            "transition",
+            "fix_commit",
+            "BH-101",
+        ])
+        .current_dir(&worktree)
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "an anchor the engine cannot read must not transition: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let dump = Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "log", "dump"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    let dump = String::from_utf8_lossy(&dump.stdout);
+    assert!(
+        !dump.contains("finding_resolved") && !dump.contains("state_transition"),
+        "nothing may be appended:\n{}",
+        dump
+    );
+}
+
+// ---------------------------------------------------------------------------
 // The project anchor and linked git worktrees (sahjhan #47)
 //
 // These drive real `git worktree add`, because the defect is about a layout

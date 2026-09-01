@@ -282,11 +282,16 @@ impl StateMachine {
                         reason: "restricted events cannot be emitted by a transition".to_string(),
                     });
                 }
+                // Both anchors, for the same reason gates get both: an emit
+                // that derives a value from a tree has to be able to say
+                // *which* tree, or a caller-anchored gate and its own emit
+                // disagree about what the transition is a record of (#48).
                 let fields = crate::state::emit::resolve_emit(
                     emit,
                     &state_params,
                     &self.ledger,
                     &self.working_dir,
+                    &self.caller_dir,
                 )
                 .map_err(|reason| StateError::EmitFailed {
                     event: emit.event.clone(),

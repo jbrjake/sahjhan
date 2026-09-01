@@ -1619,3 +1619,145 @@ fn test_validate_checks_the_anchor_of_a_hook_gate() {
         errors
     );
 }
+
+// ---------------------------------------------------------------------------
+// `anchor` on a transition's emits (sahjhan #48)
+//
+// A transition runs two kinds of command: its gates', and its emits' value
+// derivations. #46 gave the first an anchor and left the second at the project
+// root, so a caller-anchored gate could attest that the caller's tree carries
+// the fix while its own emit recorded the project's unrelated HEAD as the
+// commit that resolved it — a false record, which is worse than the block #46
+// removed. These run in `validate()` for the same reason the gate checks do.
+// ---------------------------------------------------------------------------
+
+/// A transition whose emit derives `commit_hash` from a command, carrying
+/// `anchor` as written.
+fn config_with_emit(
+    anchor: Option<toml::Value>,
+    commands: bool,
+) -> sahjhan::config::ProtocolConfig {
+    use sahjhan::config::*;
+    let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    config.transitions = vec![TransitionConfig {
+        from: "idle".to_string(),
+        to: "working".to_string(),
+        command: "begin".to_string(),
+        emits: vec![EmitConfig {
+            event: "check_done".to_string(),
+            commands: if commands {
+                std::collections::HashMap::from([(
+                    "commit_hash".to_string(),
+                    "git rev-parse --short=7 HEAD".to_string(),
+                )])
+            } else {
+                std::collections::HashMap::new()
+            },
+            fields: std::collections::HashMap::from([(
+                "commit_hash".to_string(),
+                "{{commit_hash}}".to_string(),
+            )]),
+            anchor,
+        }],
+        ..Default::default()
+    }];
+    config
+}
+
+#[test]
+fn test_validate_accepts_the_two_anchors_on_an_emit() {
+    for anchor in ["project", "caller"] {
+        let errors =
+            config_with_emit(Some(toml::Value::String(anchor.to_string())), true).validate();
+        assert!(
+            errors.is_empty(),
+            "emit anchor = {:?} is valid: {:?}",
+            anchor,
+            errors
+        );
+    }
+}
+
+#[test]
+fn test_validate_accepts_an_emit_with_no_anchor() {
+    // Every emit written before #48 has this shape, and it keeps meaning what
+    // it always meant: derive at the project root.
+    let errors = config_with_emit(None, true).validate();
+    assert!(errors.is_empty(), "{:?}", errors);
+}
+
+#[test]
+fn test_validate_rejects_an_unrecognized_anchor_on_an_emit() {
+    for anchor in ["callr", "", "CALLER", "cwd", "caller_dir"] {
+        let errors =
+            config_with_emit(Some(toml::Value::String(anchor.to_string())), true).validate();
+        assert!(
+            errors.iter().any(|e| e.contains("unrecognized anchor")
+                && e.contains("emit 'check_done'")
+                && e.contains("transitions.toml")
+                && e.contains("transition 'begin'")),
+            "emit anchor = {:?} must be a config error naming the file, transition and event: {:?}",
+            anchor,
+            errors
+        );
+    }
+}
+
+#[test]
+fn test_validate_rejects_a_non_string_anchor_on_an_emit() {
+    // The `anchor` field is a toml::Value rather than a String precisely so
+    // this reports the same defect, in the same words, as a gate's would.
+    for anchor in [
+        toml::Value::Integer(1),
+        toml::Value::Boolean(true),
+        toml::Value::Array(vec![toml::Value::String("caller".to_string())]),
+    ] {
+        let errors = config_with_emit(Some(anchor.clone()), true).validate();
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("non-string anchor") && e.contains("emit 'check_done'")),
+            "emit anchor = {:?} must be a config error: {:?}",
+            anchor,
+            errors
+        );
+    }
+}
+
+#[test]
+fn test_validate_rejects_an_anchor_on_an_emit_that_runs_no_command() {
+    // Nothing reads it there: an emit with no commands resolves its fields from
+    // the ledger and the transition's args, neither of which has a directory.
+    let errors =
+        config_with_emit(Some(toml::Value::String("caller".to_string())), false).validate();
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("emit 'check_done' sets anchor but declares no commands")),
+        "an inert anchor on an emit must be refused: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_an_unknown_key_on_an_emit_is_a_load_error() {
+    // The #48 report itself: `anchor` was inert because EmitConfig swallowed
+    // any key it did not know. It is a real key now, but the next one — a typo
+    // of it, or of `commands` — must not be inert either.
+    let toml_str = r#"
+[[transitions]]
+from = "idle"
+to = "working"
+command = "begin"
+emits = [
+    { event = "check_done", anchour = "caller", commands = { h = "git rev-parse HEAD" } },
+]
+"#;
+    let err = toml::from_str::<sahjhan::config::transitions::TransitionsFile>(toml_str)
+        .expect_err("an unknown emit key must not parse");
+    assert!(
+        err.to_string().contains("anchour"),
+        "the parse error must name the key that did nothing: {}",
+        err
+    );
+}

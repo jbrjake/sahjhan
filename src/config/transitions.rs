@@ -6,6 +6,7 @@
 // - TransitionsFile         — top-level wrapper
 // - TransitionConfig        — from, to, command, args (positional params), gates, emits, boundary, integrity
 // - IntegrityConfig         — per-transition evidence requirements (requires_attestation)
+// - EmitConfig              — event + derivation commands + field templates + the anchor those commands run at
 // - GateConfig              — gate_type + optional intent + nested gates (composite) + flattened params
 
 use serde::Deserialize;
@@ -97,19 +98,39 @@ pub struct IntegrityConfig {
 /// The target `event` must be defined in `events.toml` and must NOT be
 /// `restricted` — emits may not bypass the HMAC proof that `authed-event`
 /// requires (enforced by config validation and again at emit time).
+///
+/// `deny_unknown_fields` is deliberate. Before sahjhan #48 this struct silently
+/// swallowed any key it did not recognize, so `anchor = "caller"` — the spelling
+/// a reader of #46 reaches for first — validated clean and did nothing. A key
+/// this struct cannot act on is now a load error rather than a config that says
+/// one thing and does another.
 #[derive(Debug, Deserialize, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct EmitConfig {
     /// Event type to append. Must be a defined, non-restricted event.
     pub event: String,
-    /// `var_name -> shell command`. Each command runs in the transition's
-    /// working directory; its trimmed stdout is bound to `var_name` for use in
-    /// `fields` templates. A non-zero exit or timeout blocks the transition.
+    /// `var_name -> shell command`. Each command runs at this emit's `anchor`;
+    /// its trimmed stdout is bound to `var_name` for use in `fields` templates.
+    /// A non-zero exit or timeout blocks the transition.
     #[serde(default)]
     pub commands: HashMap<String, String>,
     /// `field_name -> template`. Templates are resolved with `{{var}}`
     /// substitution (see struct docs) to produce the emitted event's fields.
     #[serde(default)]
     pub fields: HashMap<String, String>,
+    /// Where this emit's `commands` run: `"project"` (the default) or
+    /// `"caller"`. Same key, same values and same validation as a gate's
+    /// `anchor` — see [`crate::gates::types::resolve_anchor`].
+    ///
+    /// It is per emit rather than per command, and it is not inherited from any
+    /// gate: a transition's gates can legitimately be anchored differently from
+    /// each other (#46), so an emit following one of them would be guessing.
+    ///
+    /// Held as a `toml::Value` rather than a `String` so a non-string spelling
+    /// is rejected by the same check, with the same message, as a gate's — not
+    /// as a bare serde type error from a different layer.
+    #[serde(default)]
+    pub anchor: Option<toml::Value>,
 }
 
 /// A gate condition attached to a transition.

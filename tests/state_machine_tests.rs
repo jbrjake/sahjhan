@@ -270,6 +270,9 @@ fn test_transition_returns_outcome_with_states() {
 // ---------------------------------------------------------------------------
 
 /// Helper: build an EmitConfig from field/command (name, value) pairs.
+///
+/// No `anchor`, which is the shape every emit had before #48 and still means
+/// what it always meant: derive at the project root.
 fn emit_cfg(event: &str, fields: &[(&str, &str)], commands: &[(&str, &str)]) -> EmitConfig {
     EmitConfig {
         event: event.to_string(),
@@ -281,6 +284,7 @@ fn emit_cfg(event: &str, fields: &[(&str, &str)], commands: &[(&str, &str)]) -> 
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect(),
+        anchor: None,
     }
 }
 

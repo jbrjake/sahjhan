@@ -8,6 +8,7 @@
 // - [validate-deep]         ProtocolConfig::validate_deep()  — file/alias/gate/render/ledger/branching checks
 // - [validate-gate]         ProtocolConfig::validate_gate()  — recursive gate validator (composite + leaf)
 // - [check-gate-anchor]     check_gate_anchor()              — recursive scan for an `anchor` the engine cannot act on
+// - [check-emit-anchor]     check_emit_anchor()              — an emit's `anchor`: unreadable, or on an emit that runs no command
 // - [resolve-gate-since]    ProtocolConfig::resolve_gate_since()   — a gate's `since` param as written → baseline event type
 // - [resolve-since-anchor]  ProtocolConfig::resolve_since_anchor() — `since` form → baseline event type, or why not
 // - SinceAnchorError        — a non-string value, an unrecognized form, or a prefixed form naming an undeclared event type
@@ -34,7 +35,7 @@ pub use protocol::{
 };
 pub use renders::RenderConfig;
 pub use states::{StateConfig, StateParam};
-pub use transitions::{GateConfig, IntegrityConfig, TransitionConfig};
+pub use transitions::{EmitConfig, GateConfig, IntegrityConfig, TransitionConfig};
 pub use vault_policy::{VaultAccess, VaultPolicy};
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -367,13 +368,20 @@ impl ProtocolConfig {
         // two that seal the config. A window the engine cannot read must not be
         // sealable.
         //
-        // 6b. Gate anchors resolve, and are only where they mean something.
-        // Same reasoning: an anchor the engine cannot read must not seal.
+        // 6b. Gate and emit anchors resolve, and are only where they mean
+        // something. Same reasoning: an anchor the engine cannot read must not
+        // seal. An emit's anchor is checked in the same pass as its gates'
+        // because a transition's emit and its gates are the two halves of one
+        // claim, and #48 was them disagreeing about which tree that claim is
+        // about.
         for t in &self.transitions {
             let location = format!("transitions.toml: transition '{}'", t.command);
             for gate in &t.gates {
                 self.check_gate_windows(gate, &location, &mut errors);
                 check_gate_anchor(gate, &location, &mut errors);
+            }
+            for emit in &t.emits {
+                check_emit_anchor(emit, &location, &mut errors);
             }
         }
         for (idx, hook) in self.hooks.iter().enumerate() {
@@ -1293,6 +1301,32 @@ fn check_gate_anchor(gate: &GateConfig, location: &str, errors: &mut Vec<String>
 
     for child in &gate.gates {
         check_gate_anchor(child, location, errors);
+    }
+}
+
+/// Check a transition emit's `anchor` for a value the engine cannot act on.
+///
+/// The gate check's two defects, one struct over (sahjhan #48):
+///
+/// - a value that names neither anchor, or is not a string at all;
+/// - an `anchor` on an emit that runs no `commands`, where nothing reads it.
+///
+/// The third spelling — `anchor` on an emit at all — used to be the defect: the
+/// key was inert, so a config that said where its derivation ran and one that
+/// did not were the same config. `deny_unknown_fields` on [`EmitConfig`] closes
+/// that one at load; this closes the rest at validate, which is what `init` and
+/// `reseal` run, so an emit whose anchor the engine cannot read never seals.
+// [check-emit-anchor]
+fn check_emit_anchor(emit: &EmitConfig, location: &str, errors: &mut Vec<String>) {
+    if let Err(e) = crate::gates::types::resolve_anchor(emit.anchor.as_ref()) {
+        errors.push(format!("{}: emit '{}' {}", location, emit.event, e));
+    } else if emit.anchor.is_some() && emit.commands.is_empty() {
+        errors.push(format!(
+            "{}: emit '{}' sets anchor but declares no commands — an anchor is \
+             the directory a command runs in, and this emit resolves its fields \
+             from the ledger and the transition's args, which have no directory",
+            location, emit.event
+        ));
     }
 }
 

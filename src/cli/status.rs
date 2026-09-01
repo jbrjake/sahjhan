@@ -141,8 +141,10 @@ pub fn cmd_status(
             .collect()
     };
 
-    // Gate commands run from the project root, not the caller's cwd (#85).
+    // Gate commands run from the project root, not the caller's cwd (#85) —
+    // unless the gate itself asks for the caller's tree (#46).
     let cwd = resolve_project_root(&config.paths.data_dir);
+    let caller_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let transitions: Vec<TransitionSummaryData> = available_transitions
         .iter()
         .map(|transition| {
@@ -153,6 +155,7 @@ pub fn cmd_status(
                 current_state: &current_state,
                 state_params,
                 working_dir: cwd.clone(),
+                caller_dir: caller_dir.clone(),
                 event_fields: None,
             };
 

@@ -176,6 +176,7 @@ fn test_command_gate_with_injection_attempt() {
         current_state: "idle",
         state_params,
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
 
@@ -224,6 +225,7 @@ fn test_injection_via_semicolon() {
         current_state: "idle",
         state_params,
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
 
@@ -271,6 +273,7 @@ fn test_injection_via_backtick() {
         current_state: "idle",
         state_params,
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
 
@@ -318,6 +321,7 @@ fn test_injection_via_dollar_parens() {
         current_state: "idle",
         state_params,
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
 

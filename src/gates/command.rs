@@ -18,7 +18,7 @@ use crate::config::GateConfig;
 
 use super::evaluator::{GateAttestation, GateContext, GateResult};
 use super::template::{find_unresolved_vars, resolve_template};
-use super::types::{build_template_vars, validate_template_fields};
+use super::types::{build_template_vars, gate_working_dir, validate_template_fields};
 
 // ---------------------------------------------------------------------------
 // Outcome types
@@ -141,10 +141,25 @@ pub(super) fn eval_command_succeeds(gate: &GateConfig, ctx: &GateContext) -> Gat
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
 
+    let working_dir = match gate_working_dir(gate, ctx) {
+        Ok(dir) => dir,
+        Err(reason) => {
+            return GateResult {
+                passed: false,
+                evaluable: true,
+                gate_type: "command_succeeds".to_string(),
+                description: format!("command succeeds: {}", cmd),
+                reason: Some(reason),
+                intent: None,
+                attestation: None,
+            }
+        }
+    };
+
     let started_at = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
     let start = Instant::now();
 
-    match run_shell_output_with_timeout(&cmd, &ctx.working_dir, timeout_secs) {
+    match run_shell_output_with_timeout(&cmd, working_dir, timeout_secs) {
         Ok(CommandOutputOutcome::Completed(stdout, stderr, status)) => {
             let wall_time_ms = start.elapsed().as_millis() as u64;
             let passed = status.success();
@@ -157,6 +172,7 @@ pub(super) fn eval_command_succeeds(gate: &GateConfig, ctx: &GateContext) -> Gat
                     stdout_hash,
                     wall_time_ms,
                     executed_at: started_at,
+                    working_dir: working_dir.display().to_string(),
                 })
             } else {
                 None
@@ -268,10 +284,25 @@ pub(super) fn eval_command_output(gate: &GateConfig, ctx: &GateContext) -> GateR
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
 
+    let working_dir = match gate_working_dir(gate, ctx) {
+        Ok(dir) => dir,
+        Err(reason) => {
+            return GateResult {
+                passed: false,
+                evaluable: true,
+                gate_type: "command_output".to_string(),
+                description: format!("command output matches '{}'", expect),
+                reason: Some(reason),
+                intent: None,
+                attestation: None,
+            }
+        }
+    };
+
     let started_at = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
     let start = Instant::now();
 
-    match run_shell_output_with_timeout(&cmd, &ctx.working_dir, timeout_secs) {
+    match run_shell_output_with_timeout(&cmd, working_dir, timeout_secs) {
         Ok(CommandOutputOutcome::Completed(stdout, stderr, status)) => {
             let wall_time_ms = start.elapsed().as_millis() as u64;
             let trimmed = stdout.trim().to_string();
@@ -285,6 +316,7 @@ pub(super) fn eval_command_output(gate: &GateConfig, ctx: &GateContext) -> GateR
                     stdout_hash,
                     wall_time_ms,
                     executed_at: started_at,
+                    working_dir: working_dir.display().to_string(),
                 })
             } else {
                 None

@@ -163,9 +163,13 @@ pub fn cmd_hook_eval(
         agent_id: agent_id.clone(),
     };
 
-    // Hook commands run from the project root, not the caller's cwd (#85).
+    // Hook commands run from the project root, not the caller's cwd (#85) —
+    // unless the gate itself asks for the caller's tree (#46). For a hook the
+    // caller is the harness process the actor's tools run under, which is the
+    // worktree for a subagent working in one.
     let working_dir = resolve_project_root(&config.paths.data_dir);
-    let result = evaluate_hooks(&config, &ledger, &request, &working_dir);
+    let caller_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let result = evaluate_hooks(&config, &ledger, &request, &working_dir, &caller_dir);
 
     // Auto-record events
     for auto in &result.auto_records {

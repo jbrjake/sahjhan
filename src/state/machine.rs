@@ -101,8 +101,11 @@ pub struct StateMachine {
     config: ProtocolConfig,
     ledger: Ledger,
     current_state: String,
-    /// Working directory for shell command gates.
+    /// Working directory for shell command gates — the project anchor.
     working_dir: PathBuf,
+    /// The directory the caller invoked sahjhan from, for a gate that opts in
+    /// with `anchor = "caller"` (sahjhan #46).
+    caller_dir: PathBuf,
 }
 
 impl StateMachine {
@@ -117,6 +120,11 @@ impl StateMachine {
     /// relative to the project (`python3 enforcement/scripts/verify_suite.py`),
     /// so running it from whichever subdirectory the caller happened to be in
     /// is the same defect as keying a manifest entry there (holtz #85).
+    ///
+    /// `caller_dir` keeps the cwd that walk-up started from, so a gate that
+    /// declares `anchor = "caller"` can ask about the tree the caller is
+    /// actually in — the one question the project anchor cannot express
+    /// (sahjhan #46). Nothing reads it unless a gate says so.
     pub fn new(config: &ProtocolConfig, ledger: Ledger) -> Self {
         let current_state = Self::derive_state_from_ledger(config, &ledger);
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -126,6 +134,7 @@ impl StateMachine {
             ledger,
             current_state,
             working_dir,
+            caller_dir: cwd,
         }
     }
 
@@ -137,6 +146,16 @@ impl StateMachine {
     /// Return the current working directory.
     pub fn working_dir(&self) -> &PathBuf {
         &self.working_dir
+    }
+
+    /// Set the directory `anchor = "caller"` gates are evaluated at.
+    pub fn set_caller_dir(&mut self, dir: PathBuf) {
+        self.caller_dir = dir;
+    }
+
+    /// Return the directory `anchor = "caller"` gates are evaluated at.
+    pub fn caller_dir(&self) -> &PathBuf {
+        &self.caller_dir
     }
 
     /// Return the name of the current state.
@@ -212,6 +231,7 @@ impl StateMachine {
                 current_state: &self.current_state,
                 state_params: state_params.clone(),
                 working_dir: self.working_dir.clone(),
+                caller_dir: self.caller_dir.clone(),
                 event_fields: None,
             };
 
@@ -300,6 +320,10 @@ impl StateMachine {
                 att_fields.insert("stdout_hash".to_string(), att.stdout_hash.clone());
                 att_fields.insert("wall_time_ms".to_string(), att.wall_time_ms.to_string());
                 att_fields.insert("executed_at".to_string(), att.executed_at.clone());
+                // Where it ran. A gate may be anchored at the caller rather
+                // than the project (#46), so the exit code alone no longer
+                // identifies which tree the claim is about.
+                att_fields.insert("working_dir".to_string(), att.working_dir.clone());
                 att_fields.insert("transition_command".to_string(), command.to_string());
                 self.ledger
                     .append("gate_attestation", att_fields)
@@ -482,6 +506,7 @@ impl StateMachine {
             current_state: &self.current_state,
             state_params: state_params.clone(),
             working_dir: self.working_dir.clone(),
+            caller_dir: self.caller_dir.clone(),
             event_fields: None,
         };
 

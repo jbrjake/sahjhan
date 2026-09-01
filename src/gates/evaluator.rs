@@ -33,8 +33,16 @@ pub struct GateContext<'a> {
     /// Key/value parameters extracted from the current state (used for
     /// template variable resolution).
     pub state_params: HashMap<String, String>,
-    /// The directory in which shell commands should be executed.
+    /// The **project anchor** — where a gate's shell command runs unless the
+    /// gate opts out with `anchor = "caller"`. Derived from the config's
+    /// `data_dir`, never from the process cwd (holtz #85).
     pub working_dir: PathBuf,
+    /// The directory the caller invoked sahjhan from — where a gate carrying
+    /// `anchor = "caller"` runs instead. Carried on the context rather than
+    /// read from the environment at evaluation time so that "the caller's
+    /// directory" is an input a test can state, not a process-global the
+    /// evaluator reaches for (sahjhan #46).
+    pub caller_dir: PathBuf,
     /// The payload fields of the triggering event, if any (used by
     /// `field_not_empty`).
     pub event_fields: Option<&'a HashMap<String, String>>,
@@ -59,6 +67,13 @@ pub struct GateAttestation {
     pub wall_time_ms: u64,
     /// RFC3339 timestamp of when execution started.
     pub executed_at: String,
+    /// The directory the command ran in.
+    ///
+    /// Recorded because a gate can now be anchored at the caller instead of the
+    /// project (sahjhan #46): once the same `cmd` can be true in one tree and
+    /// false in another, "the command exited 0" is only evidence if the ledger
+    /// also says *where*.
+    pub working_dir: String,
 }
 
 /// The outcome of evaluating a single gate.

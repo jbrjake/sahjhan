@@ -128,7 +128,7 @@ fn test_hook_eval_no_hooks_allows() {
         agent_id: None,
     };
 
-    let result = evaluate_hooks(&config, &ledger, &request, dir.path());
+    let result = evaluate_hooks(&config, &ledger, &request, dir.path(), dir.path());
     assert_eq!(result.decision, "allow");
     assert!(result.messages.is_empty());
     assert!(result.auto_records.is_empty());
@@ -175,7 +175,7 @@ fn test_hook_eval_gate_blocks_when_condition_not_met() {
         agent_id: None,
     };
 
-    let result = evaluate_hooks(&config, &ledger, &request, dir.path());
+    let result = evaluate_hooks(&config, &ledger, &request, dir.path(), dir.path());
     assert_eq!(result.decision, "block");
     assert_eq!(result.messages.len(), 1);
     assert_eq!(result.messages[0].action, "block");
@@ -227,7 +227,7 @@ fn test_hook_eval_gate_allows_when_condition_met() {
         agent_id: None,
     };
 
-    let result = evaluate_hooks(&config, &ledger, &request, dir.path());
+    let result = evaluate_hooks(&config, &ledger, &request, dir.path(), dir.path());
     assert_eq!(result.decision, "allow");
     assert!(result.messages.is_empty());
 }
@@ -276,7 +276,7 @@ fn test_hook_eval_filter_excludes_test_files() {
         agent_id: None,
     };
 
-    let result = evaluate_hooks(&config, &ledger, &request, dir.path());
+    let result = evaluate_hooks(&config, &ledger, &request, dir.path(), dir.path());
     assert_eq!(result.decision, "allow");
     assert!(result.messages.is_empty());
 
@@ -289,7 +289,7 @@ fn test_hook_eval_filter_excludes_test_files() {
         agent_id: None,
     };
 
-    let result2 = evaluate_hooks(&config, &ledger, &request2, dir.path());
+    let result2 = evaluate_hooks(&config, &ledger, &request2, dir.path(), dir.path());
     assert_eq!(result2.decision, "block");
     assert_eq!(result2.messages.len(), 1);
 }
@@ -335,7 +335,7 @@ fn test_hook_eval_state_filtering() {
         agent_id: None,
     };
 
-    let result = evaluate_hooks(&config, &ledger, &request, dir.path());
+    let result = evaluate_hooks(&config, &ledger, &request, dir.path(), dir.path());
     assert_eq!(result.decision, "allow");
     assert!(result.messages.is_empty());
 }
@@ -375,7 +375,7 @@ fn test_hook_eval_monitor_warning() {
         agent_id: None,
     };
 
-    let result = evaluate_hooks(&config, &ledger, &request, dir.path());
+    let result = evaluate_hooks(&config, &ledger, &request, dir.path(), dir.path());
     assert_eq!(result.decision, "warn");
     assert_eq!(result.monitor_warnings.len(), 1);
     assert_eq!(result.monitor_warnings[0].name, "high_event_count");
@@ -409,7 +409,7 @@ fn test_hook_eval_write_gated_blocks() {
         agent_id: None,
     };
 
-    let result = evaluate_hooks(&config, &ledger, &request, dir.path());
+    let result = evaluate_hooks(&config, &ledger, &request, dir.path(), dir.path());
     assert_eq!(result.decision, "block");
     assert_eq!(result.messages.len(), 1);
     assert_eq!(result.messages[0].source, "write_gated");
@@ -461,7 +461,7 @@ fn test_hook_eval_stop_output_pattern() {
         agent_id: None,
     };
 
-    let result = evaluate_hooks(&config, &ledger, &request, dir.path());
+    let result = evaluate_hooks(&config, &ledger, &request, dir.path(), dir.path());
     assert_eq!(result.decision, "block");
     assert_eq!(result.messages.len(), 1);
     assert_eq!(result.messages[0].source, "hook");
@@ -475,7 +475,7 @@ fn test_hook_eval_stop_output_pattern() {
         agent_id: None,
     };
 
-    let result2 = evaluate_hooks(&config, &ledger, &request2, dir.path());
+    let result2 = evaluate_hooks(&config, &ledger, &request2, dir.path(), dir.path());
     assert_eq!(result2.decision, "allow");
     assert!(result2.messages.is_empty());
 }
@@ -495,7 +495,7 @@ fn test_hook_eval_managed_path_blocks() {
         agent_id: None,
     };
 
-    let result = evaluate_hooks(&config, &ledger, &request, dir.path());
+    let result = evaluate_hooks(&config, &ledger, &request, dir.path(), dir.path());
     assert_eq!(result.decision, "block");
     assert_eq!(result.messages.len(), 1);
     assert_eq!(result.messages[0].source, "managed_path");
@@ -556,7 +556,7 @@ fn test_hook_eval_auto_record() {
         agent_id: None,
     };
 
-    let result = evaluate_hooks(&config, &ledger, &request, dir.path());
+    let result = evaluate_hooks(&config, &ledger, &request, dir.path(), dir.path());
     assert_eq!(result.decision, "allow");
     assert_eq!(result.auto_records.len(), 1);
     assert_eq!(result.auto_records[0].event_type, "tool_usage");
@@ -607,7 +607,7 @@ fn test_hook_eval_states_not_filtering() {
     };
 
     // In idle — should NOT fire (excluded by states_not)
-    let result = evaluate_hooks(&config, &ledger, &request, dir.path());
+    let result = evaluate_hooks(&config, &ledger, &request, dir.path(), dir.path());
     assert_eq!(result.decision, "allow");
 }
 
@@ -653,7 +653,7 @@ fn test_hook_eval_event_count_check() {
         agent_id: None,
     };
 
-    let result = evaluate_hooks(&config, &ledger, &request, dir.path());
+    let result = evaluate_hooks(&config, &ledger, &request, dir.path(), dir.path());
     assert_eq!(result.decision, "warn");
     assert_eq!(result.messages.len(), 1);
     assert!(result.messages[0].message.contains("10"));
@@ -683,7 +683,7 @@ fn test_hook_eval_write_gated_allows_in_correct_state() {
         agent_id: None,
     };
 
-    let result = evaluate_hooks(&config, &ledger, &request, dir.path());
+    let result = evaluate_hooks(&config, &ledger, &request, dir.path(), dir.path());
     assert_eq!(result.decision, "allow");
     assert!(result.messages.is_empty());
 }
@@ -818,7 +818,13 @@ fn test_actor_scoped_gate_allows_the_agent_that_did_the_work() {
     record_failing_test(&mut ledger, "agent-A");
     config.hooks.push(actor_scoped_tdd_hook());
 
-    let result = evaluate_hooks(&config, &ledger, &edit_request(Some("agent-A")), dir.path());
+    let result = evaluate_hooks(
+        &config,
+        &ledger,
+        &edit_request(Some("agent-A")),
+        dir.path(),
+        dir.path(),
+    );
     assert_eq!(result.decision, "allow", "{:?}", result.messages);
 }
 
@@ -832,7 +838,13 @@ fn test_actor_scoped_gate_blocks_a_sibling_riding_on_that_work() {
     record_failing_test(&mut ledger, "agent-A");
     config.hooks.push(actor_scoped_tdd_hook());
 
-    let result = evaluate_hooks(&config, &ledger, &edit_request(Some("agent-B")), dir.path());
+    let result = evaluate_hooks(
+        &config,
+        &ledger,
+        &edit_request(Some("agent-B")),
+        dir.path(),
+        dir.path(),
+    );
     assert_eq!(result.decision, "block", "{:?}", result.messages);
 }
 
@@ -846,11 +858,23 @@ fn test_the_orchestrator_is_an_actor_not_a_wildcard() {
     record_failing_test(&mut ledger, "agent-A");
     config.hooks.push(actor_scoped_tdd_hook());
 
-    let blocked = evaluate_hooks(&config, &ledger, &edit_request(None), dir.path());
+    let blocked = evaluate_hooks(
+        &config,
+        &ledger,
+        &edit_request(None),
+        dir.path(),
+        dir.path(),
+    );
     assert_eq!(blocked.decision, "block", "{:?}", blocked.messages);
 
     record_failing_test(&mut ledger, "");
-    let allowed = evaluate_hooks(&config, &ledger, &edit_request(None), dir.path());
+    let allowed = evaluate_hooks(
+        &config,
+        &ledger,
+        &edit_request(None),
+        dir.path(),
+        dir.path(),
+    );
     assert_eq!(allowed.decision, "allow", "{:?}", allowed.messages);
 }
 
@@ -868,6 +892,12 @@ fn test_an_unfiltered_gate_is_unchanged_by_actor_scoping() {
     }
     config.hooks.push(hook);
 
-    let result = evaluate_hooks(&config, &ledger, &edit_request(Some("agent-B")), dir.path());
+    let result = evaluate_hooks(
+        &config,
+        &ledger,
+        &edit_request(Some("agent-B")),
+        dir.path(),
+        dir.path(),
+    );
     assert_eq!(result.decision, "allow", "{:?}", result.messages);
 }

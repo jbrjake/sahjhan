@@ -1428,3 +1428,194 @@ gates = [
         Some("{{event.finding_id}}")
     );
 }
+
+// ---------------------------------------------------------------------------
+// `anchor` on command gates (sahjhan #46)
+//
+// A gate may declare `anchor = "caller"` to be evaluated in the caller's own
+// tree instead of at the project root. Every unreadable spelling of that
+// parameter used to be indistinguishable from a gate that never mentioned it,
+// because both end up at the project root — so these run in `validate()`, the
+// check every command makes, including the two that seal the config.
+// ---------------------------------------------------------------------------
+
+/// A `command_succeeds` gate carrying an `anchor`.
+fn anchored_gate(gate_type: &str, anchor: toml::Value) -> sahjhan::config::GateConfig {
+    let mut params = std::collections::HashMap::new();
+    params.insert("cmd".to_string(), toml::Value::String("true".to_string()));
+    params.insert("anchor".to_string(), anchor);
+    sahjhan::config::GateConfig {
+        gate_type: gate_type.to_string(),
+        intent: None,
+        gates: vec![],
+        params,
+    }
+}
+
+#[test]
+fn test_validate_accepts_the_two_anchors() {
+    for anchor in ["project", "caller"] {
+        let errors = config_with_gate(anchored_gate(
+            "command_succeeds",
+            toml::Value::String(anchor.to_string()),
+        ))
+        .validate();
+        assert!(
+            errors.is_empty(),
+            "anchor = {:?} is valid: {:?}",
+            anchor,
+            errors
+        );
+    }
+}
+
+#[test]
+fn test_validate_accepts_a_gate_with_no_anchor() {
+    let errors = config_with_gate(query_gate(vec![("sql", "SELECT 1")])).validate();
+    assert!(errors.is_empty(), "{:?}", errors);
+}
+
+#[test]
+fn test_validate_rejects_an_unrecognized_anchor() {
+    // Every one of these is a plausible typo, and every one of them used to
+    // read as "anchor at the project" — the same thing saying nothing does.
+    for anchor in ["callr", "", "CALLER", "cwd", "caller_dir"] {
+        let errors = config_with_gate(anchored_gate(
+            "command_succeeds",
+            toml::Value::String(anchor.to_string()),
+        ))
+        .validate();
+        assert!(
+            errors.iter().any(|e| e.contains("unrecognized anchor")
+                && e.contains("transitions.toml")
+                && e.contains("transition 'begin'")),
+            "anchor = {:?} must be a config error naming the file and transition: {:?}",
+            anchor,
+            errors
+        );
+    }
+}
+
+#[test]
+fn test_validate_rejects_a_non_string_anchor() {
+    // TOML is typed: `anchor = 1` is not the string "1". It misses as_str() and
+    // would read as an absent anchor — #34's failure mode on a new parameter.
+    for anchor in [
+        toml::Value::Integer(1),
+        toml::Value::Boolean(true),
+        toml::Value::Array(vec![toml::Value::String("caller".to_string())]),
+    ] {
+        let errors = config_with_gate(anchored_gate("command_succeeds", anchor.clone())).validate();
+        assert!(
+            errors.iter().any(|e| e.contains("non-string anchor")),
+            "anchor = {:?} must be a config error: {:?}",
+            anchor,
+            errors
+        );
+    }
+}
+
+#[test]
+fn test_validate_rejects_an_anchor_on_a_gate_that_runs_no_command() {
+    // Nothing reads it there. A `file_exists` gate wearing an anchor looks
+    // anchored and is not.
+    let errors = config_with_gate(anchored_gate(
+        "file_exists",
+        toml::Value::String("caller".to_string()),
+    ))
+    .validate();
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("gate 'file_exists' sets anchor")
+                && e.contains("command_succeeds")),
+        "the error must name the gate types anchoring applies to: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_validate_rejects_an_anchor_on_a_composite_gate() {
+    // The dangerous one: `anchor = "caller"` on an all_of reads as scoping the
+    // subtree, but anchoring is per leaf — the children would silently keep the
+    // project anchor while the config looks like it opted out.
+    use sahjhan::config::GateConfig;
+    let mut params = std::collections::HashMap::new();
+    params.insert(
+        "anchor".to_string(),
+        toml::Value::String("caller".to_string()),
+    );
+    let composite = GateConfig {
+        gate_type: "all_of".to_string(),
+        intent: None,
+        gates: vec![anchored_gate(
+            "command_succeeds",
+            toml::Value::String("caller".to_string()),
+        )],
+        params,
+    };
+    let errors = config_with_gate(composite).validate();
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("gate 'all_of' sets anchor")),
+        "an anchor on a composite must be refused: {:?}",
+        errors
+    );
+    assert_eq!(errors.len(), 1, "the valid child must not be flagged too");
+}
+
+#[test]
+fn test_validate_checks_the_anchor_of_a_gate_nested_in_a_composite() {
+    use sahjhan::config::GateConfig;
+    let composite = GateConfig {
+        gate_type: "any_of".to_string(),
+        intent: None,
+        gates: vec![
+            anchored_gate(
+                "command_succeeds",
+                toml::Value::String("caller".to_string()),
+            ),
+            anchored_gate("command_output", toml::Value::String("nope".to_string())),
+        ],
+        params: std::collections::HashMap::new(),
+    };
+    let errors = config_with_gate(composite).validate();
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("unrecognized anchor") && e.contains("'nope'")),
+        "a defect buried in an any_of is the same defect: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_validate_checks_the_anchor_of_a_hook_gate() {
+    use sahjhan::config::hooks::*;
+    let mut config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    config.hooks.push(HookConfig {
+        event: HookEvent::PreToolUse,
+        tools: Some(vec!["Edit".to_string()]),
+        states: None,
+        states_not: None,
+        action: Some("block".to_string()),
+        message: Some("blocked".to_string()),
+        gate: Some(anchored_gate(
+            "command_succeeds",
+            toml::Value::String("callr".to_string()),
+        )),
+        check: None,
+        auto_record: None,
+        filter: None,
+    });
+    let label = format!("hooks.toml: hook[{}]", config.hooks.len() - 1);
+    let errors = config.validate();
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains(&label) && e.contains("unrecognized anchor")),
+        "a hook gate's anchor is checked too, and reported against hooks.toml: {:?}",
+        errors
+    );
+}

@@ -120,6 +120,7 @@ pub fn evaluate_hooks(
     ledger: &Ledger,
     request: &HookEvalRequest,
     working_dir: &Path,
+    caller_dir: &Path,
 ) -> HookEvalResult {
     let mut messages: Vec<HookMessage> = Vec::new();
     let mut auto_records: Vec<AutoRecordResult> = Vec::new();
@@ -152,8 +153,15 @@ pub fn evaluate_hooks(
         }
 
         // Gate/check hooks
-        let should_fire =
-            eval_hook_condition(hook, config, ledger, &current_state, request, working_dir);
+        let should_fire = eval_hook_condition(
+            hook,
+            config,
+            ledger,
+            &current_state,
+            request,
+            working_dir,
+            caller_dir,
+        );
         if should_fire {
             let action = hook.action.as_deref().unwrap_or("warn").to_string();
             // Interpolate {count} with the same event-type filter that fired
@@ -373,6 +381,7 @@ fn eval_hook_condition(
     current_state: &str,
     request: &HookEvalRequest,
     working_dir: &Path,
+    caller_dir: &Path,
 ) -> bool {
     // Gate-based hook: fire if gate fails
     if let Some(ref gate) = hook.gate {
@@ -396,6 +405,7 @@ fn eval_hook_condition(
             current_state,
             state_params,
             working_dir: working_dir.to_path_buf(),
+            caller_dir: caller_dir.to_path_buf(),
             event_fields: None,
         };
         let result = evaluate_gate(gate, &ctx);

@@ -2956,3 +2956,181 @@ fn test_manifest_verify_is_clean_when_run_from_a_subdirectory() {
         .success()
         .stdout(predicate::str::contains("manifest clean"));
 }
+
+// ---------------------------------------------------------------------------
+// Gate anchoring: project (default) vs caller (sahjhan #46)
+// ---------------------------------------------------------------------------
+
+/// A project whose tree disagrees with a worktree nested inside it — the layout
+/// Claude Code's `isolation: "worktree"` produces, and the one #46 reproduces
+/// against. `marker` names whichever tree a gate is standing in.
+fn setup_anchor_dir() -> tempfile::TempDir {
+    let dir = tempdir().unwrap();
+    let config_dir = dir.path().join("enforcement");
+    std::fs::create_dir_all(&config_dir).unwrap();
+
+    std::fs::write(
+        config_dir.join("protocol.toml"),
+        r#"
+[protocol]
+name = "anchor-test"
+version = "1.0.0"
+description = "Gate anchoring test protocol"
+
+[paths]
+managed = ["output"]
+data_dir = "output/.sahjhan"
+render_dir = "output"
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        config_dir.join("states.toml"),
+        r#"
+[states.idle]
+label = "Idle"
+initial = true
+
+[states.done]
+label = "Done"
+terminal = true
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        config_dir.join("transitions.toml"),
+        r#"
+[[transitions]]
+from = "idle"
+to = "done"
+command = "close_project"
+gates = [
+    { type = "command_succeeds", cmd = "grep -q project marker" },
+]
+
+[[transitions]]
+from = "idle"
+to = "done"
+command = "close_caller"
+gates = [
+    { type = "command_succeeds", cmd = "grep -q caller marker", anchor = "caller" },
+]
+"#,
+    )
+    .unwrap();
+
+    std::fs::create_dir_all(dir.path().join("output")).unwrap();
+    std::fs::write(dir.path().join("marker"), "project\n").unwrap();
+    let worktree = dir.path().join(".worktrees/fix-1");
+    std::fs::create_dir_all(&worktree).unwrap();
+    std::fs::write(worktree.join("marker"), "caller\n").unwrap();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "init"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    dir
+}
+
+/// `gate check <command>`, run from `cwd` against an absolute config dir.
+fn gate_check_from(dir: &tempfile::TempDir, cwd: &std::path::Path, command: &str) -> String {
+    let config_dir = dir.path().join("enforcement");
+    let output = Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            config_dir.to_str().unwrap(),
+            "gate",
+            "check",
+            command,
+        ])
+        .current_dir(cwd)
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&output.stdout).to_string()
+}
+
+#[test]
+fn test_default_anchored_gate_is_the_same_from_anywhere_in_the_tree() {
+    // holtz #85, unchanged: a gate that says nothing about anchoring reads the
+    // project's tree no matter which subdirectory the caller is in.
+    let dir = setup_anchor_dir();
+    let worktree = dir.path().join(".worktrees/fix-1");
+
+    for cwd in [dir.path(), worktree.as_path()] {
+        let stdout = gate_check_from(&dir, cwd, "close_project");
+        assert!(
+            stdout.contains("ready"),
+            "close_project must pass from {:?}, got:\n{}",
+            cwd,
+            stdout
+        );
+    }
+}
+
+#[test]
+fn test_caller_anchored_gate_reads_the_directory_it_was_invoked_from() {
+    // The #46 reproduction: identical output from both directories, although
+    // only one of the two trees satisfies the gate. It now differs.
+    let dir = setup_anchor_dir();
+    let worktree = dir.path().join(".worktrees/fix-1");
+
+    let at_root = gate_check_from(&dir, dir.path(), "close_caller");
+    assert!(
+        at_root.contains("blocked"),
+        "the project's tree does not satisfy it, got:\n{}",
+        at_root
+    );
+
+    let in_worktree = gate_check_from(&dir, &worktree, "close_caller");
+    assert!(
+        in_worktree.contains("ready"),
+        "the caller's own tree does, got:\n{}",
+        in_worktree
+    );
+}
+
+#[test]
+fn test_caller_anchored_transition_records_where_the_gate_ran() {
+    // `gate check` is only evidence for `transition` if the two resolve the
+    // anchor the same way — and the attestation has to say which tree it is
+    // about, now that the same cmd can be true in one and false in another.
+    let dir = setup_anchor_dir();
+    let worktree = dir.path().join(".worktrees/fix-1");
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            dir.path().join("enforcement").to_str().unwrap(),
+            "transition",
+            "close_caller",
+        ])
+        .current_dir(&worktree)
+        .assert()
+        .success();
+
+    let output = Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "log", "dump"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        stdout.contains("gate_attestation") && stdout.contains("working_dir"),
+        "the attestation must record the directory the command ran in:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains(".worktrees/fix-1"),
+        "and it must be the caller's tree, not the project root:\n{}",
+        stdout
+    );
+}

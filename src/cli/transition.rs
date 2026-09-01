@@ -289,8 +289,11 @@ pub fn cmd_gate_check(
     }
 
     let multi = candidates.len() > 1;
-    // Gate commands run from the project root, not the caller's cwd (#85).
+    // Gate commands run from the project root, not the caller's cwd (#85) —
+    // unless the gate itself asks for the caller's tree (#46). `gate check` is
+    // the dry run for `transition`, so it must resolve both the same way.
     let cwd = resolve_project_root(&config.paths.data_dir);
+    let caller_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let mut would_take: Option<String> = None;
     let mut candidate_data: Vec<CandidateData> = Vec::new();
 
@@ -340,6 +343,7 @@ pub fn cmd_gate_check(
             current_state: &current_state,
             state_params,
             working_dir: cwd.clone(),
+            caller_dir: caller_dir.clone(),
             event_fields: None,
         };
 

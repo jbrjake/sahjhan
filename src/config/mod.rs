@@ -7,6 +7,7 @@
 // - [validate]              ProtocolConfig::validate()       — basic structural validation
 // - [validate-deep]         ProtocolConfig::validate_deep()  — file/alias/gate/render/ledger/branching checks
 // - [validate-gate]         ProtocolConfig::validate_gate()  — recursive gate validator (composite + leaf)
+// - [check-gate-anchor]     check_gate_anchor()              — recursive scan for an `anchor` the engine cannot act on
 // - [resolve-gate-since]    ProtocolConfig::resolve_gate_since()   — a gate's `since` param as written → baseline event type
 // - [resolve-since-anchor]  ProtocolConfig::resolve_since_anchor() — `since` form → baseline event type, or why not
 // - SinceAnchorError        — a non-string value, an unrecognized form, or a prefixed form naming an undeclared event type
@@ -365,18 +366,21 @@ impl ProtocolConfig {
         // validation every command runs, including `init` and `reseal` — the
         // two that seal the config. A window the engine cannot read must not be
         // sealable.
+        //
+        // 6b. Gate anchors resolve, and are only where they mean something.
+        // Same reasoning: an anchor the engine cannot read must not seal.
         for t in &self.transitions {
+            let location = format!("transitions.toml: transition '{}'", t.command);
             for gate in &t.gates {
-                self.check_gate_windows(
-                    gate,
-                    &format!("transitions.toml: transition '{}'", t.command),
-                    &mut errors,
-                );
+                self.check_gate_windows(gate, &location, &mut errors);
+                check_gate_anchor(gate, &location, &mut errors);
             }
         }
         for (idx, hook) in self.hooks.iter().enumerate() {
             if let Some(ref gate) = hook.gate {
-                self.check_gate_windows(gate, &format!("hooks.toml: hook[{}]", idx), &mut errors);
+                let location = format!("hooks.toml: hook[{}]", idx);
+                self.check_gate_windows(gate, &location, &mut errors);
+                check_gate_anchor(gate, &location, &mut errors);
             }
         }
 
@@ -1250,6 +1254,45 @@ impl ProtocolConfig {
                 }
             }
         }
+    }
+}
+
+/// Recursively check every gate in a tree for an `anchor` the engine cannot act on.
+///
+/// Two defects, both of which would otherwise read as a gate anchored at the
+/// project deliberately — the same thing a correct config that never mentions
+/// `anchor` produces:
+///
+/// - a value that names neither anchor, or is not a string at all;
+/// - an `anchor` on a gate type that runs no command, where nothing reads it.
+///
+/// The second is not pedantry. `anchor = "caller"` on an `all_of` looks like it
+/// scopes the whole subtree; it does not — anchoring is per leaf, because that
+/// is the granularity at which a command has a working directory. A composite
+/// that appears to carry the opt-in while its children silently keep the
+/// project anchor is worse than no opt-in at all.
+///
+/// Composite gates nest, so this walks children: an anchor buried in an
+/// `any_of` is the same anchor as one at the top.
+// [check-gate-anchor]
+fn check_gate_anchor(gate: &GateConfig, location: &str, errors: &mut Vec<String>) {
+    if let Err(e) = crate::gates::types::resolve_gate_anchor(gate) {
+        errors.push(format!("{}: gate '{}' {}", location, gate.gate_type, e));
+    } else if gate.params.contains_key("anchor")
+        && !crate::gates::types::ANCHORED_GATE_TYPES.contains(&gate.gate_type.as_str())
+    {
+        errors.push(format!(
+            "{}: gate '{}' sets anchor, which only applies to a gate that runs \
+             a command ({}) — anchoring is per leaf, so put it on the gate \
+             whose cmd it should move",
+            location,
+            gate.gate_type,
+            crate::gates::types::ANCHORED_GATE_TYPES.join(", ")
+        ));
+    }
+
+    for child in &gate.gates {
+        check_gate_anchor(child, location, errors);
     }
 }
 

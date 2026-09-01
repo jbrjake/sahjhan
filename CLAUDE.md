@@ -97,6 +97,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | Gate `since` param | `config/mod.rs` | `[resolve-gate-since]` | The one reader of the `since` param as written, so validation and evaluation agree on a gate's window: absent → `last_transition`, a string → `[resolve-since-anchor]`, anything else → `SinceAnchorError::NotAString` (TOML `since = 42` is not `"42"`; it used to read as absent and take the default) (#34) |
 | Gate window walk | `config/mod.rs` | `[check-gate-windows]` | Recursive scan of a gate tree for a window it cannot express: a `since` that is unresolvable or not a string (#34), a `since_filter` that can never match (#35), a `{{event.<field>}}` correlation in a candidate-side `filter` |
 | Anchor filter check | `config/mod.rs` | `[check-since-filter]`, `check_filter_field` | `since_filter` shape + both field sides against the declared vocabulary; silent where undecidable (engine events, events declared with no fields) (#35) |
+| Gate anchor check | `config/mod.rs` | `[check-gate-anchor]` | Recursive scan of a gate tree for an `anchor` the engine cannot act on: a value naming neither anchor or not a string, and an `anchor` on a gate type that runs no command (composites included — anchoring is per leaf) (#46) |
 | Recursive gate validator | `config/mod.rs` | `[validate-gate]` | Validates composite (any_of, all_of, not, k_of_n) and leaf gates recursively |
 | Protocol metadata | `config/protocol.rs` | `ProtocolMeta`, `PathsConfig`, `SetConfig` | protocol.toml structures |
 | Ledger template | `config/protocol.rs` | `LedgerTemplateConfig` | `[ledgers]` section; path or path_template for template-based ledger creation |
@@ -136,14 +137,16 @@ Sahjhan is a protocol enforcement engine. It has:
 | Gate filter | `gates/types.rs` | `[gate-filter]` | A gate's candidate-side `filter`, `{{var}}` resolved |
 | Filter spec | `gates/types.rs` | `[filter-spec]`, `[resolve-filter-spec]` | A filter table as written, and its resolution — split because `since_filter` may resolve once per candidate (#35) |
 | Window correlation | `gates/types.rs` | `[candidate-refs]`, `[candidate-vars]`, `CANDIDATE_PREFIX` | `{{event.<field>}}` — the fields a `since_filter` keys the window on, and the bindings one candidate entry contributes. Shared with `[check-since-filter]` so validation and evaluation agree on what a correlation is (#35) |
-| Gate context | `gates/evaluator.rs` | `GateContext` | All inputs needed to evaluate a gate |
-| Gate attestation | `gates/evaluator.rs` | `GateAttestation` | Evidence from an external command execution (gate_type, command, exit_code, stdout_hash, wall_time_ms, executed_at) |
+| Gate anchor | `gates/types.rs` | `[resolve-gate-anchor]`, `GateAnchor`, `AnchorError`, `ANCHORED_GATE_TYPES` | The one reader of the `anchor` param as written, so validation and evaluation agree on where a gate runs: absent → `project`, `"project"` / `"caller"`, anything else → an error rather than a silent default (#46) |
+| Gate working dir | `gates/types.rs` | `[gate-working-dir]` | The directory a command gate runs in: `ctx.working_dir` (project) or `ctx.caller_dir`. An unreadable anchor fails the gate rather than falling back — the fallback is spelled exactly like a deliberate project anchor (#46) |
+| Gate context | `gates/evaluator.rs` | `GateContext` | All inputs needed to evaluate a gate; carries **both** anchors — `working_dir` (project, the default) and `caller_dir` (#46) |
+| Gate attestation | `gates/evaluator.rs` | `GateAttestation` | Evidence from an external command execution (gate_type, command, exit_code, stdout_hash, wall_time_ms, executed_at, working_dir — *where* it ran, since a gate may be caller-anchored) |
 | Gate result | `gates/evaluator.rs` | `GateResult` | Outcome: passed, evaluable, gate_type, description, reason, intent, attestation |
 | Default intent | `gates/evaluator.rs` | `default_intent` | Returns default intent string for each gate type |
 | evaluate_gate | `gates/evaluator.rs` | `[evaluate-gate]` | Evaluate single gate |
 | evaluate_gates | `gates/evaluator.rs` | `[evaluate-gates]` | Evaluate all gates, returns all results |
-| Shell command gate | `gates/command.rs` | `[eval-command-succeeds]` | Run command, pass if exit 0 |
-| Command output gate | `gates/command.rs` | `[eval-command-output]` | Run command, pass if stdout matches |
+| Shell command gate | `gates/command.rs` | `[eval-command-succeeds]` | Run command, pass if exit 0; runs at the anchor `[gate-working-dir]` resolves |
+| Command output gate | `gates/command.rs` | `[eval-command-output]` | Run command, pass if stdout matches; same anchoring |
 | File exists gate | `gates/file.rs` | `[eval-file-exists]` | Single file check |
 | Files exist gate | `gates/file.rs` | `[eval-files-exist]` | Multiple files check |
 | Ledger event gate | `gates/ledger.rs` | `[eval-ledger-has-event]` | N+ events of type; optional `max_count` for budget enforcement |
@@ -155,7 +158,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | Field not empty | `gates/ledger.rs` | `[eval-field-not-empty]` | Named event field non-empty |
 | SQL query gate | `gates/query.rs` | `[eval-query-gate]` | DataFusion SQL, pass if result matches |
 | Query predicate resolution | `gates/query.rs` | `[resolve-gate-sql]` | Resolve a query gate's SQL from `sql` (inline) or `query` (named, from `[queries]`) |
-| Snapshot compare | `gates/snapshot.rs` | `[eval-snapshot-compare]` | Run command, extract JSON, compare |
+| Snapshot compare | `gates/snapshot.rs` | `[eval-snapshot-compare]` | Run command, extract JSON, compare; same anchoring |
 | Snapshot reference | `gates/snapshot.rs` | `[resolve-snapshot-reference]` | Look up snapshot:key in ledger |
 | Template resolution | `gates/template.rs` | `[resolve-template]` | `{{var}}` → shell-escaped value |
 | Plain resolution | `gates/template.rs` | `[resolve-template-plain]` | `{{var}}` → raw value (for SQL) |
@@ -202,7 +205,7 @@ Config-only analysis: no ledger is opened, no gate command runs. Answers "is thi
 
 | Concept | File | Anchor/Item | Purpose |
 |---------|------|-------------|---------|
-| State machine | `state/machine.rs` | `StateMachine` | Owns config + ledger, executes transitions |
+| State machine | `state/machine.rs` | `StateMachine` | Owns config + ledger, executes transitions; holds both gate anchors (`working_dir` = project root, `caller_dir` = the cwd it was constructed from) |
 | Transition outcome | `state/machine.rs` | `TransitionOutcome` | Result of a successful transition (from, to, attestations) |
 | Transition | `state/machine.rs` | `[transition]` | Execute named command: build params → check gates → append event → emit gate_attestation events |
 | Build state params | `state/machine.rs` | `[build-state-params]` | Derive params from state config + set state (`source` field) |
@@ -421,6 +424,7 @@ main.rs [cli-main]
                   → gates/types.rs [build-template-vars]    ← clones state_params + injects config paths/sets
                   → gates/types.rs [validate-template-fields]
                   → gates/template.rs [resolve-template]    ← {{var}} → shell-escaped value
+                  → gates/types.rs [gate-working-dir]       ← project anchor, or the caller's (#46)
                   → gates/command.rs [run-shell-output-with-timeout]
         → if all gates pass: take this candidate, break
         → if any gate fails: try next candidate
@@ -446,6 +450,30 @@ config paths.data_dir  (e.g. "docs/holtz/.sahjhan", relative)
       ├→ manifest/verify.rs [verify] ← base_dir for resolving those same keys
       └→ state/machine.rs StateMachine::new  ← working_dir for `command_succeeds` gates
 ```
+
+**The one opt-out, and why it is per gate (#46).** The anchor above answers
+"where is the project", which is what almost every gate wants. It cannot answer
+"does *this actor's* tree carry the commit" — and with several actors working
+concurrently in separate git worktrees, a project-anchored tree-reading gate is
+true for at most one of them, so the block it guards is a dead end for the rest.
+A gate may therefore declare `anchor = "caller"`:
+
+```
+gates/types.rs [resolve-gate-anchor]   ← the `anchor` param as written
+  → [gate-working-dir]
+      ├ project (default, or absent)  → ctx.working_dir   ← the anchor above
+      ├ caller                        → ctx.caller_dir    ← the cwd sahjhan was invoked from
+      └ anything else                 → the gate FAILS    ← never a silent fallback
+  → gate_attestation records working_dir ← which tree the evidence is about
+```
+
+`caller_dir` is carried on `GateContext` rather than read from the environment
+where the gate runs, so "the caller's directory" is an input a test can state.
+Not a global `--cwd` and not an env override: those would undo #85 for every
+gate at once, and silently. The opt-in is in the sealed config, where a reader
+of the protocol can see it — and `[check-gate-anchor]` refuses it on any gate
+that runs no command, including composites, because anchoring is per leaf and a
+composite that *looks* anchored is worse than none.
 
 **Invariant:** the anchor is computed once, by `project_root_from`, and
 everything else is expressed in terms of it. holtz #85 was two derivations of
@@ -614,6 +642,9 @@ cli/commands.rs [load-config]
         → config/mod.rs [resolve-since-anchor] — "last_transition" | "last_event_of_type:<declared or engine event>"
       → config/mod.rs [check-since-filter] — since_filter keys vs the baseline event's declared fields,
                                              {{event.<field>}} correlations vs the counted event's
+    → config/mod.rs [check-gate-anchor] — every transition gate + every hook gate, recursively:
+                                          an `anchor` naming neither anchor, or on a gate that runs
+                                          no command (where nothing would read it)
   → config/mod.rs [validate-deep] (via cmd_validate) — file/alias/gate/ledger checks
 ```
 
@@ -623,7 +654,9 @@ that write config seals. `[validate-deep]` runs only under `sahjhan validate`,
 which nothing automates. So a check that must make a defect *unshippable*
 belongs in `[validate]`; one that is advisory can live in `[validate-deep]`.
 The `since` anchor check is in the first group: #34 was a typo'd anchor silently
-widening a gate's window, and a config carrying one must not be sealable.
+widening a gate's window, and a config carrying one must not be sealable. The
+`anchor` check joins it for the same reason — an unreadable `anchor` and a gate
+that never mentioned one both land at the project root (#46).
 
 ### Flow: Ledger Resolution Order
 
@@ -693,10 +726,10 @@ main.rs [cli-main]
 
 | Test file | Tests |
 |-----------|-------|
-| `tests/gate_tests.rs` | All gate types, template interpolation, field validation, StateParam source, attestation, `since` anchors failing closed — unrecognized, undeclared, and non-string (#34), `since_filter` per-actor and per-candidate windows (#35) |
-| `tests/integration_tests.rs` | Full CLI end-to-end (init, transition, events, queries, renders, sets) |
+| `tests/gate_tests.rs` | All gate types, template interpolation, field validation, StateParam source, attestation, `since` anchors failing closed — unrecognized, undeclared, and non-string (#34), `since_filter` per-actor and per-candidate windows (#35), gate `anchor` — project default, caller opt-in on all three command gates, unreadable anchors failing closed, attested working_dir (#46) |
+| `tests/integration_tests.rs` | Full CLI end-to-end (init, transition, events, queries, renders, sets); gate anchoring from a nested worktree — the default unchanged from any cwd, `anchor = "caller"` differing, and the transition attesting where it ran (#46) |
 | `tests/chain_integrity_tests.rs` | Ledger hash chain, append, reload, tamper detection |
-| `tests/config_tests.rs` | Config loading, validation, hooks/monitors/write_gated validation, `since` anchor rejection in transition + hook + composite gates, incl. non-string values (#34), `since_filter` field/shape rejection and TOML round-trip (#35) |
+| `tests/config_tests.rs` | Config loading, validation, hooks/monitors/write_gated validation, `since` anchor rejection in transition + hook + composite gates, incl. non-string values (#34), `since_filter` field/shape rejection and TOML round-trip (#35), gate `anchor` rejection — unrecognized, non-string, on a gate that runs no command, on a composite, and nested in one (#46) |
 | `tests/state_machine_tests.rs` | StateMachine transitions, gates, sets |
 | `tests/query_tests.rs` | DataFusion SQL queries over ledger |
 | `tests/ledger_tests.rs` | LedgerEntry serialization, hashing, schema |

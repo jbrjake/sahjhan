@@ -14,7 +14,7 @@ use crate::config::GateConfig;
 use super::command::{run_shell_output_with_timeout, CommandOutputOutcome};
 use super::evaluator::{GateAttestation, GateContext, GateResult};
 use super::template::{find_unresolved_vars, resolve_template};
-use super::types::{build_template_vars, validate_template_fields};
+use super::types::{build_template_vars, gate_working_dir, validate_template_fields};
 
 // [eval-snapshot-compare]
 pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> GateResult {
@@ -94,6 +94,21 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
 
+    let working_dir = match gate_working_dir(gate, ctx) {
+        Ok(dir) => dir,
+        Err(reason) => {
+            return GateResult {
+                passed: false,
+                evaluable: true,
+                gate_type: "snapshot_compare".to_string(),
+                description,
+                reason: Some(reason),
+                intent: None,
+                attestation: None,
+            }
+        }
+    };
+
     let started_at = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
     let start = Instant::now();
 
@@ -119,7 +134,7 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
 
     // Run command and get stdout/stderr with timeout enforcement.
     let (stdout, stderr, status) =
-        match run_shell_output_with_timeout(&cmd, &ctx.working_dir, timeout_secs) {
+        match run_shell_output_with_timeout(&cmd, working_dir, timeout_secs) {
             Ok(CommandOutputOutcome::Completed(s, e, st)) => (s, e, st),
             Ok(CommandOutputOutcome::TimedOut) => {
                 return GateResult {
@@ -255,6 +270,7 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
                     stdout_hash,
                     wall_time_ms,
                     executed_at: started_at,
+                    working_dir: working_dir.display().to_string(),
                 })
             } else {
                 None
@@ -321,6 +337,7 @@ pub(super) fn eval_snapshot_compare(gate: &GateConfig, ctx: &GateContext) -> Gat
             stdout_hash,
             wall_time_ms,
             executed_at: started_at,
+            working_dir: working_dir.display().to_string(),
         })
     } else {
         None

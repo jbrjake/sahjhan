@@ -12,8 +12,14 @@
 // - [resolve-filter-spec]       resolve_filter_spec()       — resolve {{var}} in a filter spec's values
 // - [candidate-refs]            candidate_refs()            — the {{event.<field>}} names a filter spec correlates on
 // - [candidate-vars]            candidate_vars()            — event.<field> bindings contributed by one ledger entry
+// - GateAnchor                  — the directory a command gate is evaluated at: Project (default) or Caller
+// - AnchorError                 — a non-string `anchor`, or a string naming neither anchor
+// - ANCHORED_GATE_TYPES         — the gate types that run a command, and so have a working directory
+// - [resolve-gate-anchor]       resolve_gate_anchor()       — a gate's `anchor` param as written → GateAnchor
+// - [gate-working-dir]          gate_working_dir()          — the directory this gate's command runs in
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use regex::Regex;
 
@@ -196,6 +202,110 @@ fn named_query_intent(gate: &GateConfig, ctx: &GateContext) -> Option<String> {
     }
     let name = gate.params.get("query").and_then(|v| v.as_str())?;
     ctx.config.queries.get(name)?.intent.clone()
+}
+
+// ---------------------------------------------------------------------------
+// Anchoring: which directory a command gate is evaluated at
+// ---------------------------------------------------------------------------
+
+/// The directory a gate that runs a command is evaluated at.
+///
+/// The project root is the default and stays the default: a gate `cmd` is
+/// written relative to the project, so running it from whichever subdirectory
+/// the caller happened to be in is the same defect as keying a manifest entry
+/// there (holtz #85).
+///
+/// `Caller` is the per-gate opt-out, for the one question the project anchor
+/// cannot express: *does this actor's own tree satisfy the condition*. With
+/// several actors working concurrently in separate git worktrees, a
+/// tree-reading gate anchored at the project is true for at most one of them,
+/// which turns the block it guards into a dead end for the rest (sahjhan #46).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GateAnchor {
+    /// The project root — the anchor derived from the config's `data_dir`.
+    Project,
+    /// The directory the caller invoked sahjhan from.
+    Caller,
+}
+
+/// Why a gate's `anchor` names no directory the engine can evaluate it at.
+///
+/// Both variants used to be spelled the same way as a correct config: an
+/// unreadable `anchor` would have fallen through to the project root, which is
+/// also what a gate that never mentions one gets. A typo would then read as a
+/// deliberate choice — #34's failure mode on a new surface.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AnchorError {
+    /// Not a string at all: `anchor = 1` rather than `anchor = "caller"`.
+    NotAString(String),
+    /// A string naming neither anchor.
+    Unrecognized(String),
+}
+
+impl std::fmt::Display for AnchorError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AnchorError::NotAString(found) => write!(
+                f,
+                "has a non-string anchor (found {}; expected the string \"project\" or \"caller\")",
+                found
+            ),
+            AnchorError::Unrecognized(value) => write!(
+                f,
+                "has unrecognized anchor '{}' (expected \"project\" or \"caller\")",
+                value
+            ),
+        }
+    }
+}
+
+impl std::error::Error for AnchorError {}
+
+/// The gate types that execute a command, and so have a working directory to
+/// anchor. `anchor` on any other type would be read by nothing, so config
+/// validation rejects it rather than let it sit there looking effective.
+pub(crate) const ANCHORED_GATE_TYPES: [&str; 3] =
+    ["command_succeeds", "command_output", "snapshot_compare"];
+
+// [resolve-gate-anchor]
+/// Resolve a gate's `anchor` **parameter as written** — the one reader of the
+/// parameter, so config validation and gate evaluation cannot disagree about
+/// where a gate runs.
+///
+/// - absent → [`GateAnchor::Project`], the documented default;
+/// - `"project"` / `"caller"` → the named anchor;
+/// - any other string, or a non-string → an error. TOML is typed, so
+///   `anchor = 1` is not the string `"1"`; it misses `as_str()`, and silently
+///   taking the default is precisely how a mis-anchored gate stays invisible.
+pub(crate) fn resolve_gate_anchor(gate: &GateConfig) -> Result<GateAnchor, AnchorError> {
+    match gate.params.get("anchor") {
+        None => Ok(GateAnchor::Project),
+        Some(value) => match value.as_str() {
+            Some("project") => Ok(GateAnchor::Project),
+            Some("caller") => Ok(GateAnchor::Caller),
+            Some(other) => Err(AnchorError::Unrecognized(other.to_string())),
+            None => Err(AnchorError::NotAString(value.type_str().to_string())),
+        },
+    }
+}
+
+// [gate-working-dir]
+/// The directory this gate's command runs in.
+///
+/// An anchor the engine cannot read fails the gate rather than falling back to
+/// the project root: the fallback is indistinguishable from a gate that chose
+/// the project deliberately, and a gate evaluated somewhere its author did not
+/// mean is evidence of nothing. Config validation rejects such an anchor before
+/// it can be sealed; this is the second line, for a config loaded past it.
+pub(super) fn gate_working_dir<'a>(
+    gate: &GateConfig,
+    ctx: &'a GateContext,
+) -> Result<&'a Path, String> {
+    match resolve_gate_anchor(gate) {
+        Ok(GateAnchor::Project) => Ok(ctx.working_dir.as_path()),
+        Ok(GateAnchor::Caller) => Ok(ctx.caller_dir.as_path()),
+        Err(e) => Err(format!("gate '{}' {}", gate.gate_type, e)),
+    }
 }
 
 // ---------------------------------------------------------------------------

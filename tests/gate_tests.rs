@@ -55,6 +55,7 @@ fn test_file_exists_pass() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -85,6 +86,7 @@ fn test_file_exists_fail() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -121,6 +123,7 @@ fn test_files_exist_pass() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     assert!(evaluate_gate(&gate, &ctx).passed);
@@ -152,6 +155,7 @@ fn test_files_exist_fail_missing_one() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     assert!(!evaluate_gate(&gate, &ctx).passed);
@@ -178,6 +182,7 @@ fn test_command_succeeds_pass() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     assert!(evaluate_gate(&gate, &ctx).passed);
@@ -200,6 +205,7 @@ fn test_command_succeeds_fail() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     assert!(!evaluate_gate(&gate, &ctx).passed);
@@ -229,6 +235,7 @@ fn test_command_succeeds_fail_surfaces_stderr() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -266,6 +273,7 @@ fn test_command_succeeds_fail_stdout_fallback() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let reason = evaluate_gate(&gate, &ctx).reason.unwrap();
@@ -300,6 +308,7 @@ fn test_command_succeeds_timeout() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
 
@@ -345,6 +354,7 @@ fn test_command_output_match() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     assert!(evaluate_gate(&gate, &ctx).passed);
@@ -370,6 +380,7 @@ fn test_command_output_mismatch() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     assert!(!evaluate_gate(&gate, &ctx).passed);
@@ -399,6 +410,7 @@ fn test_command_output_mismatch_surfaces_stderr() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let reason = evaluate_gate(&gate, &ctx).reason.unwrap();
@@ -436,6 +448,7 @@ fn test_command_output_timeout() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
 
@@ -482,6 +495,7 @@ fn test_ledger_has_event_pass() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     assert!(evaluate_gate(&gate, &ctx).passed);
@@ -508,6 +522,7 @@ fn test_ledger_has_event_fail_count() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     assert!(!evaluate_gate(&gate, &ctx).passed);
@@ -541,6 +556,7 @@ fn test_ledger_has_event_with_filter_pass() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     assert!(evaluate_gate(&gate, &ctx).passed);
@@ -574,6 +590,7 @@ fn test_ledger_has_event_with_filter_fail() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     assert!(!evaluate_gate(&gate, &ctx).passed);
@@ -605,6 +622,7 @@ fn test_ledger_has_event_max_count_pass() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -635,6 +653,7 @@ fn test_ledger_has_event_max_count_exceeded() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -667,6 +686,7 @@ fn test_ledger_has_event_max_count_with_min_count() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     assert!(evaluate_gate(&gate, &ctx).passed);
@@ -712,6 +732,7 @@ fn test_ledger_has_event_max_count_with_filter() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     assert!(!evaluate_gate(&gate, &ctx).passed);
@@ -760,6 +781,7 @@ fn test_ledger_has_event_since_pass() {
         current_state: "working",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     assert!(evaluate_gate(&gate, &ctx).passed);
@@ -794,6 +816,7 @@ fn test_ledger_has_event_since_fail() {
         current_state: "working",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     assert!(!evaluate_gate(&gate, &ctx).passed);
@@ -811,6 +834,7 @@ fn _since_ctx<'a>(ledger: &'a Ledger, config: &'a ProtocolConfig, dir: &Path) ->
         current_state: "working",
         state_params: HashMap::new(),
         working_dir: dir.to_path_buf(),
+        caller_dir: dir.to_path_buf(),
         event_fields: None,
     }
 }
@@ -1220,6 +1244,7 @@ fn test_set_covered_pass() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     assert!(evaluate_gate(&gate, &ctx).passed);
@@ -1248,6 +1273,7 @@ fn test_set_covered_fail_partial() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -1280,6 +1306,7 @@ fn test_min_elapsed_pass_no_event() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     assert!(evaluate_gate(&gate, &ctx).passed);
@@ -1307,6 +1334,7 @@ fn test_min_elapsed_fail_just_happened() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     assert!(!evaluate_gate(&gate, &ctx).passed);
@@ -1330,6 +1358,7 @@ fn test_no_violations_clean() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     assert!(evaluate_gate(&gate, &ctx).passed);
@@ -1352,6 +1381,7 @@ fn test_no_violations_with_violation() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     assert!(!evaluate_gate(&gate, &ctx).passed);
@@ -1379,6 +1409,7 @@ fn test_no_violations_with_resolved_violation() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -1414,6 +1445,7 @@ fn test_no_violations_partial_resolution() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -1445,6 +1477,7 @@ fn test_field_not_empty_pass() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: Some(&fields),
     };
     assert!(evaluate_gate(&gate, &ctx).passed);
@@ -1470,6 +1503,7 @@ fn test_field_not_empty_fail_empty_value() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: Some(&fields),
     };
     assert!(!evaluate_gate(&gate, &ctx).passed);
@@ -1494,6 +1528,7 @@ fn test_field_not_empty_fail_missing_field() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: Some(&fields),
     };
     assert!(!evaluate_gate(&gate, &ctx).passed);
@@ -1529,6 +1564,7 @@ fn test_snapshot_compare_gt_pass() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     assert!(evaluate_gate(&gate, &ctx).passed);
@@ -1559,6 +1595,7 @@ fn test_snapshot_compare_eq_pass() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     assert!(evaluate_gate(&gate, &ctx).passed);
@@ -1589,6 +1626,7 @@ fn test_snapshot_compare_fail() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     assert!(!evaluate_gate(&gate, &ctx).passed);
@@ -1623,6 +1661,7 @@ fn test_snapshot_compare_failed_command_reports_exit_status_and_stderr() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -1670,6 +1709,7 @@ fn test_snapshot_compare_exit_zero_nonjson_output_is_clear() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -1720,6 +1760,7 @@ fn test_snapshot_compare_with_ledger_reference() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -1759,6 +1800,7 @@ fn test_snapshot_compare_missing_snapshot_fails() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -1815,6 +1857,7 @@ fn test_snapshot_compare_uses_most_recent_snapshot() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -1872,6 +1915,7 @@ fn test_field_validation_rejects_invalid_pattern() {
         current_state: "idle",
         state_params,
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -1927,6 +1971,7 @@ fn test_field_validation_accepts_valid_pattern() {
         current_state: "idle",
         state_params,
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -1961,6 +2006,7 @@ fn test_evaluate_gates_all_pass() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let results = evaluate_gates(&gates, &ctx);
@@ -1991,6 +2037,7 @@ fn test_evaluate_gates_continues_after_failure() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let results = evaluate_gates(&gates, &ctx);
@@ -2031,6 +2078,7 @@ fn test_query_gate_pass() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -2069,6 +2117,7 @@ fn test_query_gate_fail() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -2098,6 +2147,7 @@ fn test_query_gate_missing_sql() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -2390,6 +2440,7 @@ fn test_query_gate_interpolates_template_vars() {
         current_state: "idle",
         state_params,
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
 
@@ -2653,6 +2704,7 @@ fn test_gate_result_has_intent_from_config() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -2692,6 +2744,7 @@ fn test_gate_result_has_default_intent_when_missing() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -2760,6 +2813,7 @@ fn test_ledger_lacks_event_pass_when_no_events() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -2791,6 +2845,7 @@ fn test_ledger_lacks_event_fail_when_event_exists() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -2835,6 +2890,7 @@ fn test_ledger_lacks_event_with_filter() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -2863,6 +2919,7 @@ fn test_ledger_lacks_event_with_filter() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result2 = evaluate_gate(&gate2, &ctx2);
@@ -2908,6 +2965,7 @@ fn test_any_of_passes_when_one_child_passes() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -2946,6 +3004,7 @@ fn test_any_of_fails_when_no_child_passes() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -2995,6 +3054,7 @@ fn test_all_of_passes_when_all_children_pass() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -3039,6 +3099,7 @@ fn test_all_of_fails_when_one_child_fails() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -3077,6 +3138,7 @@ fn test_not_inverts_passing_child() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -3105,6 +3167,7 @@ fn test_not_inverts_failing_child() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -3164,6 +3227,7 @@ fn test_k_of_n_passes_at_threshold() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -3214,6 +3278,7 @@ fn test_k_of_n_fails_below_threshold() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -3247,6 +3312,7 @@ fn test_gate_result_evaluable_default_true() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -3280,6 +3346,7 @@ fn test_query_gate_unevaluable_on_missing_template_var() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -3313,6 +3380,7 @@ fn test_command_gate_unevaluable_on_missing_template_var() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -3341,6 +3409,7 @@ fn test_file_exists_unevaluable_on_missing_template_var() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -3376,6 +3445,7 @@ fn test_query_gate_evaluable_when_var_provided() {
         current_state: "idle",
         state_params,
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -3406,6 +3476,7 @@ fn test_command_succeeds_produces_attestation() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -3440,6 +3511,7 @@ fn test_command_output_produces_attestation() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -3484,6 +3556,7 @@ fn test_snapshot_compare_produces_attestation() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -3520,6 +3593,7 @@ fn test_attest_false_suppresses_attestation() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -3553,6 +3627,7 @@ fn test_non_command_gates_have_no_attestation() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -3584,6 +3659,7 @@ fn test_attestation_stdout_hash_is_deterministic() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
 
@@ -3635,6 +3711,7 @@ fn test_ledger_has_event_since_custom_event() {
         current_state: "working",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     assert!(
@@ -3676,6 +3753,7 @@ fn test_ledger_has_event_since_custom_event_fail() {
         current_state: "working",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     assert!(
@@ -3721,6 +3799,7 @@ fn test_ledger_has_event_since_custom_event_fallback() {
         current_state: "working",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     assert!(
@@ -3774,6 +3853,7 @@ fn test_query_gate_named_reference_resolves() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -3810,6 +3890,7 @@ fn test_query_gate_named_intent_used_as_gate_intent() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -3842,6 +3923,7 @@ fn test_query_gate_own_intent_beats_named_query_intent() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     assert_eq!(
@@ -3867,6 +3949,7 @@ fn test_query_gate_unknown_named_query_fails() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -3902,6 +3985,7 @@ fn test_query_gate_sql_and_named_query_conflict_fails() {
         current_state: "idle",
         state_params: HashMap::new(),
         working_dir: dir.path().to_path_buf(),
+        caller_dir: dir.path().to_path_buf(),
         event_fields: None,
     };
     let result = evaluate_gate(&gate, &ctx);
@@ -3974,6 +4058,7 @@ fn _actor_ctx<'a>(
         current_state: "working",
         state_params,
         working_dir: dir.to_path_buf(),
+        caller_dir: dir.to_path_buf(),
         event_fields: None,
     }
 }
@@ -4198,4 +4283,208 @@ fn test_since_filter_appears_in_the_gate_description() {
         "the description must show what the window keys on: {}",
         result.description
     );
+}
+
+// ---------------------------------------------------------------------------
+// anchor — which directory a command gate is evaluated at (#46)
+// ---------------------------------------------------------------------------
+
+/// Two trees that disagree. `marker` says which one a command is standing in,
+/// so a gate that reads it reports its own anchor rather than being taken on
+/// trust. Returns (project_root, caller_dir) — the caller's tree is nested
+/// inside the project, which is where Claude Code puts a subagent's worktree.
+fn _two_trees(dir: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
+    let project = dir.join("project");
+    let caller = project.join(".worktrees/fix-1");
+    std::fs::create_dir_all(&caller).unwrap();
+    std::fs::write(project.join("marker"), "project\n").unwrap();
+    std::fs::write(caller.join("marker"), "caller\n").unwrap();
+    (project, caller)
+}
+
+fn _anchored_ctx<'a>(
+    ledger: &'a Ledger,
+    config: &'a ProtocolConfig,
+    project: &Path,
+    caller: &Path,
+) -> GateContext<'a> {
+    GateContext {
+        ledger,
+        config,
+        current_state: "idle",
+        state_params: HashMap::new(),
+        working_dir: project.to_path_buf(),
+        caller_dir: caller.to_path_buf(),
+        event_fields: None,
+    }
+}
+
+/// A `command_succeeds` gate reading the marker of whichever tree it runs in.
+fn _marker_gate(expect: &str, anchor: Option<&str>) -> GateConfig {
+    let mut params = vec![(
+        "cmd",
+        toml::Value::String(format!("grep -q {} marker", expect)),
+    )];
+    if let Some(a) = anchor {
+        params.push(("anchor", toml::Value::String(a.to_string())));
+    }
+    make_gate("command_succeeds", params)
+}
+
+#[test]
+fn test_command_gate_defaults_to_the_project_anchor() {
+    // The default must not move: a gate that says nothing about anchoring runs
+    // at the project root, which is the whole of holtz #85.
+    let dir = tempdir().unwrap();
+    let (project, caller) = _two_trees(dir.path());
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger = Ledger::init(&dir.path().join("ledger.jsonl"), "test", "1.0.0").unwrap();
+    let ctx = _anchored_ctx(&ledger, &config, &project, &caller);
+
+    assert!(evaluate_gate(&_marker_gate("project", None), &ctx).passed);
+    assert!(
+        !evaluate_gate(&_marker_gate("caller", None), &ctx).passed,
+        "an un-anchored gate must not see the caller's tree"
+    );
+}
+
+#[test]
+fn test_command_gate_anchor_project_is_the_default_spelled_out() {
+    let dir = tempdir().unwrap();
+    let (project, caller) = _two_trees(dir.path());
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger = Ledger::init(&dir.path().join("ledger.jsonl"), "test", "1.0.0").unwrap();
+    let ctx = _anchored_ctx(&ledger, &config, &project, &caller);
+
+    assert!(evaluate_gate(&_marker_gate("project", Some("project")), &ctx).passed);
+    assert!(!evaluate_gate(&_marker_gate("caller", Some("project")), &ctx).passed);
+}
+
+#[test]
+fn test_command_gate_anchor_caller_reads_the_callers_tree() {
+    // The reproduction in #46: an actor working in its own worktree can now
+    // pass a gate that is true of *its* tree, which the project anchor calls
+    // false for every actor but one.
+    let dir = tempdir().unwrap();
+    let (project, caller) = _two_trees(dir.path());
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger = Ledger::init(&dir.path().join("ledger.jsonl"), "test", "1.0.0").unwrap();
+    let ctx = _anchored_ctx(&ledger, &config, &project, &caller);
+
+    assert!(
+        evaluate_gate(&_marker_gate("caller", Some("caller")), &ctx).passed,
+        "anchor = \"caller\" must evaluate in the caller's tree"
+    );
+    assert!(
+        !evaluate_gate(&_marker_gate("project", Some("caller")), &ctx).passed,
+        "and must not fall back to the project's"
+    );
+}
+
+#[test]
+fn test_command_output_gate_honours_the_caller_anchor() {
+    let dir = tempdir().unwrap();
+    let (project, caller) = _two_trees(dir.path());
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger = Ledger::init(&dir.path().join("ledger.jsonl"), "test", "1.0.0").unwrap();
+    let ctx = _anchored_ctx(&ledger, &config, &project, &caller);
+
+    let gate = make_gate(
+        "command_output",
+        vec![
+            ("cmd", toml::Value::String("cat marker".to_string())),
+            ("expect", toml::Value::String("caller".to_string())),
+            ("anchor", toml::Value::String("caller".to_string())),
+        ],
+    );
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(result.passed, "reason: {:?}", result.reason);
+}
+
+#[test]
+fn test_snapshot_compare_gate_honours_the_caller_anchor() {
+    let dir = tempdir().unwrap();
+    let (project, caller) = _two_trees(dir.path());
+    std::fs::write(project.join("count.json"), r#"{"n": 1}"#).unwrap();
+    std::fs::write(caller.join("count.json"), r#"{"n": 7}"#).unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger = Ledger::init(&dir.path().join("ledger.jsonl"), "test", "1.0.0").unwrap();
+    let ctx = _anchored_ctx(&ledger, &config, &project, &caller);
+
+    let gate = make_gate(
+        "snapshot_compare",
+        vec![
+            ("cmd", toml::Value::String("cat count.json".to_string())),
+            ("extract", toml::Value::String("n".to_string())),
+            ("compare", toml::Value::String("eq".to_string())),
+            ("reference", toml::Value::String("7".to_string())),
+            ("anchor", toml::Value::String("caller".to_string())),
+        ],
+    );
+    let result = evaluate_gate(&gate, &ctx);
+    assert!(result.passed, "reason: {:?}", result.reason);
+}
+
+#[test]
+fn test_unreadable_anchor_fails_the_gate_closed() {
+    // Config validation rejects these before a config can seal. If one reaches
+    // evaluation anyway, the gate must fail rather than quietly fall back to
+    // the project root — a gate evaluated somewhere its author did not mean is
+    // evidence of nothing, and the fallback is spelled exactly like a correct
+    // config that never mentioned `anchor`.
+    let dir = tempdir().unwrap();
+    let (project, caller) = _two_trees(dir.path());
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger = Ledger::init(&dir.path().join("ledger.jsonl"), "test", "1.0.0").unwrap();
+    let ctx = _anchored_ctx(&ledger, &config, &project, &caller);
+
+    // A command that passes in *either* tree, so only the anchor can fail it.
+    let always = |anchor: toml::Value| {
+        make_gate(
+            "command_succeeds",
+            vec![
+                ("cmd", toml::Value::String("true".to_string())),
+                ("anchor", anchor),
+            ],
+        )
+    };
+
+    for bad in [
+        toml::Value::String("callr".to_string()),
+        toml::Value::String("".to_string()),
+        toml::Value::Integer(1),
+        toml::Value::Boolean(true),
+    ] {
+        let result = evaluate_gate(&always(bad.clone()), &ctx);
+        assert!(
+            !result.passed,
+            "anchor {:?} must fail the gate, not take the default",
+            bad
+        );
+        assert!(
+            result.reason.unwrap_or_default().contains("anchor"),
+            "the reason must name the anchor as the problem"
+        );
+    }
+}
+
+#[test]
+fn test_attestation_records_the_directory_the_command_ran_in() {
+    // Once the same cmd can be true in one tree and false in another, "exited
+    // 0" is only evidence if the record says where.
+    let dir = tempdir().unwrap();
+    let (project, caller) = _two_trees(dir.path());
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger = Ledger::init(&dir.path().join("ledger.jsonl"), "test", "1.0.0").unwrap();
+    let ctx = _anchored_ctx(&ledger, &config, &project, &caller);
+
+    let at_project = evaluate_gate(&_marker_gate("project", None), &ctx)
+        .attestation
+        .expect("a passing command gate attests");
+    assert_eq!(at_project.working_dir, project.display().to_string());
+
+    let at_caller = evaluate_gate(&_marker_gate("caller", Some("caller")), &ctx)
+        .attestation
+        .expect("a passing command gate attests");
+    assert_eq!(at_caller.working_dir, caller.display().to_string());
 }

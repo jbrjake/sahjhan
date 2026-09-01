@@ -381,7 +381,7 @@ Most agent work doesn't need any of this. A rule in `CLAUDE.md`, a checklist, a 
 | | |
 | --- | --- |
 | [why.md](docs/why.md) | why this had to exist: the agent transcripts, and why a script wasn't enough |
-| [protocols.md](docs/protocols.md) | writing a protocol: a worked TDD example, states, sets, events, renders, template variables |
+| [protocols.md](docs/protocols.md) | writing a protocol: a worked TDD example, states, sets, events, renders, emits, template variables |
 | [gates.md](docs/gates.md) | every gate type and its parameters, composites, template resolution, `gate check` |
 | [lint.md](docs/lint.md) | the seven static checks, named queries, boundaries, producers, attestation levels |
 | [hardening.md](docs/hardening.md) | restricted events, HMAC, the daemon and vault, caller auth, config sealing, gate attestation |

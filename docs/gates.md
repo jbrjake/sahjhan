@@ -141,6 +141,10 @@ three of them.
 The attestation records which tree the command ran in, since the same `cmd` can be
 true in one and false in another.
 
+A transition's `emits` take the same param, and a caller-anchored gate usually
+wants a caller-anchored emit beside it. See
+[emits](protocols.md#emits-recording-what-a-transition-implies).
+
 See [path anchoring](internals.md#path-anchoring).
 
 **`query`** takes inline `sql` or the name of a predicate declared once under

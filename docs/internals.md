@@ -107,7 +107,7 @@ things that put a file where `.git` would normally be a directory: a linked
 worktree's gitdir carries one naming the shared repository, and a submodule's
 doesn't, because a submodule is its own repository.
 
-One gate can opt out. `anchor = "caller"` on a `command_succeeds`,
+One command at a time can opt out. `anchor = "caller"` on a `command_succeeds`,
 `command_output`, or `snapshot_compare` gate runs that command in the directory
 sahjhan was invoked from instead, as it's the only way to ask "does *this actor's*
 tree carry the commit" when several actors are working in separate worktrees. The
@@ -115,6 +115,12 @@ directory is threaded through the gate context rather than read from the process
 at the point the command runs, so it's an input rather than a global, and an
 `anchor` the engine can't read fails the gate instead of quietly landing back at
 the project root. See [gates.md](gates.md#notes-on-the-ones-with-sharp-edges).
+
+A transition's `emits` takes the same param, and needs it for the same reason. A
+transition runs its gates' commands *and* its emitted derived values. The anchor
+is per emit entry and isn't inherited from any gate, because a transition's gates
+can be anchored differently from each other. See
+[protocols.md](protocols.md#emits-recording-what-a-transition-implies).
 
 This was a real bug. Two derivations of one fact disagreed — the walk-up found
 the root for `data_dir` while manifest keys were re-derived from

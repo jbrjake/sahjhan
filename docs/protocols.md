@@ -342,6 +342,32 @@ $ sahjhan transition review current_perspective=security
 
 Positional arguments map onto the names a transition declares in `args`. A gate whose variables can't all be resolved is reported as *unevaluable* (`?`) instead of being run with a literal `{{var}}` in the string. See [gates.md](gates.md).
 
+## emits: recording what a transition implies
+
+A transition often implies a domain fact: `fix_commit` succeeding *means* a punchlist item was resolved. You can make the agent record that separately, but then the fact is a second command it might not run, and the record and the transition can drift apart. `emits` folds it into the transition:
+
+```toml
+[[transitions]]
+from = "working"
+to = "working"
+command = "fix_commit"
+args = ["item_id"]
+gates = [
+    { type = "command_succeeds", cmd = "git log -1 --format=%B | grep -q '{{item_id}}'", anchor = "caller", intent = "commit must reference the punchlist item" },
+]
+emits = [
+    { event = "finding_resolved", anchor = "caller", commands = { commit_hash = "git rev-parse --short=7 HEAD" }, fields = { id = "{{item_id}}", commit_hash = "{{commit_hash}}" } },
+]
+```
+
+When every gate passes, each emit resolves its `fields` and the event lands right after the `state_transition`. `commands` derive values from the environment. Templated fields resolve from the ledger (the most recent value of each field), then the transition's args, then command output, in that order.
+
+It's atomic. Emits resolve *before* anything is appended, so a failed command or an unresolved `{{var}}` blocks the whole transition and leaves the ledger untouched. An emit can't name a `restricted` event. That would route around the HMAC proof `authed-event` demands.
+
+**`anchor` says which tree the derivation reads**, exactly as it does on a gate. It matters most when the two appear together: the gate above asks whether the *caller's* commit references the item, so the hash recorded beside it had better come from the same tree. Without the anchor the emit derives at the project root, and the transition reports one tree while recording a commit from another. `anchor = "project"` is the default.
+
+It's per emit entry, and it isn't inherited from the gates. Gates on one transition can be anchored differently. An `anchor` sahjhan can't read fails the emit rather than falling back, and `sahjhan validate` refuses to seal the config carrying it. This includes situations where an `anchor` is placed on an emit that declares no `commands`, where nothing would read it.
+
 ## violations
 
 Nothing records a `protocol_violation` automatically. It's ledger vocabulary your protocol writes, typically via a `hooks.toml` rule with `auto_record` when a guard fires, or by hand when you catch something. The `no_violations` gate blocks while any are unresolved. Resolving one means recording the counterpart:

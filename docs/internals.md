@@ -82,6 +82,7 @@ happened to run from.
 ```
 config paths.data_dir  (e.g. "docs/holtz/.sahjhan", relative)
   → project_root_from()             walk UP from cwd to the ancestor holding it
+      │                             no holder? go to main checkout and walk up
       ├→ data_dir                   = project_root.join(data_dir)
       ├→ manifest keys              = file.strip_prefix(project_root)
       ├→ manifest verify base_dir   = project_root
@@ -94,6 +95,17 @@ tree, and a key landing outside the declared managed paths is refused at write
 rather than registered as a file nobody can find. Gate commands run from that
 same root, so a `cmd` written relative to the project resolves the same way for
 whoever invokes it.
+
+Note: unlike a git worktree nested inside the main checkout, a sibling worktree
+(`git worktree add ../myrepo-feature`) has no ancestor holding it. sahjhan
+resolves the worktree's `.git` *file* to its main checkout and walks up from there.
+
+That resolution reads files instead of running `git`, because it sits on the
+failure path of an anchor every command computes, including `hook eval` on every
+tool call. It also checks for a `commondir`, which is what tells apart the two
+things that put a file where `.git` would normally be a directory: a linked
+worktree's gitdir carries one naming the shared repository, and a submodule's
+doesn't, because a submodule is its own repository.
 
 One gate can opt out. `anchor = "caller"` on a `command_succeeds`,
 `command_output`, or `snapshot_compare` gate runs that command in the directory

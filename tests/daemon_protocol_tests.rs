@@ -232,8 +232,14 @@ fn test_parse_enforcement_write_request() {
     let json = r#"{"op": "enforcement_write", "data": "eyJzdGF0ZSI6ICJhY3RpdmUifQ=="}"#;
     let req: Request = serde_json::from_str(json).unwrap();
     match req {
-        Request::EnforcementWrite { data } => {
+        Request::EnforcementWrite {
+            data,
+            expect_version,
+        } => {
             assert_eq!(data, "eyJzdGF0ZSI6ICJhY3RpdmUifQ==");
+            // Absent expect_version is an unconditional write — the pre-#49
+            // wire form has to keep parsing.
+            assert_eq!(expect_version, None);
         }
         _ => panic!("Expected EnforcementWrite"),
     }
@@ -244,9 +250,65 @@ fn test_parse_enforcement_update_request() {
     let json = r#"{"op": "enforcement_update", "patch": "eyJhY3RpdmUiOiB0cnVlfQ=="}"#;
     let req: Request = serde_json::from_str(json).unwrap();
     match req {
-        Request::EnforcementUpdate { patch } => {
+        Request::EnforcementUpdate {
+            patch,
+            expect_version,
+        } => {
             assert_eq!(patch, "eyJhY3RpdmUiOiB0cnVlfQ==");
+            assert_eq!(expect_version, None);
         }
         _ => panic!("Expected EnforcementUpdate"),
     }
+}
+
+#[test]
+fn test_parse_enforcement_merge_request() {
+    let json = r#"{"op": "enforcement_merge", "patch": "eyJhY3RpdmUiOiB0cnVlfQ=="}"#;
+    let req: Request = serde_json::from_str(json).unwrap();
+    match req {
+        Request::EnforcementMerge {
+            patch,
+            expect_version,
+        } => {
+            assert_eq!(patch, "eyJhY3RpdmUiOiB0cnVlfQ==");
+            assert_eq!(expect_version, None);
+        }
+        _ => panic!("Expected EnforcementMerge"),
+    }
+}
+
+#[test]
+fn test_parse_conditional_enforcement_requests() {
+    let json = r#"{"op": "enforcement_merge", "patch": "e30=", "expect_version": "sha256:abc"}"#;
+    let req: Request = serde_json::from_str(json).unwrap();
+    match req {
+        Request::EnforcementMerge { expect_version, .. } => {
+            assert_eq!(expect_version.as_deref(), Some("sha256:abc"));
+        }
+        _ => panic!("Expected EnforcementMerge"),
+    }
+
+    let json = r#"{"op": "enforcement_write", "data": "e30=", "expect_version": "sha256:abc"}"#;
+    let req: Request = serde_json::from_str(json).unwrap();
+    match req {
+        Request::EnforcementWrite { expect_version, .. } => {
+            assert_eq!(expect_version.as_deref(), Some("sha256:abc"));
+        }
+        _ => panic!("Expected EnforcementWrite"),
+    }
+}
+
+#[test]
+fn test_response_carries_version_when_attached() {
+    let resp = Response::ok_empty().with_version("sha256:abc");
+    let v: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&resp).unwrap()).unwrap();
+    assert_eq!(v["ok"], true);
+    assert_eq!(v["version"], "sha256:abc");
+
+    // Every other response leaves the field off entirely.
+    let plain = Response::ok_empty();
+    let v: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&plain).unwrap()).unwrap();
+    assert!(v.get("version").is_none());
 }

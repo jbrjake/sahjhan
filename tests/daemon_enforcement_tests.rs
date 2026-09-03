@@ -540,3 +540,365 @@ fn test_enforcement_write_rejects_invalid_base64() {
 
     stop_daemon(&mut daemon);
 }
+
+// ---------------------------------------------------------------------------
+// Per-actor merge and conditional mutation (#49)
+//
+// Actor-keyed state — `{"stall": {"agent-a": 3, "agent-b": 1}}` — cannot be
+// written through a top-level merge without sending every sibling's entry, so
+// concurrent actors overwrite each other. `enforcement_merge` writes one
+// entry; `expect_version` makes a whole-blob rewrite conditional.
+// ---------------------------------------------------------------------------
+
+fn b64(s: &str) -> String {
+    base64::engine::general_purpose::STANDARD.encode(s)
+}
+
+/// The `data` field of a response, decoded and parsed.
+fn payload(resp: &serde_json::Value) -> serde_json::Value {
+    let data = resp["data"]
+        .as_str()
+        .unwrap_or_else(|| panic!("response carries no data: {:?}", resp));
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .expect("data should be base64");
+    serde_json::from_slice(&bytes).expect("data should be JSON")
+}
+
+fn write_state(dir: &std::path::Path, json: &str) -> serde_json::Value {
+    let resp = send_request(
+        dir,
+        &format!(r#"{{"op": "enforcement_write", "data": "{}"}}"#, b64(json)),
+    );
+    assert_eq!(resp["ok"], true, "write failed: {:?}", resp);
+    resp
+}
+
+fn merge_state(dir: &std::path::Path, json: &str) -> serde_json::Value {
+    send_request(
+        dir,
+        &format!(r#"{{"op": "enforcement_merge", "patch": "{}"}}"#, b64(json)),
+    )
+}
+
+/// A merge that is setup for the assertion under test, not the thing being
+/// asserted — a silent failure here would read as a merge that lost data.
+fn merge_ok(dir: &std::path::Path, json: &str) -> serde_json::Value {
+    let resp = merge_state(dir, json);
+    assert_eq!(resp["ok"], true, "merge failed: {:?}", resp);
+    resp
+}
+
+fn read_state(dir: &std::path::Path) -> serde_json::Value {
+    send_request(dir, r#"{"op": "enforcement_read"}"#)
+}
+
+fn version_of(resp: &serde_json::Value) -> String {
+    resp["version"]
+        .as_str()
+        .unwrap_or_else(|| panic!("response carries no version: {:?}", resp))
+        .to_string()
+}
+
+#[test]
+#[ignore]
+fn test_enforcement_merge_preserves_sibling_actors() {
+    let dir = setup_dir();
+    let mut daemon = start_daemon(dir.path());
+    wait_for_socket(dir.path());
+
+    write_state(
+        dir.path(),
+        r#"{"stall": {"": 0, "agent-a": 3, "agent-b": 1},
+            "unregistered_commits": {"agent-a": ["abc1234"], "agent-b": ["def5678"]}}"#,
+    );
+
+    let resp = merge_state(dir.path(), r#"{"stall": {"agent-a": 4}}"#);
+    assert_eq!(resp["ok"], true, "merge failed: {:?}", resp);
+
+    let obj = payload(&resp);
+    assert_eq!(obj["stall"]["agent-a"], 4);
+    assert_eq!(obj["stall"]["agent-b"], 1, "sibling actor was clobbered");
+    assert_eq!(obj["stall"][""], 0, "orchestrator entry was clobbered");
+    assert_eq!(obj["unregistered_commits"]["agent-b"][0], "def5678");
+    assert!(obj["last_refresh"].is_string());
+
+    stop_daemon(&mut daemon);
+}
+
+#[test]
+#[ignore]
+fn test_enforcement_merge_survives_interleaved_writers() {
+    // The reproduction in #49, over the socket: agent-a reads a snapshot,
+    // agent-b bumps itself, agent-a then writes from the stale snapshot.
+    // Each names only its own key, so agent-b's bump survives.
+    let dir = setup_dir();
+    let mut daemon = start_daemon(dir.path());
+    wait_for_socket(dir.path());
+
+    write_state(dir.path(), r#"{"stall": {"agent-b": 1}}"#);
+    let _snapshot = read_state(dir.path()); // agent-a reads
+
+    merge_ok(dir.path(), r#"{"stall": {"agent-b": 2}}"#); // agent-b's whole cycle
+    merge_ok(dir.path(), r#"{"stall": {"agent-a": 1}}"#); // agent-a, from the stale read
+
+    let obj = payload(&read_state(dir.path()));
+    assert_eq!(obj["stall"]["agent-b"], 2, "agent-b's bump was lost");
+    assert_eq!(obj["stall"]["agent-a"], 1);
+
+    stop_daemon(&mut daemon);
+}
+
+#[test]
+#[ignore]
+fn test_enforcement_update_still_replaces_a_nested_map() {
+    // The pre-#49 op is unchanged: a top-level key is replaced wholesale.
+    // That is what merge exists alongside, not instead of.
+    let dir = setup_dir();
+    let mut daemon = start_daemon(dir.path());
+    wait_for_socket(dir.path());
+
+    write_state(dir.path(), r#"{"stall": {"agent-a": 3, "agent-b": 1}}"#);
+    let patch = b64(r#"{"stall": {"agent-a": 4}}"#);
+    let resp = send_request(
+        dir.path(),
+        &format!(r#"{{"op": "enforcement_update", "patch": "{}"}}"#, patch),
+    );
+    assert_eq!(resp["ok"], true);
+
+    let obj = payload(&resp);
+    assert_eq!(obj["stall"]["agent-a"], 4);
+    assert!(
+        obj["stall"].get("agent-b").is_none(),
+        "enforcement_update should still replace the whole map"
+    );
+
+    stop_daemon(&mut daemon);
+}
+
+#[test]
+#[ignore]
+fn test_enforcement_merge_null_deletes_an_entry() {
+    let dir = setup_dir();
+    let mut daemon = start_daemon(dir.path());
+    wait_for_socket(dir.path());
+
+    write_state(dir.path(), r#"{"stall": {"agent-a": 3, "agent-b": 1}}"#);
+    let resp = merge_state(dir.path(), r#"{"stall": {"agent-a": null}}"#);
+    assert_eq!(resp["ok"], true);
+
+    let obj = payload(&resp);
+    assert!(
+        obj["stall"].get("agent-a").is_none(),
+        "null should delete the entry, got {:?}",
+        obj["stall"]
+    );
+    assert_eq!(obj["stall"]["agent-b"], 1);
+
+    stop_daemon(&mut daemon);
+}
+
+#[test]
+#[ignore]
+fn test_enforcement_merge_on_missing_state_returns_not_found() {
+    let dir = setup_dir();
+    let mut daemon = start_daemon(dir.path());
+    wait_for_socket(dir.path());
+
+    let resp = merge_state(dir.path(), r#"{"stall": {"agent-a": 1}}"#);
+    assert_eq!(resp["ok"], false);
+    assert_eq!(resp["error"], "not_found");
+
+    stop_daemon(&mut daemon);
+}
+
+#[test]
+#[ignore]
+fn test_enforcement_read_returns_a_version_that_tracks_writes() {
+    let dir = setup_dir();
+    let mut daemon = start_daemon(dir.path());
+    wait_for_socket(dir.path());
+
+    write_state(dir.path(), r#"{"stall": {"agent-a": 1}}"#);
+    let v1 = version_of(&read_state(dir.path()));
+    assert!(v1.starts_with("sha256:"), "got {}", v1);
+    assert_eq!(
+        v1,
+        version_of(&read_state(dir.path())),
+        "read is not a write"
+    );
+
+    let merged = merge_ok(dir.path(), r#"{"stall": {"agent-a": 2}}"#);
+    let v2 = version_of(&merged);
+    assert_ne!(v1, v2, "a mutation must change the version");
+    assert_eq!(
+        v2,
+        version_of(&read_state(dir.path())),
+        "the version a mutation returns is the one the next read sees"
+    );
+
+    stop_daemon(&mut daemon);
+}
+
+#[test]
+#[ignore]
+fn test_conditional_mutation_rejects_a_stale_version() {
+    let dir = setup_dir();
+    let mut daemon = start_daemon(dir.path());
+    wait_for_socket(dir.path());
+
+    write_state(
+        dir.path(),
+        r#"{"unregistered_commits": {"agent-a": ["abc1234"]}}"#,
+    );
+    let stale = version_of(&read_state(dir.path()));
+
+    // A sibling lands in the window between the read and the write.
+    merge_ok(
+        dir.path(),
+        r#"{"unregistered_commits": {"agent-b": ["def5678"]}}"#,
+    );
+
+    // Discharging a commit is inherently whole-map: the caller does not know
+    // whose bucket holds the hash, so it sends the map it computed from its
+    // read. Conditioned on the version it read, that write is refused rather
+    // than silently dropping the sibling.
+    let stale_patch = b64(r#"{"unregistered_commits": {"agent-a": []}}"#);
+    let resp = send_request(
+        dir.path(),
+        &format!(
+            r#"{{"op": "enforcement_update", "patch": "{}", "expect_version": "{}"}}"#,
+            stale_patch, stale
+        ),
+    );
+    assert_eq!(resp["ok"], false);
+    assert_eq!(resp["error"], "version_conflict");
+    let current = version_of(&resp);
+    assert_ne!(current, stale, "the refusal carries the current version");
+
+    // The refusal changed nothing: the sibling's write is still there.
+    let obj = payload(&read_state(dir.path()));
+    assert_eq!(obj["unregistered_commits"]["agent-b"][0], "def5678");
+    assert_eq!(obj["unregistered_commits"]["agent-a"][0], "abc1234");
+
+    // The retry the caller is supposed to write: re-read, recompute against
+    // what is actually stored, send it conditioned on that version. Same op,
+    // and now nothing is lost — which the blind write above would have done.
+    let fresh = read_state(dir.path());
+    let recomputed = b64(r#"{"unregistered_commits": {"agent-a": [], "agent-b": ["def5678"]}}"#);
+    let resp = send_request(
+        dir.path(),
+        &format!(
+            r#"{{"op": "enforcement_update", "patch": "{}", "expect_version": "{}"}}"#,
+            recomputed,
+            version_of(&fresh)
+        ),
+    );
+    assert_eq!(resp["ok"], true, "retry failed: {:?}", resp);
+    let obj = payload(&resp);
+    assert_eq!(
+        obj["unregistered_commits"]["agent-a"],
+        serde_json::json!([])
+    );
+    assert_eq!(obj["unregistered_commits"]["agent-b"][0], "def5678");
+
+    stop_daemon(&mut daemon);
+}
+
+#[test]
+#[ignore]
+fn test_conditional_write_rejects_a_stale_version() {
+    let dir = setup_dir();
+    let mut daemon = start_daemon(dir.path());
+    wait_for_socket(dir.path());
+
+    write_state(dir.path(), r#"{"score": 1}"#);
+    let stale = version_of(&read_state(dir.path()));
+    merge_ok(dir.path(), r#"{"score": 2}"#);
+
+    let resp = send_request(
+        dir.path(),
+        &format!(
+            r#"{{"op": "enforcement_write", "data": "{}", "expect_version": "{}"}}"#,
+            b64(r#"{"score": 99}"#),
+            stale
+        ),
+    );
+    assert_eq!(resp["ok"], false);
+    assert_eq!(resp["error"], "version_conflict");
+    assert_eq!(payload(&read_state(dir.path()))["score"], 2);
+
+    stop_daemon(&mut daemon);
+}
+
+#[test]
+#[ignore]
+fn test_conditional_write_on_absent_state_conflicts() {
+    let dir = setup_dir();
+    let mut daemon = start_daemon(dir.path());
+    wait_for_socket(dir.path());
+
+    let resp = send_request(
+        dir.path(),
+        &format!(
+            r#"{{"op": "enforcement_write", "data": "{}", "expect_version": "sha256:whatever"}}"#,
+            b64(r#"{"score": 1}"#)
+        ),
+    );
+    assert_eq!(resp["ok"], false);
+    assert_eq!(resp["error"], "version_conflict");
+
+    // Nothing was created by the refusal.
+    let read = read_state(dir.path());
+    assert_eq!(read["ok"], false);
+    assert_eq!(read["error"], "not_found");
+
+    stop_daemon(&mut daemon);
+}
+
+#[test]
+#[ignore]
+fn test_version_survives_a_ledger_transition() {
+    // The version is of the bytes as stored, not of the bytes read serves:
+    // `state` is overlaid from the ledger at read time (holtz #57), and a
+    // transition nobody raced over must not invalidate a caller's token.
+    let dir = setup_dir();
+    let mut daemon = start_daemon(dir.path());
+    wait_for_socket(dir.path());
+
+    write_state(dir.path(), r#"{"score": 1}"#);
+    let before = read_state(dir.path());
+    assert_eq!(payload(&before)["state"], "idle");
+    let token = version_of(&before);
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "transition", "go"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    let after = read_state(dir.path());
+    assert_eq!(
+        payload(&after)["state"],
+        "working",
+        "overlay should follow the ledger"
+    );
+    assert_eq!(
+        version_of(&after),
+        token,
+        "a transition changes no stored byte and must not invalidate the token"
+    );
+
+    let resp = send_request(
+        dir.path(),
+        &format!(
+            r#"{{"op": "enforcement_merge", "patch": "{}", "expect_version": "{}"}}"#,
+            b64(r#"{"score": 2}"#),
+            token
+        ),
+    );
+    assert_eq!(resp["ok"], true, "conditional merge failed: {:?}", resp);
+
+    stop_daemon(&mut daemon);
+}

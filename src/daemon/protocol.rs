@@ -4,8 +4,9 @@
 // Newline-delimited JSON over SOCK_STREAM.
 //
 // ## Index
-// - Request                   — tagged enum for incoming operations (sign, vault_store/read/delete/list, status, verify, enforcement_read/write/update, record_event)
+// - Request                   — tagged enum for incoming operations (sign, vault_store/read/delete/list, status, verify, enforcement_read/write/update/merge, record_event)
 // - Response                  — output envelope with constructors; ok_status includes idle_seconds/idle_timeout/enforcement_active; err_with_reason for auth diagnostics
+// - Response::with_version     — attach the enforcement CAS token to any response
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -37,10 +38,35 @@ pub enum Request {
     },
     #[serde(rename = "enforcement_read")]
     EnforcementRead,
+    /// Replace the whole enforcement blob. `expect_version` makes the write
+    /// conditional on the stored blob still being the one the caller read
+    /// (#49); absent, it is unconditional as before.
     #[serde(rename = "enforcement_write")]
-    EnforcementWrite { data: String },
+    EnforcementWrite {
+        data: String,
+        #[serde(default)]
+        expect_version: Option<String>,
+    },
+    /// Merge a patch into the blob at the **top level**: a patch key replaces
+    /// the stored value under that key, whatever its shape. Use
+    /// `enforcement_merge` to change one entry of a map without sending its
+    /// siblings.
     #[serde(rename = "enforcement_update")]
-    EnforcementUpdate { patch: String },
+    EnforcementUpdate {
+        patch: String,
+        #[serde(default)]
+        expect_version: Option<String>,
+    },
+    /// Merge a patch into the blob **recursively** (RFC 7386): objects on both
+    /// sides recurse, `null` deletes the key, everything else replaces. This
+    /// is the per-actor write — `{"stall": {"agent-a": 4}}` leaves every other
+    /// actor's entry alone (#49).
+    #[serde(rename = "enforcement_merge")]
+    EnforcementMerge {
+        patch: String,
+        #[serde(default)]
+        expect_version: Option<String>,
+    },
     /// Append a consumer-declared event to the active ledger on behalf of an
     /// already-authenticated socket peer. The ledger-write analog of
     /// `enforcement_write`: authorization is the peer's `trusted-callers.toml`
@@ -84,6 +110,11 @@ pub struct Response {
     pub message: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// Opaque compare-and-set token for the stored enforcement blob (#49).
+    /// Returned by `enforcement_read` and by every enforcement mutation;
+    /// echoed back in `expect_version` to make the next one conditional.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
 }
 
 impl Response {
@@ -103,6 +134,7 @@ impl Response {
             error: None,
             message: None,
             reason: None,
+            version: None,
         }
     }
 
@@ -122,6 +154,7 @@ impl Response {
             error: None,
             message: None,
             reason: None,
+            version: None,
         }
     }
 
@@ -141,6 +174,7 @@ impl Response {
             error: None,
             message: None,
             reason: None,
+            version: None,
         }
     }
 
@@ -167,6 +201,7 @@ impl Response {
             error: None,
             message: None,
             reason: None,
+            version: None,
         }
     }
 
@@ -186,6 +221,7 @@ impl Response {
             error: None,
             message: None,
             reason: None,
+            version: None,
         }
     }
 
@@ -205,6 +241,7 @@ impl Response {
             error: Some(error.to_string()),
             message: Some(message.to_string()),
             reason: None,
+            version: None,
         }
     }
 
@@ -224,7 +261,17 @@ impl Response {
             error: Some(error.to_string()),
             message: Some(message.to_string()),
             reason: Some(reason.to_string()),
+            version: None,
         }
+    }
+
+    /// Attach the enforcement CAS token. Chained onto whichever constructor
+    /// the operation already uses (`ok_empty`, `ok_data`, `err`), so the
+    /// token is one field rather than a parallel set of constructors.
+    // [with-version]
+    pub fn with_version(mut self, version: &str) -> Self {
+        self.version = Some(version.to_string());
+        self
     }
 
     pub fn ok_verified() -> Self {
@@ -243,6 +290,7 @@ impl Response {
             error: None,
             message: None,
             reason: None,
+            version: None,
         }
     }
 }

@@ -346,10 +346,18 @@ current directory. Reach for this module before writing
 | Derive ledger state | `daemon/mod.rs` | `derive_ledger_state` | Resolve active ledger (marker → registry → default), verify chain, derive current state; None on any failure |
 | Compute sign | `daemon/mod.rs` | `compute_sign` | HMAC-SHA256 proof computation (same algorithm as authed_event.rs) |
 | Canonical payload | `daemon/mod.rs` | `build_canonical_payload` | Build HMAC payload: event_type + null-separated sorted fields |
-| Enforcement handlers | `daemon/mod.rs` | `handle_request` | enforcement_read/write/update: opaque JSON state in vault under `_enforcement` (#27); read overrides the `state` key with ledger-derived state (holtz #57) |
+| Enforcement handlers | `daemon/mod.rs` | `handle_request` | enforcement_read/write/update/merge: opaque JSON state in vault under `_enforcement` (#27); read overrides the `state` key with ledger-derived state (holtz #57) and returns the version (#49) |
+| Enforcement write | `daemon/mod.rs` | `handle_enforcement_write` | Whole-blob replace, optionally conditional on `expect_version` (#49) |
+| Enforcement patch | `daemon/mod.rs` | `handle_enforcement_patch` | Read-merge-store under one vault lock; `PatchMode::TopLevel` (update) or `Recursive` (merge) (#49) |
+| Patch mode | `daemon/mod.rs` | `PatchMode` | Which merge an op applies — the only difference between `enforcement_update` and `enforcement_merge` |
+| Decode enforcement payload | `daemon/mod.rs` | `decode_enforcement_object` | base64 + JSON-object decode shared by every enforcement mutation; boxed refusal |
+| Version check | `daemon/mod.rs` | `version_refusal` | Compare-and-set against `expect_version`, **inside the vault lock** — what makes a caller's retry loop safe rather than another race; absent = unconditional (#49) |
+| Recursive merge | `daemon/enforcement.rs` | `[merge-patch]` | RFC 7386 JSON Merge Patch: objects on both sides recurse, `null` deletes, everything else replaces. The per-actor write — one actor's entry without its siblings (#49) |
+| Version token | `daemon/enforcement.rs` | `[version-of]` | `sha256:<hex>` of the blob **as stored**, not as served: the read overlay follows the ledger, and a transition must not invalidate an outstanding token (#49) |
 | Reserved vault namespace | `daemon/mod.rs` | `handle_request` | `_`-prefixed names rejected by generic vault ops, filtered from vault_list (#27) |
-| Wire request | `daemon/protocol.rs` | `Request` | Tagged enum for incoming JSON operations (sign, vault_store, vault_read, vault_delete, vault_list, status, verify, enforcement_read, enforcement_write, enforcement_update, record_event) |
-| Wire response | `daemon/protocol.rs` | `Response` | Output envelope; constructors: ok_sign, ok_data, ok_names, ok_status, ok_empty, err, err_with_reason; ok_status includes enforcement_active bool; includes optional `reason` field (#26) |
+| Wire request | `daemon/protocol.rs` | `Request` | Tagged enum for incoming JSON operations (sign, vault_store, vault_read, vault_delete, vault_list, status, verify, enforcement_read, enforcement_write, enforcement_update, enforcement_merge, record_event); the three enforcement mutations carry an optional `expect_version` |
+| Wire response | `daemon/protocol.rs` | `Response` | Output envelope; constructors: ok_sign, ok_data, ok_names, ok_status, ok_empty, err, err_with_reason; ok_status includes enforcement_active bool; includes optional `reason` field (#26) and optional `version` (#49) |
+| Version on a response | `daemon/protocol.rs` | `[with-version]` | Chained onto whichever constructor an op already uses, so the CAS token is one field rather than a parallel set of constructors |
 | Sandbox fuse | `daemon/fuse.rs` | `SandboxFuse` | Armed flag + project_root + socket_path; held by DaemonServer, consulted before every non-status request |
 | Fuse refusal | `daemon/fuse.rs` | `SandboxFuse::refusal` | Evaluate the boundary; `Some(Response)` refusal (`error: sandbox_required` + machine-readable reason) when tripped |
 | Fuse scopes | `daemon/fuse.rs` | `[fuse-scopes]` | Settings files consulted: project settings.local.json, project settings.json, ~/.claude/settings.json (precedence order) |
@@ -617,10 +625,47 @@ daemon/mod.rs handle_connection            ← caller authenticated via trusted-
 ```
 
 Consumers keep writing bookkeeping fields (stall counters, commit lists) via
-enforcement_write/update; only `state` is daemon-maintained at read time.
+enforcement_write/update/merge; only `state` is daemon-maintained at read time.
 There is deliberately no write path for `state`: an agent-invoked CLI cannot
 authenticate to the daemon, and trusting the binary itself would let agents
 mint HMAC proofs via `sahjhan sign`.
+
+### Flow: Enforcement Mutation (per-actor merge, compare-and-set)
+
+How the three mutations differ, and why a state keyed by *actor* needs the
+middle one (#49):
+
+```
+daemon/mod.rs handle_request
+  ├ Request::EnforcementWrite  → handle_enforcement_write            ← replace the whole blob
+  ├ Request::EnforcementUpdate → handle_enforcement_patch TopLevel   ← Map::extend: a key is REPLACED
+  └ Request::EnforcementMerge  → handle_enforcement_patch Recursive  ← [merge-patch]: a key is MERGED
+      → vault.lock()                       ← one lock spans read, merge, and store
+      → daemon/mod.rs version_refusal      ← expect_version vs [version-of] of the stored bytes
+      │    absent            → unconditional (pre-#49 behavior)
+      │    matches           → proceed
+      │    differs / nothing stored → err "version_conflict" + the current version
+      → apply the patch for this PatchMode
+      → insert "last_refresh"              ← daemon clock, on every mutation
+      → vault.store("_enforcement")
+      → ok + data (patch ops) + version    ← the token the caller's next conditional write uses
+```
+
+**Why two patch ops rather than one changed one.** `enforcement_update`'s
+top-level replace is right when the caller owns the whole key; it is exactly
+wrong when the value is a map keyed by actor, because the only way to change
+one entry is to send them all, and a sibling that writes inside that window is
+silently overwritten. Changing the existing op's semantics would fix the
+second case by breaking the first, for consumers already pinned to it. So the
+recursion is a second op, and `null` is how a merge deletes — "absent from the
+patch" has to keep meaning "unchanged", which is the whole point.
+
+**Why the compare is here and not in the client.** A caller that re-reads and
+compares around its own write re-opens the race it is closing. `version_refusal`
+runs holding the same lock as the store, so a losing writer is *told* it lost
+(`version_conflict`, carrying the current version) and can re-read and retry.
+That covers the writes a merge cannot express — discharging an entry from
+whichever actor's bucket holds it is inherently whole-map.
 
 ### Flow: Sandbox Fuse (daemon refuses without the boundary)
 
@@ -809,12 +854,12 @@ main.rs [cli-main]
 | `tests/hook_eval_tests.rs` | Hook evaluation engine: gate/check/filter/state/monitor/write-gated/managed-path/CLI eval |
 | `tests/concurrent_append_tests.rs` | Concurrent ledger append stress tests (issue #21 TOCTOU race) |
 | `tests/daemon_platform_tests.rs` | Platform API smoke tests: preload env, exe path, cmdline, parent PID, mlock |
-| `tests/daemon_protocol_tests.rs` | Wire protocol types: Request deserialization (all ops + unknowns), Response serialization (all constructors incl. idle fields) |
+| `tests/daemon_protocol_tests.rs` | Wire protocol types: Request deserialization (all ops + unknowns, incl. `enforcement_merge` and the optional `expect_version` absent and present), Response serialization (all constructors incl. idle fields, and `version` present only when attached) |
 | `tests/daemon_auth_tests.rs` | Trusted-callers manifest load/parse, hash match/mismatch, not-in-manifest, extract_script_path |
 | `tests/daemon_vault_tests.rs` | Vault CRUD: store/read, overwrite, delete, list, read-not-found, delete-noop |
 | `tests/daemon_signing_tests.rs` | E2E daemon signing (deterministic proofs, sign-without-daemon), lifecycle (socket/PID creation, stop cleanup, status, preload rejection, idle timeout shutdown, `SAHJHAN_DAEMON_SOCKET` relocation, silent-client wedge recovery), reset auth (#26), auth reason codes (#26), direct-peer auth (trusted script on the socket authenticates; CLI-mediated connection denied even with a trusted ancestor; empty manifest denies everyone) |
 | `tests/daemon_vault_e2e_tests.rs` | E2E vault via CLI: store+read, list, delete, read-nonexistent (all require live daemon) |
-| `tests/daemon_enforcement_tests.rs` | Enforcement state ops: write/read round-trip, update merge, not_found, reserved namespace, vault_list filtering, status enforcement_active, validation (#27) |
+| `tests/daemon_enforcement_tests.rs` | Enforcement state ops: write/read round-trip, update merge, not_found, reserved namespace, vault_list filtering, status enforcement_active, validation (#27); per-actor merge — siblings surviving the interleaving from the report, `null` deleting an entry, `enforcement_update` still replacing wholesale — and compare-and-set: a stale `expect_version` refused with the current one attached and nothing changed, the retry succeeding, and a ledger transition not invalidating a token (#49). All `#[ignore]`, need a live daemon; the merge rules and the version token themselves are unit-tested in `daemon/enforcement.rs` |
 | `tests/active_ledger_tests.rs` | Active-ledger marker: activate/deactivate, create --activate, resolution priority, stale marker fallback, reset clears marker, status display, events land in active ledger |
 | `tests/daemon_record_event_tests.rs` | E2E `record_event` op: authenticated ledger append lands event in ledger (read-back), rejects undeclared event type, field pattern violation, and missing required field (all `#[ignore]`, need live daemon) |
 | `tests/daemon_fuse_tests.rs` | E2E sandbox fuse: armed daemon follows the settings lifecycle (refuse → serve → refuse against one process), rejects weakened settings and in-project sockets, unarmed daemon unaffected (all `#[ignore]`, need live daemon; fuse check logic itself is unit-tested in `daemon/fuse.rs`) |

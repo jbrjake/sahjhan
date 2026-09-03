@@ -11,7 +11,12 @@
 // - DaemonServer::start       -- bind socket, accept loop, signal handling
 // - DaemonServer::cleanup     -- remove socket and PID files
 // - handle_connection         -- read JSON lines from a stream, dispatch, respond
-// - handle_request            -- match Request variant to operation; enforcement_read/write/update ops; _-prefixed vault namespace guard
+// - handle_request            -- match Request variant to operation; enforcement_read/write/update/merge ops; _-prefixed vault namespace guard
+// - PatchMode                 -- top-level (enforcement_update) vs recursive (enforcement_merge) patch application
+// - decode_enforcement_object -- base64 + JSON-object decode shared by every enforcement mutation
+// - version_refusal           -- compare-and-set check, run inside the vault lock (#49)
+// - handle_enforcement_write  -- whole-blob replace, optionally conditional on version
+// - handle_enforcement_patch  -- read-merge-store under one lock, either patch mode
 // - handle_record_event       -- authenticated ledger append for a trusted peer (ledger-write analog of enforcement_write)
 // - overlay_ledger_state      -- override enforcement blob "state" with ledger-derived state (holtz #57)
 // - derive_ledger_state       -- resolve active ledger, verify chain, derive current state
@@ -22,8 +27,10 @@
 // - mod protocol              -- wire protocol types
 // - mod auth                  -- caller authentication
 // - mod fuse                  -- sandbox fuse (refuse privileged ops when the boundary is absent)
+// - mod enforcement           -- merge semantics and version token for the enforcement blob
 
 pub mod auth;
+pub mod enforcement;
 pub mod fuse;
 pub mod platform;
 pub mod protocol;
@@ -591,104 +598,206 @@ fn handle_request(
         Request::EnforcementRead => match vault.lock() {
             Ok(v) => match v.read("_enforcement") {
                 Some(bytes) => {
+                    // The version is of the bytes as *stored*, computed before
+                    // the overlay: it is the token a conditional mutation is
+                    // checked against, and a transition that moves the ledger
+                    // must not invalidate it (#49).
+                    let version = enforcement::version_of(bytes);
                     // The stored blob's "state" field is only as fresh as the
                     // consumer's last successful write; transitions advance the
                     // ledger without touching the vault (holtz #57). Serve
                     // ledger truth at read time instead of the stored value.
                     let bytes = overlay_ledger_state(bytes, config_dir);
                     let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
-                    Response::ok_data(&encoded)
+                    Response::ok_data(&encoded).with_version(&version)
                 }
                 None => Response::err("not_found", "no enforcement state"),
             },
             Err(e) => Response::err("internal_error", &format!("vault lock poisoned: {}", e)),
         },
-        Request::EnforcementWrite { data } => {
-            let bytes = match base64::engine::general_purpose::STANDARD.decode(&data) {
-                Ok(b) => b,
-                Err(e) => {
-                    return Response::err("decode_error", &format!("invalid base64: {}", e));
-                }
-            };
-            let mut obj: serde_json::Map<String, serde_json::Value> =
-                match serde_json::from_slice(&bytes) {
-                    Ok(serde_json::Value::Object(m)) => m,
-                    Ok(_) => {
-                        return Response::err(
-                            "invalid_data",
-                            "enforcement state must be a JSON object",
-                        );
-                    }
-                    Err(e) => {
-                        return Response::err("invalid_data", &format!("invalid JSON: {}", e));
-                    }
-                };
-            obj.insert(
-                "last_refresh".to_string(),
-                serde_json::Value::String(chrono::Utc::now().to_rfc3339()),
-            );
-            let serialized = serde_json::to_vec(&obj).expect("re-serialization cannot fail");
-            match vault.lock() {
-                Ok(mut v) => {
-                    v.store("_enforcement".to_string(), serialized);
-                    Response::ok_empty()
-                }
-                Err(e) => Response::err("internal_error", &format!("vault lock poisoned: {}", e)),
-            }
-        }
-        Request::EnforcementUpdate { patch } => {
-            let patch_bytes = match base64::engine::general_purpose::STANDARD.decode(&patch) {
-                Ok(b) => b,
-                Err(e) => {
-                    return Response::err("decode_error", &format!("invalid base64: {}", e));
-                }
-            };
-            let patch_obj: serde_json::Map<String, serde_json::Value> =
-                match serde_json::from_slice(&patch_bytes) {
-                    Ok(serde_json::Value::Object(m)) => m,
-                    Ok(_) => {
-                        return Response::err("invalid_data", "patch must be a JSON object");
-                    }
-                    Err(e) => {
-                        return Response::err("invalid_data", &format!("invalid JSON: {}", e));
-                    }
-                };
-            match vault.lock() {
-                Ok(mut v) => {
-                    let current = match v.read("_enforcement") {
-                        Some(bytes) => bytes.to_vec(),
-                        None => {
-                            return Response::err("not_found", "no enforcement state to update");
-                        }
-                    };
-                    let mut state: serde_json::Map<String, serde_json::Value> =
-                        match serde_json::from_slice(&current) {
-                            Ok(serde_json::Value::Object(m)) => m,
-                            _ => {
-                                return Response::err(
-                                    "internal_error",
-                                    "stored enforcement state is not a valid JSON object",
-                                );
-                            }
-                        };
-                    state.extend(patch_obj);
-                    state.insert(
-                        "last_refresh".to_string(),
-                        serde_json::Value::String(chrono::Utc::now().to_rfc3339()),
-                    );
-                    let serialized =
-                        serde_json::to_vec(&state).expect("re-serialization cannot fail");
-                    let encoded = base64::engine::general_purpose::STANDARD.encode(&serialized);
-                    v.store("_enforcement".to_string(), serialized);
-                    Response::ok_data(&encoded)
-                }
-                Err(e) => Response::err("internal_error", &format!("vault lock poisoned: {}", e)),
-            }
-        }
+        Request::EnforcementWrite {
+            data,
+            expect_version,
+        } => handle_enforcement_write(vault, &data, expect_version.as_deref()),
+        Request::EnforcementUpdate {
+            patch,
+            expect_version,
+        } => handle_enforcement_patch(
+            vault,
+            &patch,
+            expect_version.as_deref(),
+            PatchMode::TopLevel,
+        ),
+        Request::EnforcementMerge {
+            patch,
+            expect_version,
+        } => handle_enforcement_patch(
+            vault,
+            &patch,
+            expect_version.as_deref(),
+            PatchMode::Recursive,
+        ),
         Request::RecordEvent { event_type, fields } => {
             handle_record_event(config_dir, &event_type, fields)
         }
     }
+}
+
+/// How a patch combines with the stored enforcement blob.
+enum PatchMode {
+    /// `enforcement_update`: a patch key replaces the stored value under that
+    /// key, whatever its shape. The original op, semantics unchanged.
+    TopLevel,
+    /// `enforcement_merge`: RFC 7386 — objects on both sides recurse, `null`
+    /// deletes, everything else replaces. The per-actor write (#49).
+    Recursive,
+}
+
+/// Decode the base64 JSON object every enforcement mutation carries, or the
+/// refusal to send back. `what` names the payload in the error message so the
+/// caller learns which side was malformed. The refusal is boxed only because
+/// `Response` is a wide envelope and an unboxed error variant that size makes
+/// every success path carry it.
+fn decode_enforcement_object(
+    payload: &str,
+    what: &str,
+) -> Result<serde_json::Map<String, serde_json::Value>, Box<Response>> {
+    let bytes = match base64::engine::general_purpose::STANDARD.decode(payload) {
+        Ok(b) => b,
+        Err(e) => {
+            return Err(Box::new(Response::err(
+                "decode_error",
+                &format!("invalid base64: {}", e),
+            )))
+        }
+    };
+    match serde_json::from_slice(&bytes) {
+        Ok(serde_json::Value::Object(m)) => Ok(m),
+        Ok(_) => Err(Box::new(Response::err(
+            "invalid_data",
+            &format!("{} must be a JSON object", what),
+        ))),
+        Err(e) => Err(Box::new(Response::err(
+            "invalid_data",
+            &format!("invalid JSON: {}", e),
+        ))),
+    }
+}
+
+/// Compare a conditional mutation's `expect_version` against what is stored.
+///
+/// Every caller runs this **holding the vault lock**, which is the whole point
+/// (#49): a compare the client does around its own read-modify-write re-opens
+/// the race it is trying to close, whereas a compare here means the loser is
+/// told `version_conflict` and can re-read and retry safely. Returns the
+/// refusal to send back, or `None` to proceed. An absent `expect_version` is
+/// an unconditional mutation — the pre-#49 behavior, and still the default.
+fn version_refusal(expected: Option<&str>, current: Option<&[u8]>) -> Option<Response> {
+    let expected = expected?;
+    match current {
+        Some(bytes) => {
+            let actual = enforcement::version_of(bytes);
+            if actual == expected {
+                None
+            } else {
+                Some(
+                    Response::err(
+                        "version_conflict",
+                        "enforcement state has changed since it was read",
+                    )
+                    .with_version(&actual),
+                )
+            }
+        }
+        // Nothing stored: the caller is holding a token for a blob that no
+        // longer exists (or never did). Refusing beats creating one and
+        // reporting success for a compare that could not be made.
+        None => Some(Response::err(
+            "version_conflict",
+            "no enforcement state to match against",
+        )),
+    }
+}
+
+/// Replace the whole enforcement blob, optionally conditional on its version.
+fn handle_enforcement_write(
+    vault: &Arc<Mutex<Vault>>,
+    data: &str,
+    expect_version: Option<&str>,
+) -> Response {
+    let mut obj = match decode_enforcement_object(data, "enforcement state") {
+        Ok(o) => o,
+        Err(refusal) => return *refusal,
+    };
+    let mut v = match vault.lock() {
+        Ok(v) => v,
+        Err(e) => return Response::err("internal_error", &format!("vault lock poisoned: {}", e)),
+    };
+    let current = v.read("_enforcement").map(|b| b.to_vec());
+    if let Some(refusal) = version_refusal(expect_version, current.as_deref()) {
+        return refusal;
+    }
+    obj.insert(
+        "last_refresh".to_string(),
+        serde_json::Value::String(chrono::Utc::now().to_rfc3339()),
+    );
+    let serialized = serde_json::to_vec(&obj).expect("re-serialization cannot fail");
+    let version = enforcement::version_of(&serialized);
+    v.store("_enforcement".to_string(), serialized);
+    Response::ok_empty().with_version(&version)
+}
+
+/// Merge a patch into the stored enforcement blob — top-level for
+/// `enforcement_update`, recursive for `enforcement_merge` — and hand back the
+/// merged state plus its new version.
+///
+/// The read, the merge, and the store all happen under one lock, so the
+/// result is the caller's patch applied to whatever the last writer left, not
+/// to a snapshot the caller took earlier.
+fn handle_enforcement_patch(
+    vault: &Arc<Mutex<Vault>>,
+    patch: &str,
+    expect_version: Option<&str>,
+    mode: PatchMode,
+) -> Response {
+    let patch_obj = match decode_enforcement_object(patch, "patch") {
+        Ok(o) => o,
+        Err(refusal) => return *refusal,
+    };
+    let mut v = match vault.lock() {
+        Ok(v) => v,
+        Err(e) => return Response::err("internal_error", &format!("vault lock poisoned: {}", e)),
+    };
+    let current = match v.read("_enforcement") {
+        Some(bytes) => bytes.to_vec(),
+        None => return Response::err("not_found", "no enforcement state to update"),
+    };
+    if let Some(refusal) = version_refusal(expect_version, Some(&current)) {
+        return refusal;
+    }
+    let mut state: serde_json::Map<String, serde_json::Value> =
+        match serde_json::from_slice(&current) {
+            Ok(serde_json::Value::Object(m)) => m,
+            _ => {
+                return Response::err(
+                    "internal_error",
+                    "stored enforcement state is not a valid JSON object",
+                );
+            }
+        };
+    match mode {
+        PatchMode::TopLevel => state.extend(patch_obj),
+        PatchMode::Recursive => enforcement::merge_patch(&mut state, &patch_obj),
+    }
+    state.insert(
+        "last_refresh".to_string(),
+        serde_json::Value::String(chrono::Utc::now().to_rfc3339()),
+    );
+    let serialized = serde_json::to_vec(&state).expect("re-serialization cannot fail");
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&serialized);
+    let version = enforcement::version_of(&serialized);
+    v.store("_enforcement".to_string(), serialized);
+    Response::ok_data(&encoded).with_version(&version)
 }
 
 /// Append a consumer-declared event to the active ledger on behalf of an

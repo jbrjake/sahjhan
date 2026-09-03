@@ -198,7 +198,11 @@ If you don't include one of those fields, that action's unconstrained for the ke
 
 If the ledger state can't be determined, a gated operation is rejected rather than allowed. `vault.toml` is one of the eight sealed config files, so a policy can't be loosened without a `reseal`.
 
-Protocol scripts sometimes need their own scratch state, like counters, timers, and flags that the agent shouldn't be able to read or edit. The daemon exposes `enforcement_read` / `enforcement_write` / `enforcement_update` over the socket for that. They live under a reserved `_`-prefixed vault namespace that `vault read` and `vault list` refuse to touch so agents are blocked.
+Protocol scripts sometimes need their own scratch state, like counters, timers, and flags that the agent shouldn't be able to read or edit. The daemon exposes `enforcement_read` / `enforcement_write` / `enforcement_update` / `enforcement_merge` over the socket for that. They live under a reserved `_`-prefixed vault namespace that `vault read` and `vault list` refuse to touch so agents are blocked.
+
+If there aren't multiple writers to the stash, you can use `enforcement_update` to do a top-level merge, replacing everything under a key. But if you have multiple writers, there are going to be per-actor buckets under that key: `{"stall": {"agent-a": 3, "agent-b": 1}}`. For those, `enforcement_merge` recurses instead. It's an RFC 7386 JSON merge patch, so objects on both sides merge together, `null` deletes a key, and anything else replaces. Send `{"stall": {"agent-a": 4}}` and that's the only entry that moves, with `agent-b` left untouched.
+
+For handling race conditions, `enforcement_read` hands back a `version` with data, and all three mutations take an optional `expect_version`. The daemon compares it while holding the same lock it's about to write under, so a write that lost the race gets back `version_conflict` with the current version attached, and you re-read and retry instead of overwriting the winner. Leave `expect_version` off and the mutation is unconditional instead.
 
 One key in that blob is special: `state`. `enforcement_read` resolves the active ledger, verifies its hash chain, derives the current state from the last `state_transition`, and overrides `state` in the response. If the ledger can't be resolved or fails verification, the stored bytes are served unchanged. There is deliberately no socket op to *write* the state: a CLI invoked by the agent can't authenticate as a trusted caller, and the ledger is already the source of truth.
 
@@ -235,9 +239,10 @@ Match on `error`, not on the prose. `auth_failed` means enforcement is broken an
 
 The four `vault_*` ops carry one more condition: if `vault.toml` declares a policy for that key, the action also has to be permitted in the current ledger-derived state, or it comes back `state_forbidden`.
 
-| `enforcement_read` | — | `data` (with `state` overridden from the ledger) |
-| `enforcement_write` | `data` | — |
-| `enforcement_update` | `patch` | — |
+| `enforcement_read` | — | `data` (with `state` overridden from the ledger), `version` |
+| `enforcement_write` | `data`, optional `expect_version` | `version` |
+| `enforcement_update` | `patch`, optional `expect_version` | `data` — the merged blob, `version` |
+| `enforcement_merge` | `patch`, optional `expect_version` | `data` — the merged blob, `version` |
 | `status` | — | `pid`, `uptime_seconds`, `vault_entries`, `idle_seconds`, `idle_timeout`, `enforcement_active` |
 
 That's the complete list. An unrecognized `op` comes back as a `parse_error` that names the valid ones. `status` is the only operation exempt from caller authentication, so it works as a health check from anywhere — which also means it's the one thing the agent can see.

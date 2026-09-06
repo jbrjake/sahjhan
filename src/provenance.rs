@@ -18,8 +18,6 @@
 // ## Index
 // - Recorder             — the write paths that can append a declared event
 // - [recorder-id]        Recorder::id()      — the stamp value each path writes
-// - STAMP_NAMESPACES     — prefixes reserved for stamp values
-// - [is-stamp-value]     is_stamp_value()    — whether a string is in that namespace
 // - [stamped-fields]     stamped_fields()    — the fields of an event the engine owns
 // - [stamps-for]         stamps_for()        — the (field, value) pairs a recorder writes
 // - [reject-supplied]    reject_supplied_stamp() — refuse a caller-supplied stamp
@@ -81,27 +79,6 @@ impl Recorder {
     pub fn is_agent_reachable(&self) -> bool {
         matches!(self, Recorder::AgentCli | Recorder::AgentHookEval)
     }
-}
-
-/// The prefixes a stamp value can start with.
-///
-/// Reserved: the engine writes these and lint reads them back out of SQL
-/// predicates, so a consumer field value that begins with one will be read as a
-/// provenance filter. Nothing enforces the reservation at record time — an
-/// ordinary field may hold whatever it likes — but a predicate comparing
-/// against one of these is treated as naming a writer.
-///
-/// Each prefix stops one segment short of the values under it (`engine:`, not
-/// `engine:emit:`) so that a *misspelled* value is still recognized as one. A
-/// namespace that only matched well-formed values would be silent on exactly
-/// the case lint exists to catch — `engine:emits:defer_low`, one letter off,
-/// filtering on a writer that does not exist.
-pub const STAMP_NAMESPACES: &[&str] = &["agent:", "authed:", "engine:", "hook:", "daemon:"];
-
-// [is-stamp-value]
-/// Whether `value` sits in the reserved stamp namespace.
-pub fn is_stamp_value(value: &str) -> bool {
-    STAMP_NAMESPACES.iter().any(|p| value.starts_with(p))
 }
 
 // [stamped-fields]
@@ -182,24 +159,6 @@ mod tests {
             producers: vec![],
             attestation: None,
             fields,
-        }
-    }
-
-    #[test]
-    fn every_identity_is_in_the_reserved_namespace() {
-        for recorder in [
-            Recorder::AgentCli,
-            Recorder::AgentHookEval,
-            Recorder::AuthedCli,
-            Recorder::Emit("defer_low".to_string()),
-            Recorder::TrustedCaller("hooks/courier.py".to_string()),
-            Recorder::UnverifiedPeer,
-        ] {
-            let id = recorder.id();
-            assert!(
-                is_stamp_value(&id),
-                "{id} must be recognizable as a stamp value"
-            );
         }
     }
 

@@ -220,6 +220,14 @@ The same SQL works as a gate condition, which is how you write budgets:
 { type = "query", sql = "SELECT count(*) < 15 as result FROM events WHERE type='finding'", expect = "true" }
 ```
 
+A field can also be marked `stamped`, which makes it the engine's to write rather than the caller's:
+
+```toml
+{ name = "recorded_by", type = "string", stamped = true }
+```
+
+The event stays writable by everything that could write it before, and the ledger now records *which* of them wrote each row — `agent:cli`, `engine:emit:defer_low`, `hook:hooks/courier.py`. A caller that supplies the field is refused rather than corrected. It's an ordinary column, so a gate can ask a question the agent can't answer for itself: not "was this deferred" but "was it deferred by the hook." See [hardening.md](docs/hardening.md#stamped-fields-per-field-provenance).
+
 ### branching
 
 Two transitions can share a `from` state and a command. sahjhan evaluates the candidates in declaration order and takes the first whose gates pass, so the specific case goes first and the fallback goes last:
@@ -250,17 +258,17 @@ A longer worked example (a TDD protocol using composites, template variables, re
 
 ```bash
 $ sahjhan --config-dir examples/lint-demo lint
-clean. 7 check(s) run: L1, L2, L3, L4, L5, L6, L7
+clean. 8 check(s) run: L1, L2, L3, L4, L5, L6, L7, L8
 
 $ cp -r examples/lint-demo /tmp/broken     # reroute paused's `resume` to fix_loop
 $ sahjhan --config-dir /tmp/broken lint
 L3 error: protocol.toml: boundary 'context-reset'
     boundary 'context-reset' can be routed around: merge_done reaches fix_loop without crossing it — merge_done -(pause)-> paused -(resume)-> fix_loop
     hint: tag that path's edge with boundary = "context-reset", or remove the route (tagged today: resume)
-1 error(s), 0 warning(s) from 7 check(s): L1, L2, L3, L4, L5, L6, L7
+1 error(s), 0 warning(s) from 8 check(s): L1, L2, L3, L4, L5, L6, L7, L8
 ```
 
-You can grep your own config for the tag. You can't see by grepping that a second `resume` added six months later, from an unrelated pause state, quietly became a way around. All seven checks can be found in [docs/lint.md](docs/lint.md).
+You can grep your own config for the tag. You can't see by grepping that a second `resume` added six months later, from an unrelated pause state, quietly became a way around. All eight checks can be found in [docs/lint.md](docs/lint.md).
 
 `sahjhan gate check <command>` dry-runs the gates for a transition without taking it, so you can debug one that keeps blocking:
 
@@ -340,6 +348,8 @@ The agent can read that entry, query it, and see the condition it satisfies. It 
 
 If you want to trust everyone, simply omit the `trusted-callers.toml` altogether. If you don't want to trust anyone, include it with an empty `[callers]` table to deny-all. Be aware that a trusted script is trusted for _everything_, not per-operation. However, you can use `vault.toml` to control which states a vault key is reachable in. Those, as well as `record_event` (which collapses sign-then-submit into one authenticated call), are in [docs/hardening.md](docs/hardening.md).
 
+`trusted-callers.toml` does double duty. Because the daemon knows which listed script is on the socket, an event that script records through it is stamped `hook:<that path>` — so a gate can require the courier's provenance, and lint will tell you if you filter on a script the manifest doesn't list.
+
 Caller authentication has its limits. A same-user process can ultimately defeat anything. The real boundary is the OS sandbox: if you set `require_sandbox` under `[daemon]`, the sahjhan daemon refuses every privileged operation unless the Claude Code sandbox is verifiably confining the agent. The details are in [docs/hardening.md](docs/hardening.md).
 
 ## what's actually protected
@@ -351,6 +361,7 @@ Each of these safeguards exists because an agent got past the one above it. The 
 | the ledger | hash-chained JSONL. Edit a line and the chain breaks on the next command |
 | config | eight TOML files SHA-256 sealed into the genesis entry; changing one needs a `reseal` and an HMAC proof |
 | restricted events | the agent can't record them at all — `authed-event` with a proof only the daemon can mint |
+| stamped fields | on an event the agent *can* record, the engine writes who wrote it; supplying the value is refused |
 | the session key | 32 bytes in daemon memory, never on disk; `mlock`, `ptrace` denied, preload env refused |
 | daemon callers | authenticated by kernel socket credentials against a hashed script manifest |
 | gate results | command and snapshot gates record exit code, wall time, and a SHA-256 of stdout the agent never touches |
@@ -383,14 +394,14 @@ Most agent work doesn't need any of this. A rule in `CLAUDE.md`, a checklist, a 
 | [why.md](docs/why.md) | why this had to exist: the agent transcripts, and why a script wasn't enough |
 | [protocols.md](docs/protocols.md) | writing a protocol: a worked TDD example, states, sets, events, renders, emits, template variables |
 | [gates.md](docs/gates.md) | every gate type and its parameters, composites, template resolution, `gate check` |
-| [lint.md](docs/lint.md) | the seven static checks, named queries, boundaries, producers, attestation levels |
-| [hardening.md](docs/hardening.md) | restricted events, HMAC, the daemon and vault, caller auth, config sealing, gate attestation |
+| [lint.md](docs/lint.md) | the eight static checks, named queries, boundaries, producers, attestation levels, provenance filters |
+| [hardening.md](docs/hardening.md) | restricted events, stamped fields, HMAC, the daemon and vault, caller auth, config sealing, gate attestation |
 | [hooks.md](docs/hooks.md) | Claude Code integration, runtime hooks, write-gated paths, monitors |
 | [ledgers.md](docs/ledgers.md) | multiple ledgers, templates, the active-ledger marker, SQL over many runs |
 | [cli.md](docs/cli.md) | full command reference, exit codes, the `--json` envelope |
 | [internals.md](docs/internals.md) | ledger and manifest formats, path anchoring, locking, source layout |
 
-`examples/minimal` is the protocol above. `examples/lint-demo` exercises every lint check and passes all seven.
+`examples/minimal` is the protocol above. `examples/lint-demo` exercises every lint check and passes all eight.
 
 Built on [DataFusion](https://datafusion.apache.org/) and [Tera](https://keats.github.io/tera/).
 

@@ -196,7 +196,8 @@ Config-only analysis: no ledger is opened, no gate command runs. Answers "is thi
 | Consumed events | `lint/index.rs` | `[consumed-events]` | Every event any config surface reads |
 | SQL event mentions | `lint/index.rs` | `[sql-event-mentions]` | Declared event names quoted in a predicate |
 | Producible stamps | `lint/index.rs` | `[producible-stamps]` | Every provenance value some writer of an event can stamp — one arm per `Recorder`, since each is reachable under different config (#50) |
-| Provenance filters | `lint/index.rs` | `[provenance-filters]` | Stamp-namespace literals in a predicate, each with whether a *positive equality* reaches it. `!=`, `<>` and `NOT (<col> = …)` are recognized as negations; anything else reads as positive, which is the cost of not shipping a SQL parser into a lint pass |
+| Stamped columns | `lint/index.rs` | `[stamped-columns]` | Field name → the events declaring it `stamped`. What makes L8 a check on the *declaration*: an earlier cut matched reserved prefixes against a literal's spelling, so `reason = 'hook:something'` on an ordinary field was reported |
+| Provenance filters | `lint/index.rs` | `ProvenanceFilter`, `[provenance-filters]` | Every literal a predicate compares against one of those columns, with whether a *positive equality* reaches it. The column is found by scanning left past punctuation, other literals and `IN`/`NOT`; `!=`, `<>`, `NOT (<col> = …)` and `IN` lists are negations, anything else reads as positive, which is the cost of not shipping a SQL parser into a lint pass |
 | L1 unsatisfiable gate | `lint/checks.rs` | `[check-l1]` | Required event with no producer (error if restricted or `require_producers`) |
 | L2 temporal unsatisfiability | `lint/checks.rs` | `[check-l2]` | Producer windows vs `ancestors(from) ∪ {from}`; a producer with no window is unconstrained |
 | L3 boundary route-around | `lint/checks.rs` | `[check-l3]` | Delete tagged edges, re-test reachability; prints the surviving bypass path |
@@ -204,7 +205,7 @@ Config-only analysis: no ledger is opened, no gate command runs. Answers "is thi
 | L5 dead vocabulary | `lint/checks.rs` | `[check-l5]` | Declared event nothing produces or consumes |
 | L7 forgeable evidence | `lint/checks.rs` | `[check-l7]` | Event attestation vs the level a transition/gate requires, over the `[attestation]` ordering |
 | L6 predicate drift | `lint/checks.rs` | `[check-l6]` | Inline predicate near-identical to a named query or to another inline one |
-| L8 provenance filter | `lint/checks.rs` | `[check-l8]` | A stamp literal no writer can produce (error — the gate names a writer that does not exist), or one the agent produces required by a positive equality (warning — as evidence it constrains nobody) (#50) |
+| L8 provenance filter | `lint/checks.rs` | `[check-l8]` | For a literal compared against a declared-`stamped` column: one no writer can produce (error — the gate names a writer that does not exist), or one the agent produces required by a positive equality (warning — as evidence it constrains nobody) (#50) |
 | Inline predicates | `lint/checks.rs` | `[inline-predicates]` | Every query gate carrying inline `sql`, with its location |
 | All predicates | `lint/checks.rs` | `[all-predicates]` | The above plus every named query. L6 deliberately skips named queries (a named query cannot drift from itself); L8 asks a question one can get wrong just as easily |
 | SQL normalization | `lint/similarity.rs` | `[normalize-sql]` | Case/whitespace/punctuation-insensitive form |
@@ -265,7 +266,6 @@ an unstamped row that reads exactly like a stamped one.
 |---------|------|-------------|---------|
 | Write paths | `provenance.rs` | `Recorder` | The five ways a declared event reaches the ledger, plus the daemon's unauthenticated one; `agent:`-prefixed arms say plainly the agent could have produced them |
 | Stamp value | `provenance.rs` | `[recorder-id]` | `agent:cli`, `agent:hook-eval`, `authed:cli`, `engine:emit:<transition>`, `hook:<script path>`, `daemon:unverified` |
-| Reserved namespace | `provenance.rs` | `STAMP_NAMESPACES`, `[is-stamp-value]` | The prefixes lint reads back out of SQL. Each stops one segment short of the values under it (`engine:`, not `engine:emit:`) so a *misspelled* stamp is still recognized as one — otherwise L8 is silent on exactly the typo it exists to catch |
 | Stamped fields | `provenance.rs` | `[stamped-fields]` | The fields of an event whose values the engine owns |
 | Apply | `provenance.rs` | `[stamps-for]` | The `(field, value)` pairs one recorder writes; empty for an undeclared event, so every write path calls it unconditionally |
 | Refuse | `provenance.rs` | `[reject-supplied]` | A caller that supplied a stamped field is refused, never overwritten — silently winning would make a config that *forgot* to stamp read like one being forged |

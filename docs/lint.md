@@ -20,7 +20,7 @@ L2 error: transitions.toml: transition 'finish' (middle → late)
 L4 error: states.toml: state 'anomaly'
     non-terminal state 'anomaly' has no outgoing transition — a run that reaches it cannot continue
     hint: add a transition out of it, or mark the state terminal = true
-2 error(s), 0 warning(s) from 7 check(s): L1, L2, L3, L4, L5, L6, L7
+2 error(s), 0 warning(s) from 8 check(s): L1, L2, L3, L4, L5, L6, L7, L8
 ```
 
 ## the checks
@@ -34,6 +34,7 @@ L4 error: states.toml: state 'anomaly'
 | `L5` | A declared event nothing produces or consumes. Dead vocabulary that reads as load-bearing. |
 | `L6` | Two copies of one predicate — inline SQL duplicating a named query, or each other. Drift waiting to happen. |
 | `L7` | A gate demanding evidence stronger than the event supplying it. Reads as a strong check, enforces a weak one. |
+| `L8` | A predicate filtering on a provenance no writer can stamp, or requiring one the agent can stamp at will. A gate that names a writer who doesn't exist, or one who is the agent. |
 
 Errors mean the protocol is provably broken given what the engine can see and sahjhan exits with code 3.
 Warnings mean it's suspicious but a legitimate reading exists, but you can upgrade them to hard errors with `--strict`.
@@ -75,14 +76,14 @@ L3 deletes every tagged edge and asks whether the target is still reachable. If 
 
 ```bash
 $ sahjhan --config-dir examples/lint-demo lint
-clean. 7 check(s) run: L1, L2, L3, L4, L5, L6, L7
+clean. 8 check(s) run: L1, L2, L3, L4, L5, L6, L7, L8
 
 $ cp -r examples/lint-demo /tmp/broken     # reroute paused's `resume` to fix_loop
 $ sahjhan --config-dir /tmp/broken lint
 L3 error: protocol.toml: boundary 'context-reset'
     boundary 'context-reset' can be routed around: merge_done reaches fix_loop without crossing it — merge_done -(pause)-> paused -(resume)-> fix_loop
     hint: tag that path's edge with boundary = "context-reset", or remove the route (tagged today: resume)
-1 error(s), 0 warning(s) from 7 check(s): L1, L2, L3, L4, L5, L6, L7
+1 error(s), 0 warning(s) from 8 check(s): L1, L2, L3, L4, L5, L6, L7, L8
 ```
 
 This is the check that most repays living in the engine. You can grep your own config for the tag. You can't see by grepping that a second `resume` added six months later, from an unrelated pause state, quietly became a way around.
@@ -152,6 +153,29 @@ command = "resume"
 
 The levels are opaque strings whose only property is their position in your list. L7 compares them and reports issues like a gate that demands host-level proof while accepting something the agent can write itself. An individual gate may override the transition's requirement with its own `requires_attestation`.
 
+## provenance filters
+
+A [stamped field](hardening.md#stamped-fields-per-field-provenance) carries which write path recorded an event, so a predicate can filter on it. That only buys the gate something if some writer can produce the value:
+
+```sql
+SELECT count(*) = 0 as result FROM events
+WHERE type = 'finding_deferred' AND reason = 'theoretical'
+  AND recorded_by = 'hook:hooks/theoretical_courier.py'
+```
+
+L8 works out what the config's writers can actually stamp — `agent:cli` for anything the CLI may record, `engine:emit:<command>` for each transition emitting the event, `hook:<path>` for each script `trusted-callers.toml` lists — and compares. A value nothing can stamp is an error: the gate names a writer who does not exist, so it can never pass (and under `!=` it excludes nothing). That is the case for the query above until the courier is listed in the manifest.
+
+The other direction is a warning. `recorded_by = 'agent:cli'` is producible by anything that can run the binary, so as *evidence* of a particular writer it constrains nobody:
+
+```
+L8 warning: protocol.toml: [queries.closed]
+    predicate requires provenance 'agent:cli', which any caller that can run the binary produces
+    hint: as evidence this constrains nobody. Exclude it (<> 'agent:cli') or filter on a
+          writer the agent cannot be.
+```
+
+Excluding it is the correct use, and `!=`, `<>` and `NOT (col = '…')` are all recognized as exclusions. The check reads SQL syntactically, not semantically: a negation spelled some other way — scoped further out, inside a `CASE`, in a subquery — reads as positive. Both directions are decided from config alone, with no ledger and no execution, like everything else here.
+
 ## a worked example
 
-[`examples/lint-demo`](../examples/lint-demo) is a small fix-loop protocol that exercises every one of the seven checks and passes all of them. Break any single declaration in it and lint tells you which one and why. Its config comments name the check each declaration is there to satisfy.
+[`examples/lint-demo`](../examples/lint-demo) is a small fix-loop protocol that exercises every one of the eight checks and passes all of them. Break any single declaration in it and lint tells you which one and why. Its config comments name the check each declaration is there to satisfy.

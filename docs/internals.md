@@ -181,8 +181,9 @@ src/
   query/               DataFusion query engine, Arrow table builder
   manifest/            File hash tracking, integrity verification
   paths.rs             Project-root anchoring for system-owned paths
+  provenance.rs        Which write path recorded an event (stamped fields)
   config/              TOML parsing (protocol, states, transitions, events,
-                       renders, hooks, vault_policy)
+                       renders, hooks, vault_policy, trusted_callers)
   render/              Tera template rendering (where_eq, unique_by filters)
   hooks/               Hook script generation and runtime evaluation
   mermaid.rs           stateDiagram-v2 and ASCII tree output

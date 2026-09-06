@@ -2102,3 +2102,69 @@ fn test_l8_is_selectable_by_name() {
         findings
     );
 }
+
+#[test]
+fn test_l8_ignores_a_stamp_shaped_value_on_an_ordinary_field() {
+    // What decides is the declaration, not the literal's spelling. `reason` is
+    // an ordinary field; a value of its that happens to look like a stamp is
+    // none of L8's business. An earlier cut matched reserved prefixes against
+    // the literal and reported this.
+    let f = provenance_fixture(
+        "SELECT count(*) = 0 AS result FROM events \
+         WHERE type='deferral' AND reason='hook:something'",
+    );
+    let findings = f.lint();
+    assert!(
+        findings_for(&findings, "L8").is_empty(),
+        "an ordinary field is not a provenance filter: {:?}",
+        findings
+    );
+}
+
+#[test]
+fn test_l8_checks_any_field_name_the_config_declares_stamped() {
+    // The corollary: nothing about `recorded_by` is special. Declare the stamp
+    // on a field called anything and L8 checks it.
+    let f = Fixture::new()
+        .states(
+            r#"
+[states.idle]
+label = "Idle"
+initial = true
+
+[states.done]
+label = "Done"
+terminal = true
+"#,
+        )
+        .transitions(
+            r#"
+[[transitions]]
+from = "idle"
+to = "done"
+command = "go"
+gates = []
+"#,
+        )
+        .events(
+            r#"
+[events.deferral]
+description = "a finding set aside"
+fields = [
+    { name = "who_dun_it", type = "string", stamped = true },
+]
+"#,
+        )
+        .protocol(
+            "\n[queries.closed]\nsql = \"SELECT count(*) = 0 as result FROM events \
+             WHERE type='deferral' AND who_dun_it='hook:hooks/absent.py'\"\n",
+        );
+    let findings = f.lint();
+    let l8 = findings_for(&findings, "L8");
+    assert_eq!(l8.len(), 1, "{:?}", findings);
+    assert!(
+        l8[0].message.contains("filters 'who_dun_it'"),
+        "the finding names the column it read: {}",
+        l8[0].message
+    );
+}

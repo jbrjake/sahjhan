@@ -139,6 +139,60 @@ sign failed: caller not authenticated
 
 The socket peer is the CLI, and the CLI can never be in the manifest, whatever spawned it — including a trusted hook that shells out to it. That isn't a limitation to work around. It's the whole mechanism, because `sahjhan sign` is exactly the door the agent would knock on. What a hardened deployment loses here is the CLI as a courier, not the proof itself.
 
+## Stamped fields: per-field provenance
+
+`restricted` answers "may this event be recorded at all," and it answers it for the whole event type. Sometimes the question is narrower: an event has to stay agent-writable, and a gate still has to tell *which* writer produced a given row.
+
+Take a deferral. The agent legitimately defers findings — low priority, over budget, can't reproduce — so the event cannot be restricted. But one of its reasons is machine-graded: a hook decides a finding is theoretical when it can find no path to the defect, and a gate excludes those from the "all criticals resolved" count. Nothing stopped the agent from typing that reason itself, and the row it wrote was byte-identical to the hook's.
+
+`restricted` cannot fix this, and not only because the agent needs the event. A restricted event may not be a transition emit — an emit appends straight to the ledger and would walk past the proof — so the moment a transition emits an event, `restricted` is off the table for it entirely.
+
+Mark the field instead:
+
+```toml
+[events.finding_deferred]
+description = "A finding was set aside rather than fixed"
+attestation = "agent"
+fields = [
+    { name = "id", type = "string" },
+    { name = "reason", type = "string", pattern = "^(low_priority|medium_budget|cant_reproduce|theoretical)$" },
+    { name = "recorded_by", type = "string", stamped = true },
+]
+```
+
+`recorded_by` is now the engine's to write. Every existing writer keeps working, and each gets a different value:
+
+| value | who wrote it |
+| --- | --- |
+| `agent:cli` | `sahjhan event` — anything that can run the binary, including a hook that shells out to it |
+| `agent:hook-eval` | a hook rule's `auto_record`, appended by `sahjhan hook eval` — which the agent can also run |
+| `authed:cli` | `sahjhan authed-event` with a verified HMAC proof |
+| `engine:emit:<command>` | a transition's `emits`; the only way to write it is to take that transition, gates and all |
+| `hook:<script path>` | the daemon's `record_event`, from a peer whose script `trusted-callers.toml` lists and whose contents hashed clean |
+| `daemon:unverified` | the same op with no `trusted-callers.toml` at all — auth was never configured, so the daemon can name no one and says so |
+
+The `agent:` prefix is doing real work: it is the engine declining to claim more than it knows. A gate that wants provenance to mean something excludes those rather than enumerating them.
+
+The value is an ordinary column, so the gate is ordinary SQL:
+
+```sql
+SELECT count(*) = 0 as result FROM events d
+WHERE d.type = 'finding_deferred' AND d.reason = 'theoretical'
+  AND d.recorded_by = 'hook:enforcement/hooks/theoretical_courier.py'
+```
+
+A caller that supplies the field is refused, not quietly corrected:
+
+```bash
+$ sahjhan event finding_deferred --field id=BH-001 --field reason=theoretical \
+      --field recorded_by=hook:enforcement/hooks/theoretical_courier.py
+error: field 'recorded_by' of event 'finding_deferred' is stamped — the engine records who wrote the event, so it cannot be supplied by the caller
+```
+
+Exit 4, and nothing is appended. Overwriting it silently would be worse than useless: a config that *forgot* to mark the field stamped and one whose stamp is being forged would produce identical rows, and the gate reading them could not tell which it had. The same rule holds for config: a transition emit or a hook `auto_record` whose `fields` name a stamped field is a validation error, and since that is the validation `init` and `reseal` both run, such a config cannot be sealed. `pattern`, `values` and `optional` on a stamped field are errors too — all three police what a caller may write, and no caller writes this one.
+
+Three things to know before you rely on it. `hook:<path>` is only as good as the manifest: a path `trusted-callers.toml` does not list can never be stamped, so the gate is a wall — [lint L8](lint.md#provenance-filters) checks exactly this, in both directions. A stamped field records the write path, not a person; `agent:cli` from a hook that shells out to the CLI is indistinguishable from `agent:cli` from the agent, which is why the hardened path is the socket. And "the engine writes it" covers the paths that *append* to a ledger, not `sahjhan ledger import`, which builds a new ledger out of external JSONL and validates none of it — an imported row carries whatever it carried. That ledger also arrives without config seals, so importing one is already a decision you make deliberately.
+
 ## The daemon
 
 I tried file-based keys first. I kept a `session.key` on disk with enforcement hooks blocking reads via string-matching on tool arguments. If the agent called `Read` on `.sahjhan/session.key`, the PreToolUse hook intercepted it. Simple.
@@ -347,6 +401,7 @@ This means the ledger has two tiers of evidence, machine-attested (the gate ran,
 | Delete the ledger | Hash chain for deletion. Reset is a real command, but it needs an HMAC proof the agent can't forge. |
 | Fabricate history entries | Every entry is hash-linked. Fabricate one, the chain breaks. |
 | `sahjhan event quiz_passed --field pass=true` | Restricted. Needs HMAC proof the agent can't forge. |
+| `sahjhan event finding_deferred --field recorded_by=hook:…` | Stamped field. Refused, not overwritten — exit 4, nothing appended. |
 | Read the session key to forge proofs | No key on disk. It's in the daemon's memory. `ptrace` blocked. |
 | Write a script that reads the key indirectly | There's nothing to read. The key never touches the filesystem. |
 | Call `sahjhan sign` directly from Bash | With caller auth configured, the CLI can never authenticate, whatever spawned it. Rejected. |

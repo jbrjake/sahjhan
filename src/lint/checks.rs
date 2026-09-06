@@ -19,7 +19,7 @@ use crate::config::GateConfig;
 
 use super::index::{
     gate_event_refs, is_engine_event, producible_stamps, provenance_filters, sql_event_mentions,
-    EventRef,
+    stamped_columns, EventRef,
 };
 use super::similarity;
 use super::{Analysis, LintFinding};
@@ -841,8 +841,7 @@ fn collect_attested_refs(
 ///
 /// A `stamped = true` field carries the write path an event arrived on, and its
 /// value comes from the engine rather than the caller (#50). That only buys a
-/// gate anything if the value it filters on is one some writer actually
-/// produces:
+/// gate something if the value it filters on is one some writer produces:
 ///
 /// - **no writer produces it** — error. `recorded_by = 'hook:hooks/courier.py'`
 ///   where the manifest lists no such script is a gate that can never pass; the
@@ -853,44 +852,67 @@ fn collect_attested_refs(
 ///   that can run the binary, so as *evidence* it constrains nobody. Excluding
 ///   it (`!= 'agent:cli'`) is the correct use and is not reported.
 ///
-/// Scope of the writer set: predicates that name declared event types are
-/// checked against the writers of those types; one that names none is checked
-/// against every writer in the protocol, which is the weakest sound question
-/// available. Both directions are decided from config alone — the daemon's
+/// What counts as a provenance filter comes from the config, not from how the
+/// value is spelled: a literal is checked when it is compared against a column
+/// some event declares `stamped`. So `reason = 'hook:whatever'` on an ordinary
+/// field is none of this check's business, and a field named anything at all is
+/// this check's business the moment it is declared stamped.
+///
+/// The writers compared against are those of the events declaring *that*
+/// column, narrowed to the ones the predicate names when it names any. Both
+/// directions are decided from config alone — the daemon's
 /// `trusted-callers.toml` included, since `hook:<path>` is the one identity
 /// that comes from content hashing rather than from a command line.
 pub fn l8_provenance_filters(analysis: &Analysis) -> Vec<LintFinding> {
     let config = analysis.config;
+    let columns = stamped_columns(config);
+    if columns.is_empty() {
+        return Vec::new();
+    }
     let mut findings = Vec::new();
 
     for (location, sql) in all_predicates(config) {
-        let filters = provenance_filters(&sql);
+        let filters = provenance_filters(&sql, &columns);
         if filters.is_empty() {
             continue;
         }
         let mentioned = sql_event_mentions(&sql, config);
-        let producible = producible_stamps(config, &mentioned);
-        let scope = if mentioned.is_empty() {
-            "any event this protocol declares".to_string()
-        } else {
-            format!("'{}'", mentioned.join("', '"))
-        };
 
-        for (literal, positive_equality) in filters {
-            if !producible.contains(&literal) {
+        for filter in filters {
+            // The events that declare this column stamped — narrowed to the
+            // ones this predicate names, when the two overlap.
+            let owners = columns
+                .get(filter.column.as_str())
+                .cloned()
+                .unwrap_or_default();
+            let narrowed: Vec<String> = owners
+                .iter()
+                .filter(|e| mentioned.contains(e))
+                .cloned()
+                .collect();
+            let scope = if narrowed.is_empty() {
+                owners
+            } else {
+                narrowed
+            };
+            let producible = producible_stamps(config, &scope);
+
+            if !producible.contains(&filter.value) {
                 findings.push(
                     LintFinding::error(
                         "L8",
                         location.clone(),
                         format!(
-                            "predicate filters on provenance '{}', which no writer of \
-                             {} can stamp",
-                            literal, scope
+                            "predicate filters '{}' on provenance '{}', which no writer of \
+                             '{}' can stamp",
+                            filter.column,
+                            filter.value,
+                            scope.join("', '")
                         ),
                     )
-                    .with_hint(hint_for_unproducible(&literal)),
+                    .with_hint(hint_for_unproducible(&filter.value)),
                 );
-            } else if positive_equality && is_agent_reachable_stamp(&literal) {
+            } else if filter.positive_equality && is_agent_reachable_stamp(&filter.value) {
                 findings.push(
                     LintFinding::warning(
                         "L8",
@@ -898,13 +920,14 @@ pub fn l8_provenance_filters(analysis: &Analysis) -> Vec<LintFinding> {
                         format!(
                             "predicate requires provenance '{}', which any caller that \
                              can run the binary produces",
-                            literal
+                            filter.value
                         ),
                     )
-                    .with_hint(
+                    .with_hint(format!(
                         "as evidence this constrains nobody. Exclude it \
-                         (<> 'agent:cli') or filter on a writer the agent cannot be.",
-                    ),
+                         ({} <> '{}') or filter on a writer the agent cannot be.",
+                        filter.column, filter.value
+                    )),
                 );
             }
         }

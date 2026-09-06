@@ -12,12 +12,14 @@
 // - [consumed-events]     consumed_events()        — every event name any config surface reads
 // - [sql-event-mentions]  sql_event_mentions()     — declared event names quoted inside a SQL predicate
 // - [producible-stamps]   producible_stamps()      — the provenance values some writer of an event can stamp
-// - [provenance-filters]  provenance_filters()     — stamp literals in a predicate, and whether each is an equality
+// - [stamped-columns]     stamped_columns()        — field name -> the events declaring it `stamped`
+// - ProvenanceFilter      — one comparison a predicate makes against a stamped column
+// - [provenance-filters]  provenance_filters()     — those comparisons, and whether each is an equality
 
 use std::collections::{HashMap, HashSet};
 
 use crate::config::{GateConfig, ProtocolConfig};
-use crate::provenance::{is_stamp_value, Recorder};
+use crate::provenance::Recorder;
 
 // The engine's own event vocabulary lives with the rest of the vocabulary, in
 // config::events — the `since` anchor validator needs it too, and one list is
@@ -386,17 +388,64 @@ pub fn producible_stamps(config: &ProtocolConfig, events: &[String]) -> HashSet<
     out
 }
 
-// [provenance-filters]
-/// Stamp-namespace literals in a SQL predicate, each paired with whether it is
-/// reached by a positive equality (`recorded_by = 'x'`) rather than a negation
-/// (`!= 'x'`, `<> 'x'`) or anything else.
+// [stamped-columns]
+/// Every field name some declared event marks `stamped = true`, mapped to the
+/// events that mark it.
 ///
-/// Syntactic, like the rest of lint: this is not a SQL parser, and the
-/// equality flag is decided by looking at the operator immediately before the
-/// opening quote. Anything it cannot read that way is reported as *not* an
-/// equality, so the check that depends on the flag stays quiet rather than
-/// guessing — a false "this filter is decoration" is worse than a miss.
-pub fn provenance_filters(sql: &str) -> Vec<(String, bool)> {
+/// This is what makes L8 a check on the *declaration* rather than on how a
+/// value happens to be spelled. An earlier cut matched literals against a
+/// reserved set of prefixes (`hook:`, `engine:`, …), which meant an ordinary
+/// field holding an ordinary value — `reason = 'hook:something'` — was read as
+/// a provenance filter and reported. Reserved-string rules also teach the
+/// reader that the syntax is a pile of special cases; the config already says
+/// which columns are provenance, so ask it.
+pub fn stamped_columns(config: &ProtocolConfig) -> HashMap<&str, Vec<String>> {
+    let mut out: HashMap<&str, Vec<String>> = HashMap::new();
+    for (name, event) in &config.events {
+        for field in crate::provenance::stamped_fields(event) {
+            out.entry(field).or_default().push(name.clone());
+        }
+    }
+    for events in out.values_mut() {
+        events.sort();
+    }
+    out
+}
+
+/// One comparison a predicate makes against a stamped column.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProvenanceFilter {
+    /// The stamped field the literal is compared against, table qualifier
+    /// stripped (`d.recorded_by` → `recorded_by`).
+    pub column: String,
+    /// The literal it is compared against.
+    pub value: String,
+    /// Whether a bare `=` reaches it, as opposed to `!=` / `<>` / `NOT (… = …)`
+    /// / an `IN` list.
+    pub positive_equality: bool,
+}
+
+// [provenance-filters]
+/// Every literal in a SQL predicate compared against one of `columns`.
+///
+/// Syntactic, like the rest of lint, and this is not a SQL parser. The column
+/// is found by scanning left from the literal past whitespace, comparison and
+/// list punctuation, other literals, and the words `IN` / `NOT`, stopping at
+/// the first identifier — so `col = 'x'`, `col != 'x'`, `NOT (col = 'x')` and
+/// `col NOT IN ('x','y')` all resolve to `col`. A bare literal with no column
+/// to its left lands on whatever keyword precedes it, which is not a stamped
+/// column, so it is ignored rather than guessed at. A column written in double
+/// quotes is read as a literal by the same scan and so is missed; that is the
+/// price of one pass over the characters.
+///
+/// The equality flag is decided by the operator immediately before the opening
+/// quote. Anything unreadable that way counts as *not* an equality, so the
+/// check depending on it stays quiet rather than guessing — a false "this
+/// filter is decoration" is worse than a miss.
+pub fn provenance_filters(
+    sql: &str,
+    columns: &HashMap<&str, Vec<String>>,
+) -> Vec<ProvenanceFilter> {
     let chars: Vec<char> = sql.chars().collect();
     let mut out = Vec::new();
     let mut i = 0;
@@ -408,18 +457,80 @@ pub fn provenance_filters(sql: &str) -> Vec<(String, bool)> {
         }
         let quote = c;
         let open = i;
-        let mut literal = String::new();
+        let mut value = String::new();
         i += 1;
         while i < chars.len() && chars[i] != quote {
-            literal.push(chars[i]);
+            value.push(chars[i]);
             i += 1;
         }
         i += 1; // step past the closing quote (or off the end)
-        if is_stamp_value(&literal) {
-            out.push((literal, positive_equality_before(&chars, open)));
+
+        let Some(column) = column_before(&chars, open) else {
+            continue;
+        };
+        if !columns.contains_key(column.as_str()) {
+            continue;
         }
+        out.push(ProvenanceFilter {
+            column,
+            value,
+            positive_equality: positive_equality_before(&chars, open),
+        });
     }
     out
+}
+
+/// The column a literal opening at `open` is being compared against.
+fn column_before(chars: &[char], open: usize) -> Option<String> {
+    let mut j = open;
+    loop {
+        j = skip_ws_back(chars, j);
+        if j == 0 {
+            return None;
+        }
+        let c = chars[j - 1];
+        // Comparison and list punctuation sits between a column and its values.
+        if matches!(c, '=' | '!' | '<' | '>' | '(' | ',') {
+            j -= 1;
+            continue;
+        }
+        // Another value in the same `IN` list.
+        if c == '\'' || c == '"' {
+            let mut m = j - 1;
+            if m == 0 {
+                return None;
+            }
+            m -= 1;
+            while m > 0 && chars[m] != c {
+                m -= 1;
+            }
+            if chars[m] != c {
+                return None;
+            }
+            j = m;
+            continue;
+        }
+        if !is_identifier_char(c) {
+            return None;
+        }
+        let end = j;
+        while j > 0 && is_identifier_char(chars[j - 1]) {
+            j -= 1;
+        }
+        let word: String = chars[j..end].iter().collect();
+        // `IN` and `NOT` stand between the column and its list; anything else
+        // that reads as an identifier is the column (or a keyword that is not a
+        // stamped column, which the caller drops).
+        if word.eq_ignore_ascii_case("in") || word.eq_ignore_ascii_case("not") {
+            continue;
+        }
+        // Strip a table qualifier: `d.recorded_by` → `recorded_by`.
+        return Some(word.rsplit('.').next().unwrap_or(&word).to_string());
+    }
+}
+
+fn is_identifier_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_' || c == '.'
 }
 
 /// Whether the literal opening at `open` is compared with a bare `=` that no
@@ -498,29 +609,38 @@ fn quoted_literals(sql: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
-    /// The literals a predicate filters provenance on, with the equality flag.
-    fn filters(sql: &str) -> Vec<(String, bool)> {
-        provenance_filters(sql)
+    /// `recorded_by` is declared stamped; `reason` is an ordinary field.
+    fn columns() -> HashMap<&'static str, Vec<String>> {
+        HashMap::from([("recorded_by", vec!["finding_deferred".to_string()])])
+    }
+
+    fn filters(sql: &str) -> Vec<ProvenanceFilter> {
+        provenance_filters(sql, &columns())
     }
 
     #[test]
-    fn only_stamp_namespace_literals_are_filters() {
-        assert!(filters("WHERE reason='theoretical'").is_empty());
+    fn only_comparisons_against_a_stamped_column_count() {
+        // The declaration decides, not the literal's spelling. An ordinary
+        // field holding a stamp-shaped value is none of L8's business.
+        assert!(filters("WHERE reason='hook:something'").is_empty());
         assert!(filters("WHERE type='finding_deferred'").is_empty());
         assert_eq!(
             filters("WHERE recorded_by='agent:cli'"),
-            vec![("agent:cli".to_string(), true)]
+            vec![ProvenanceFilter {
+                column: "recorded_by".to_string(),
+                value: "agent:cli".to_string(),
+                positive_equality: true,
+            }]
         );
     }
 
     #[test]
-    fn a_misspelling_is_still_recognized_as_a_filter() {
-        // The point of stopping the namespace one segment short: lint has to
-        // see the typo to report it.
-        assert_eq!(
-            filters("WHERE recorded_by='engine:emits:defer_low'"),
-            vec![("engine:emits:defer_low".to_string(), true)]
-        );
+    fn a_misspelled_value_is_still_a_provenance_filter() {
+        // It reaches the check because of the column it is compared against,
+        // so the typo is caught rather than skipped for not matching a prefix.
+        let f = filters("WHERE recorded_by='engine:emits:defer_low'");
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].value, "engine:emits:defer_low");
     }
 
     #[test]
@@ -532,11 +652,15 @@ mod tests {
             "WHERE NOT (recorded_by = 'agent:cli')",
             "WHERE NOT(d.recorded_by='agent:cli')",
             "WHERE recorded_by IN ('agent:cli')",
+            "WHERE recorded_by NOT IN ('agent:cli','authed:cli')",
             "WHERE recorded_by >= 'agent:cli'",
         ] {
             let f = filters(sql);
-            assert_eq!(f.len(), 1, "{sql}");
-            assert!(!f[0].1, "`{sql}` is not a positive equality");
+            assert!(!f.is_empty(), "`{sql}` names a stamped column");
+            assert!(
+                f.iter().all(|x| !x.positive_equality),
+                "`{sql}` is not a positive equality"
+            );
         }
     }
 
@@ -550,19 +674,31 @@ mod tests {
         ] {
             let f = filters(sql);
             assert_eq!(f.len(), 1, "{sql}");
-            assert!(f[0].1, "`{sql}` is a positive equality");
+            assert!(f[0].positive_equality, "`{sql}` is a positive equality");
         }
     }
 
     #[test]
-    fn every_literal_in_a_predicate_is_reported() {
+    fn an_in_list_resolves_every_value_to_its_column() {
+        let f = filters("WHERE recorded_by IN ('hook:a', 'hook:b')");
+        assert_eq!(f.len(), 2, "{f:?}");
+        assert!(f.iter().all(|x| x.column == "recorded_by"));
+        assert_eq!(f[0].value, "hook:a");
+        assert_eq!(f[1].value, "hook:b");
+    }
+
+    #[test]
+    fn a_literal_with_no_column_to_its_left_is_ignored() {
+        // Lands on a keyword, which is not a stamped column, so it is dropped
+        // rather than guessed at.
+        assert!(filters("WHERE type='finding_deferred' AND 'agent:cli'").is_empty());
+    }
+
+    #[test]
+    fn every_comparison_in_a_predicate_is_reported() {
         let f = filters("WHERE recorded_by='hook:hooks/courier.py' OR recorded_by <> 'agent:cli'");
-        assert_eq!(
-            f,
-            vec![
-                ("hook:hooks/courier.py".to_string(), true),
-                ("agent:cli".to_string(), false),
-            ]
-        );
+        assert_eq!(f.len(), 2, "{f:?}");
+        assert!(f[0].positive_equality);
+        assert!(!f[1].positive_equality);
     }
 }

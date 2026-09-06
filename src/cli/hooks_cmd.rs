@@ -177,7 +177,11 @@ pub fn cmd_hook_eval(
         for (k, v) in &auto.fields {
             fields.insert(k.clone(), v.clone());
         }
-        if let Err(e) = ledger.append(&auto.event_type, fields) {
+        if let Err(e) = ledger.append(
+            &auto.event_type,
+            fields,
+            &crate::provenance::Recorder::AgentHookEval,
+        ) {
             eprintln!("Warning: auto-record failed: {}", e);
         }
     }

@@ -1,6 +1,7 @@
 use sahjhan::config::EventConfig;
 use sahjhan::config::EventFieldConfig;
 use sahjhan::ledger::chain::Ledger;
+use sahjhan::provenance::Recorder;
 use sahjhan::query::QueryEngine;
 use std::collections::{BTreeMap, HashMap};
 use tempfile::TempDir;
@@ -22,7 +23,6 @@ fn test_events() -> HashMap<String, EventConfig> {
                     pattern: None,
                     values: None,
                     optional: false,
-                    stamped: false,
                 },
                 EventFieldConfig {
                     name: "severity".to_string(),
@@ -30,7 +30,6 @@ fn test_events() -> HashMap<String, EventConfig> {
                     pattern: None,
                     values: None,
                     optional: false,
-                    stamped: false,
                 },
             ],
         },
@@ -47,7 +46,9 @@ fn create_test_ledger(dir: &TempDir, name: &str, findings: &[(&str, &str)]) -> s
         let mut fields = BTreeMap::new();
         fields.insert("id".to_string(), id.to_string());
         fields.insert("severity".to_string(), severity.to_string());
-        ledger.append("finding", fields).unwrap();
+        ledger
+            .append("finding", fields, &Recorder::AgentCli)
+            .unwrap();
     }
 
     path

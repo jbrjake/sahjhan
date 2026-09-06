@@ -9,8 +9,6 @@
 // - [validate-gate]         ProtocolConfig::validate_gate()  — recursive gate validator (composite + leaf)
 // - [check-gate-anchor]     check_gate_anchor()              — recursive scan for an `anchor` the engine cannot act on
 // - [check-emit-anchor]     check_emit_anchor()              — an emit's `anchor`: unreadable, or on an emit that runs no command
-//                                                             (stamped-field checks live inline in [validate]: 3c/3d for a
-//                                                              config surface writing one, 5b for a constraint on one)
 // - [resolve-gate-since]    ProtocolConfig::resolve_gate_since()   — a gate's `since` param as written → baseline event type
 // - [resolve-since-anchor]  ProtocolConfig::resolve_since_anchor() — `since` form → baseline event type, or why not
 // - SinceAnchorError        — a non-string value, an unrecognized form, or a prefixed form naming an undeclared event type
@@ -342,45 +340,6 @@ impl ProtocolConfig {
                     _ => {}
                 }
             }
-
-            // 3c. An emit must not set a stamped field. The engine writes that
-            // field to say the transition produced the event; a template that
-            // also writes it would be the config forging its own provenance,
-            // and silently letting the engine win would make a config that
-            // *forgot* to stamp read exactly like one that did (#50).
-            for emit in &t.emits {
-                if let Some(ev) = self.events.get(&emit.event) {
-                    for field in crate::provenance::stamped_fields(ev) {
-                        if emit.fields.contains_key(field) {
-                            errors.push(format!(
-                                "transition '{}' emit of '{}' sets field '{}', which is \
-                                 stamped — the engine records who wrote the event, so \
-                                 remove it from the emit's fields",
-                                t.command, emit.event, field
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-
-        // 3d. The same rule for a hook's auto_record: its `fields` are written
-        // by the config, and a stamped field is not the config's to write.
-        for (idx, hook) in self.hooks.iter().enumerate() {
-            if let Some(ref auto) = hook.auto_record {
-                if let Some(ev) = self.events.get(&auto.event_type) {
-                    for field in crate::provenance::stamped_fields(ev) {
-                        if auto.fields.contains_key(field) {
-                            errors.push(format!(
-                                "hooks.toml: hook[{}] auto_record of '{}' sets field \
-                                 '{}', which is stamped — the engine records who wrote \
-                                 the event, so remove it from the auto_record's fields",
-                                idx, auto.event_type, field
-                            ));
-                        }
-                    }
-                }
-            }
         }
 
         // 4. Sets referenced in state params exist.
@@ -426,29 +385,6 @@ impl ProtocolConfig {
                         "event '{}' field '{}' has unknown type '{}'",
                         event_name, field.name, field.field_type
                     ));
-                }
-
-                // 5b. A stamped field's value comes from the engine, never from
-                // a caller. Every constraint that exists to police what a
-                // caller may write is therefore inert on one — and an inert
-                // line that looks load-bearing is what #48 was about. Rejected
-                // here, in the validation `init` and `reseal` both run, so a
-                // config carrying one cannot be sealed.
-                if field.stamped {
-                    for (key, present) in [
-                        ("pattern", field.pattern.is_some()),
-                        ("values", field.values.is_some()),
-                        ("optional", field.optional),
-                    ] {
-                        if present {
-                            errors.push(format!(
-                                "event '{}' field '{}' is stamped and also declares \
-                                 '{}' — a stamped field's value is written by the \
-                                 engine, so '{}' would constrain nothing",
-                                event_name, field.name, key, key
-                            ));
-                        }
-                    }
                 }
             }
         }

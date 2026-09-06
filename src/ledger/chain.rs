@@ -23,6 +23,7 @@ use std::time::Instant;
 use fs2::FileExt;
 
 use super::entry::{LedgerEntry, LedgerError};
+use crate::provenance::Recorder;
 
 /// Engine identifier stamped into every entry.
 const ENGINE_NAME: &str = "sahjhan";
@@ -146,10 +147,17 @@ impl Ledger {
     /// `hash` of the current tail **as read from disk under an exclusive
     /// lock**. This prevents TOCTOU races when multiple processes append
     /// concurrently (see issue #21).
+    ///
+    /// `recorder` names the write path making this append and is recorded on
+    /// the entry as `recorded_by`. It is a required argument rather than a
+    /// default because a default is exactly what would make the value worth
+    /// nothing: a new way to reach the ledger must not be able to appear
+    /// without saying which one it is (#50).
     pub fn append(
         &mut self,
         event_type: &str,
         fields: BTreeMap<String, String>,
+        recorder: &Recorder,
     ) -> Result<(), LedgerError> {
         // Acquire exclusive lock BEFORE reading state — this is the critical
         // section that prevents the TOCTOU race (issue #21).
@@ -174,6 +182,7 @@ impl Ledger {
             event_type,
             &self.engine,
             &self.protocol,
+            &recorder.id(),
             fields,
         );
 
@@ -197,6 +206,7 @@ impl Ledger {
         event_type: &str,
         fields: BTreeMap<String, String>,
         ts: String,
+        recorder: &Recorder,
     ) -> Result<(), LedgerError> {
         let file = OpenOptions::new()
             .read(true)
@@ -217,6 +227,7 @@ impl Ledger {
             event_type,
             &self.engine,
             &self.protocol,
+            &recorder.id(),
             fields,
             ts,
         );
@@ -337,7 +348,7 @@ impl Ledger {
         let mut fields = BTreeMap::new();
         fields.insert("scope".to_string(), scope.to_string());
         fields.insert("snapshot".to_string(), snapshot.to_string());
-        self.append("_checkpoint", fields)?;
+        self.append("_checkpoint", fields, &Recorder::AgentCli)?;
         Ok(self.entries.last().expect("entry just appended"))
     }
 
@@ -495,7 +506,15 @@ fn create_genesis(
     fields.insert("protocol_version".to_string(), protocol_version.to_string());
     fields.extend(extra_fields);
 
-    LedgerEntry::new(0, prev, "genesis", ENGINE_NAME, &protocol, fields)
+    LedgerEntry::new(
+        0,
+        prev,
+        "genesis",
+        ENGINE_NAME,
+        &protocol,
+        &Recorder::Init.id(),
+        fields,
+    )
 }
 
 // ---------------------------------------------------------------------------

@@ -345,7 +345,11 @@ pub fn cmd_set_complete(
     fields.insert("set".to_string(), set_name.to_string());
     fields.insert("member".to_string(), member.to_string());
 
-    match machine.record_event("set_member_complete", fields) {
+    match machine.record_event(
+        "set_member_complete",
+        fields,
+        &crate::provenance::Recorder::AgentCli,
+    ) {
         Ok(()) => {
             if let Err((code, msg)) =
                 track_ledger_in_manifest(&mut manifest, &data_dir, machine.ledger(), &config)

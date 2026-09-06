@@ -21,11 +21,11 @@ render_dir = "output"
 sql    = "SELECT count(*) < 3 as result FROM events WHERE event_type = 'fix_commit'"
 intent = "three fixes is the budget for one merge"
 
-# A provenance filter (lint L8). `recorded_by` is a stamped field, so its value
-# names the write path rather than anything the caller asserted — and the value
-# here is only producible by a script trusted-callers.toml lists. Point it at a
-# script that file does not list, or misspell the namespace, and L8 reports a
-# gate that can never pass.
+# A provenance filter (lint L8). `recorded_by` is an entry column the engine
+# writes, like `ts` — it names the write path rather than anything a caller
+# asserted, and the value here is only producible by a script
+# trusted-callers.toml lists. Point it at a script that file does not list, or
+# misspell it, and L8 reports a gate that can never pass.
 [queries.theoretical_deferrals]
 sql    = """
 SELECT count(*) = 0 as result FROM events

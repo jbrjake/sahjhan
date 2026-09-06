@@ -459,6 +459,7 @@ pub fn cmd_ledger_import(config_dir: &str, name: &str, path: &str) -> i32 {
         &ledger_file,
         &config.protocol.name,
         &config.protocol.version,
+        path,
     ) {
         Ok(()) => {}
         Err(e) => {

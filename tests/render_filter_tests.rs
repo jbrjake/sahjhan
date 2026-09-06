@@ -6,6 +6,7 @@
 
 use sahjhan::config::ProtocolConfig;
 use sahjhan::ledger::chain::Ledger;
+use sahjhan::provenance::Recorder;
 use sahjhan::render::engine::RenderEngine;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -21,34 +22,48 @@ fn setup_ledger_with_events(dir: &Path) -> Ledger {
     // Record 3 findings
     fields.insert("id".to_string(), "BH-001".to_string());
     fields.insert("severity".to_string(), "HIGH".to_string());
-    ledger.append("finding", fields.clone()).unwrap();
+    ledger
+        .append("finding", fields.clone(), &Recorder::AgentCli)
+        .unwrap();
 
     fields.clear();
     fields.insert("id".to_string(), "BH-002".to_string());
     fields.insert("severity".to_string(), "MEDIUM".to_string());
-    ledger.append("finding", fields.clone()).unwrap();
+    ledger
+        .append("finding", fields.clone(), &Recorder::AgentCli)
+        .unwrap();
 
     fields.clear();
     fields.insert("id".to_string(), "BH-003".to_string());
     fields.insert("severity".to_string(), "LOW".to_string());
-    ledger.append("finding", fields.clone()).unwrap();
+    ledger
+        .append("finding", fields.clone(), &Recorder::AgentCli)
+        .unwrap();
 
     // Record 4 resolutions (BH-001 resolved twice)
     fields.clear();
     fields.insert("id".to_string(), "BH-001".to_string());
-    ledger.append("finding_resolved", fields.clone()).unwrap();
+    ledger
+        .append("finding_resolved", fields.clone(), &Recorder::AgentCli)
+        .unwrap();
 
     fields.clear();
     fields.insert("id".to_string(), "BH-002".to_string());
-    ledger.append("finding_resolved", fields.clone()).unwrap();
+    ledger
+        .append("finding_resolved", fields.clone(), &Recorder::AgentCli)
+        .unwrap();
 
     fields.clear();
     fields.insert("id".to_string(), "BH-003".to_string());
-    ledger.append("finding_resolved", fields.clone()).unwrap();
+    ledger
+        .append("finding_resolved", fields.clone(), &Recorder::AgentCli)
+        .unwrap();
 
     fields.clear();
     fields.insert("id".to_string(), "BH-001".to_string());
-    ledger.append("finding_resolved", fields.clone()).unwrap();
+    ledger
+        .append("finding_resolved", fields.clone(), &Recorder::AgentCli)
+        .unwrap();
 
     ledger
 }

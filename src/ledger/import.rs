@@ -21,13 +21,20 @@ use super::entry::LedgerError;
 /// - `"ts"` — an RFC 3339 timestamp string; preserved verbatim if present.
 ///
 /// Blank lines are silently skipped. The output ledger starts with a genesis
-/// entry followed by one entry per imported event.
+/// entry followed by one entry per imported event, each recorded as
+/// `import:<source>`.
 pub fn import_jsonl(
     reader: &mut dyn BufRead,
     output_path: &Path,
     protocol_name: &str,
     protocol_version: &str,
+    source: &str,
 ) -> Result<(), LedgerError> {
+    // Every imported row is marked as imported, naming where it came from.
+    // Import validates nothing and knows nothing about the original writer, so
+    // the honest claim is "this arrived from outside" — not a provenance the
+    // engine observed (#50).
+    let recorder = crate::provenance::Recorder::Import(source.to_string());
     let mut ledger = Ledger::init(output_path, protocol_name, protocol_version)?;
 
     let mut line_buf = String::new();
@@ -80,8 +87,8 @@ pub fn import_jsonl(
         let ts_opt = obj.get("ts").and_then(|v| v.as_str()).map(String::from);
 
         match ts_opt {
-            Some(ts) => ledger.append_with_ts(event_type, fields, ts)?,
-            None => ledger.append(event_type, fields)?,
+            Some(ts) => ledger.append_with_ts(event_type, fields, ts, &recorder)?,
+            None => ledger.append(event_type, fields, &recorder)?,
         }
     }
 

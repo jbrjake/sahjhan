@@ -1,6 +1,7 @@
 // checkpoint_tests.rs — Tests for Ledger checkpoint methods (Task 8)
 
 use sahjhan::ledger::chain::Ledger;
+use sahjhan::provenance::Recorder;
 use std::collections::BTreeMap;
 use tempfile::tempdir;
 
@@ -44,10 +45,10 @@ fn test_find_latest_checkpoint() {
 
     // Events before checkpoint
     ledger
-        .append("finding", fields(&[("id", "PRE-1")]))
+        .append("finding", fields(&[("id", "PRE-1")]), &Recorder::AgentCli)
         .unwrap();
     ledger
-        .append("finding", fields(&[("id", "PRE-2")]))
+        .append("finding", fields(&[("id", "PRE-2")]), &Recorder::AgentCli)
         .unwrap();
 
     // Write checkpoint
@@ -58,10 +59,10 @@ fn test_find_latest_checkpoint() {
 
     // Events after checkpoint
     ledger
-        .append("finding", fields(&[("id", "POST-1")]))
+        .append("finding", fields(&[("id", "POST-1")]), &Recorder::AgentCli)
         .unwrap();
     ledger
-        .append("finding", fields(&[("id", "POST-2")]))
+        .append("finding", fields(&[("id", "POST-2")]), &Recorder::AgentCli)
         .unwrap();
 
     let result = ledger.find_latest_checkpoint("audit");
@@ -87,7 +88,9 @@ fn test_find_checkpoint_none() {
     let path = dir.path().join("ledger.jsonl");
 
     let mut ledger = Ledger::init(&path, "test-proto", "1.0.0").unwrap();
-    ledger.append("finding", fields(&[("id", "X-1")])).unwrap();
+    ledger
+        .append("finding", fields(&[("id", "X-1")]), &Recorder::AgentCli)
+        .unwrap();
 
     let result = ledger.find_latest_checkpoint("any-scope");
     assert!(
@@ -106,9 +109,13 @@ fn test_checkpoint_scope_isolation() {
     let mut ledger = Ledger::init(&path, "test-proto", "1.0.0").unwrap();
 
     ledger.write_checkpoint("scope-a", "snap-a").unwrap();
-    ledger.append("event_x", BTreeMap::new()).unwrap();
+    ledger
+        .append("event_x", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
     ledger.write_checkpoint("scope-b", "snap-b").unwrap();
-    ledger.append("event_y", BTreeMap::new()).unwrap();
+    ledger
+        .append("event_y", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
 
     // scope-a checkpoint comes before scope-b, so after it there are 3 entries
     // (event_x, checkpoint-scope-b, event_y)
@@ -136,12 +143,18 @@ fn test_find_latest_checkpoint_picks_last() {
 
     // First checkpoint
     ledger.write_checkpoint("phase", "v1").unwrap();
-    ledger.append("event_a", BTreeMap::new()).unwrap();
+    ledger
+        .append("event_a", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
 
     // Second checkpoint — same scope
     ledger.write_checkpoint("phase", "v2").unwrap();
-    ledger.append("event_b", BTreeMap::new()).unwrap();
-    ledger.append("event_c", BTreeMap::new()).unwrap();
+    ledger
+        .append("event_b", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
+    ledger
+        .append("event_c", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
 
     // Should return the v2 checkpoint, so only event_b and event_c follow it
     let (_, after) = ledger.find_latest_checkpoint("phase").unwrap();

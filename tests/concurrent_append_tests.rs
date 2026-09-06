@@ -4,6 +4,7 @@
 // sequence numbers and a valid hash chain.
 
 use sahjhan::ledger::chain::Ledger;
+use sahjhan::provenance::Recorder;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Barrier};
 use std::thread;
@@ -21,7 +22,11 @@ fn fields(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
 fn open_and_append(path: &std::path::Path, event_type: &str, id: usize) -> Result<(), String> {
     let mut ledger = Ledger::open(path).map_err(|e| format!("open failed ({}): {}", id, e))?;
     ledger
-        .append(event_type, fields(&[("worker", &id.to_string())]))
+        .append(
+            event_type,
+            fields(&[("worker", &id.to_string())]),
+            &Recorder::AgentCli,
+        )
         .map_err(|e| format!("append failed ({}): {}", id, e))?;
     Ok(())
 }

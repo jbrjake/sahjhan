@@ -17,7 +17,7 @@ fn test_import_bare_jsonl() {
 "#;
     let mut reader = BufReader::new(input.as_bytes());
 
-    import_jsonl(&mut reader, &output, "test-proto", "1.0.0").unwrap();
+    import_jsonl(&mut reader, &output, "test-proto", "1.0.0", "test.jsonl").unwrap();
 
     let ledger = Ledger::open(&output).unwrap();
     assert_eq!(ledger.len(), 3, "genesis + 2 events = 3 entries");
@@ -47,7 +47,7 @@ fn test_import_with_existing_timestamps() {
     );
 
     let mut reader = BufReader::new(input.as_bytes());
-    import_jsonl(&mut reader, &output, "test-proto", "1.0.0").unwrap();
+    import_jsonl(&mut reader, &output, "test-proto", "1.0.0", "test.jsonl").unwrap();
 
     let ledger = Ledger::open(&output).unwrap();
     assert_eq!(ledger.len(), 2);
@@ -67,7 +67,7 @@ fn test_import_preserves_fields() {
     let input = r#"{"type":"finding","fields":{"id":"BH-003","severity":"CRITICAL","cvss":"9.8","affected":"login-service"}}
 "#;
     let mut reader = BufReader::new(input.as_bytes());
-    import_jsonl(&mut reader, &output, "test-proto", "1.0.0").unwrap();
+    import_jsonl(&mut reader, &output, "test-proto", "1.0.0", "test.jsonl").unwrap();
 
     let ledger = Ledger::open(&output).unwrap();
     assert_eq!(ledger.len(), 2);
@@ -88,7 +88,7 @@ fn test_import_empty_input() {
 
     let input = "";
     let mut reader = BufReader::new(input.as_bytes());
-    import_jsonl(&mut reader, &output, "test-proto", "1.0.0").unwrap();
+    import_jsonl(&mut reader, &output, "test-proto", "1.0.0", "test.jsonl").unwrap();
 
     let ledger = Ledger::open(&output).unwrap();
     assert_eq!(ledger.len(), 1, "only genesis entry expected");
@@ -109,7 +109,7 @@ fn test_import_skips_blank_lines() {
 
 "#;
     let mut reader = BufReader::new(input.as_bytes());
-    import_jsonl(&mut reader, &output, "test-proto", "1.0.0").unwrap();
+    import_jsonl(&mut reader, &output, "test-proto", "1.0.0", "test.jsonl").unwrap();
 
     let ledger = Ledger::open(&output).unwrap();
     assert_eq!(ledger.len(), 3, "genesis + 2 events = 3 entries");
@@ -127,7 +127,7 @@ fn test_import_missing_fields_key() {
     let input = r#"{"type":"heartbeat"}
 "#;
     let mut reader = BufReader::new(input.as_bytes());
-    import_jsonl(&mut reader, &output, "test-proto", "1.0.0").unwrap();
+    import_jsonl(&mut reader, &output, "test-proto", "1.0.0", "test.jsonl").unwrap();
 
     let ledger = Ledger::open(&output).unwrap();
     assert_eq!(ledger.len(), 2);

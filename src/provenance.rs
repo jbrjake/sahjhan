@@ -9,22 +9,30 @@
 // appends directly and would bypass the HMAC proof `restricted` exists to
 // require (sahjhan #50).
 //
-// A field marked `stamped = true` is the finer instrument: the event stays
-// writable by everything that could write it before, and the engine fills that
-// one field with the identity of the write path it came in on. The value is
-// therefore *not* an assertion the caller makes, which is what lets a SQL gate
-// filter on it and mean something.
+// The answer is not a field. `fields` is a schema of what a *writer supplies*,
+// and every entry in it is a slot someone fills; a provenance value a caller
+// could fill in would be worth exactly nothing. So provenance sits where the
+// engine's other records of an append already sit — beside `seq`, `ts`, `hash`
+// and `prev` on the entry itself. Nothing declares it, nothing can write it,
+// and `sahjhan query` exposes it as the column `recorded_by` the same way it
+// exposes `ts`.
+//
+// `Ledger::append` therefore *requires* a `Recorder`. There is no default and
+// no inference: a new way to reach the ledger cannot be added without saying
+// which one it is, because the code will not compile until it does.
 //
 // ## Index
-// - Recorder             — the write paths that can append a declared event
-// - [recorder-id]        Recorder::id()      — the stamp value each path writes
-// - [stamped-fields]     stamped_fields()    — the fields of an event the engine owns
-// - [stamps-for]         stamps_for()        — the (field, value) pairs a recorder writes
-// - [reject-supplied]    reject_supplied_stamp() — refuse a caller-supplied stamp
+// - RECORDED_BY          — the entry key / SQL column carrying it
+// - Recorder             — every write path that can append to a ledger
+// - [recorder-id]        Recorder::id()  — the value each path records
 
-use crate::config::EventConfig;
+/// The ledger entry key, and the SQL column, carrying an append's provenance.
+///
+/// Named once so the entry, `sahjhan query`'s schema, and lint cannot drift
+/// about what the column is called.
+pub const RECORDED_BY: &str = "recorded_by";
 
-/// A write path that can append a consumer-declared event.
+/// A write path that can append to a ledger.
 ///
 /// The engine can only ever attest to *how* a row arrived, never to who was
 /// behind it — so the identities here are named for the path, and the `agent:`
@@ -47,6 +55,16 @@ pub enum Recorder {
     /// Unforgeable by a caller in the sense that matters: the only way to write
     /// it is to take the transition, gates and all.
     Emit(String),
+    /// The `state_transition` and `gate_attestation` entries a transition
+    /// writes about itself. Same guarantee as [`Recorder::Emit`] and the same
+    /// reason: the gates ran.
+    Transition(String),
+    /// The genesis entry, written by `sahjhan init`.
+    Init,
+    /// `sahjhan ledger import`, which wraps JSONL from somewhere else. It says
+    /// only that the row was imported — the engine validated none of it and
+    /// knows nothing about where it came from.
+    Import(String),
     /// The daemon's `record_event`, from a peer whose script canonicalized under
     /// the config dir and matched its `trusted-callers.toml` hash. Carries the
     /// manifest-relative script path — the one identity here tied to *content*
@@ -60,13 +78,16 @@ pub enum Recorder {
 
 impl Recorder {
     // [recorder-id]
-    /// The value this write path stamps into a `stamped = true` field.
+    /// The value this write path records in the entry's `recorded_by`.
     pub fn id(&self) -> String {
         match self {
             Recorder::AgentCli => "agent:cli".to_string(),
             Recorder::AgentHookEval => "agent:hook-eval".to_string(),
             Recorder::AuthedCli => "authed:cli".to_string(),
             Recorder::Emit(command) => format!("engine:emit:{}", command),
+            Recorder::Transition(command) => format!("engine:transition:{}", command),
+            Recorder::Init => "engine:init".to_string(),
+            Recorder::Import(source) => format!("import:{}", source),
             Recorder::TrustedCaller(path) => format!("hook:{}", path),
             Recorder::UnverifiedPeer => "daemon:unverified".to_string(),
         }
@@ -81,100 +102,39 @@ impl Recorder {
     }
 }
 
-// [stamped-fields]
-/// The fields of `event` whose values the engine owns.
-pub fn stamped_fields(event: &EventConfig) -> impl Iterator<Item = &str> {
-    event
-        .fields
-        .iter()
-        .filter(|f| f.stamped)
-        .map(|f| f.name.as_str())
-}
-
-// [stamps-for]
-/// The `(field, value)` pairs `recorder` writes onto an event of this type.
-///
-/// Empty for an undeclared event type and for one that stamps nothing, so every
-/// write path can call this unconditionally.
-pub fn stamps_for(event: Option<&EventConfig>, recorder: &Recorder) -> Vec<(String, String)> {
-    let Some(event) = event else {
-        return Vec::new();
-    };
-    let id = recorder.id();
-    stamped_fields(event)
-        .map(|name| (name.to_string(), id.clone()))
-        .collect()
-}
-
-// [reject-supplied]
-/// Refuse a caller that supplied a stamped field itself.
-///
-/// Overwriting it silently would be the worse failure: a config that forgot to
-/// stamp, and one whose stamp is being forged, would then read identically at
-/// the gate. The refusal makes the attempt visible at the moment it is made.
-pub fn reject_supplied_stamp<'a>(
-    event: Option<&EventConfig>,
-    event_type: &str,
-    supplied: impl Iterator<Item = &'a str>,
-) -> Result<(), String> {
-    let Some(event) = event else {
-        return Ok(());
-    };
-    let stamped: Vec<&str> = stamped_fields(event).collect();
-    if stamped.is_empty() {
-        return Ok(());
-    }
-    for key in supplied {
-        if stamped.contains(&key) {
-            return Err(format!(
-                "error: field '{}' of event '{}' is stamped — the engine records \
-                 who wrote the event, so it cannot be supplied by the caller",
-                key, event_type
-            ));
-        }
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::EventFieldConfig;
 
-    fn field(name: &str, stamped: bool) -> EventFieldConfig {
-        EventFieldConfig {
-            name: name.to_string(),
-            field_type: "string".to_string(),
-            pattern: None,
-            values: None,
-            optional: false,
-            stamped,
-        }
-    }
-
-    fn event(fields: Vec<EventFieldConfig>) -> EventConfig {
-        EventConfig {
-            description: "test".to_string(),
-            restricted: None,
-            producers: vec![],
-            attestation: None,
-            fields,
-        }
+    fn every_recorder() -> Vec<Recorder> {
+        vec![
+            Recorder::AgentCli,
+            Recorder::AgentHookEval,
+            Recorder::AuthedCli,
+            Recorder::Emit("defer_low".to_string()),
+            Recorder::Emit("defer_medium".to_string()),
+            Recorder::Transition("fix_commit".to_string()),
+            Recorder::Init,
+            Recorder::Import("legacy.jsonl".to_string()),
+            Recorder::TrustedCaller("hooks/courier.py".to_string()),
+            Recorder::UnverifiedPeer,
+        ]
     }
 
     #[test]
     fn identities_are_distinct() {
-        let ids = [
-            Recorder::AgentCli.id(),
-            Recorder::AgentHookEval.id(),
-            Recorder::AuthedCli.id(),
-            Recorder::Emit("defer_low".to_string()).id(),
-            Recorder::Emit("defer_medium".to_string()).id(),
-            Recorder::TrustedCaller("hooks/courier.py".to_string()).id(),
-            Recorder::UnverifiedPeer.id(),
-        ];
+        let ids: Vec<String> = every_recorder().iter().map(|r| r.id()).collect();
         let unique: std::collections::HashSet<&String> = ids.iter().collect();
-        assert_eq!(unique.len(), ids.len(), "stamp ids collide: {ids:?}");
+        assert_eq!(unique.len(), ids.len(), "recorder ids collide: {ids:?}");
+    }
+
+    #[test]
+    fn no_identity_is_empty() {
+        // An empty `recorded_by` means "written before this key existed", and
+        // hashes as an absent key. A live write path must never produce one.
+        for r in every_recorder() {
+            assert!(!r.id().is_empty(), "{r:?} must record something");
+        }
     }
 
     #[test]
@@ -189,39 +149,6 @@ mod tests {
         assert!(Recorder::AgentHookEval.is_agent_reachable());
         assert!(!Recorder::TrustedCaller("x.py".to_string()).is_agent_reachable());
         assert!(!Recorder::Emit("defer_low".to_string()).is_agent_reachable());
-    }
-
-    #[test]
-    fn only_stamped_fields_are_stamped() {
-        let ev = event(vec![
-            field("id", false),
-            field("recorded_by", true),
-            field("reason", false),
-        ]);
-        let stamps = stamps_for(Some(&ev), &Recorder::AgentCli);
-        assert_eq!(
-            stamps,
-            vec![("recorded_by".to_string(), "agent:cli".to_string())]
-        );
-    }
-
-    #[test]
-    fn an_undeclared_event_stamps_nothing() {
-        assert!(stamps_for(None, &Recorder::AgentCli).is_empty());
-    }
-
-    #[test]
-    fn a_supplied_stamp_is_refused() {
-        let ev = event(vec![field("id", false), field("recorded_by", true)]);
-        let err = reject_supplied_stamp(
-            Some(&ev),
-            "finding_deferred",
-            ["id", "recorded_by"].into_iter(),
-        )
-        .unwrap_err();
-        assert!(err.contains("recorded_by"), "got: {err}");
-        assert!(err.contains("stamped"), "got: {err}");
-
-        reject_supplied_stamp(Some(&ev), "finding_deferred", ["id"].into_iter()).unwrap();
+        assert!(!Recorder::Transition("fix_commit".to_string()).is_agent_reachable());
     }
 }

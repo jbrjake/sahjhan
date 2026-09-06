@@ -170,7 +170,11 @@ pub fn cmd_reseal(config_dir: &str, proof: &str, targeting: &LedgerTargeting) ->
     }
 
     // Append config_reseal event
-    if let Err(e) = ledger.append("config_reseal", new_seals) {
+    if let Err(e) = ledger.append(
+        "config_reseal",
+        new_seals,
+        &crate::provenance::Recorder::AuthedCli,
+    ) {
         eprintln!("error: cannot append reseal event: {}", e);
         return EXIT_INTEGRITY_ERROR;
     }

@@ -1,6 +1,7 @@
 // chain_integrity_tests.rs — Tests for JSONL ledger chain operations (Task 3)
 
 use sahjhan::ledger::chain::Ledger;
+use sahjhan::provenance::Recorder;
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
@@ -62,6 +63,7 @@ fn test_append_and_reload() {
         .append(
             "state_change",
             fields(&[("from", "start"), ("to", "running")]),
+            &Recorder::AgentCli,
         )
         .unwrap();
 
@@ -83,7 +85,9 @@ fn test_verify_detects_tampered_hash() {
     let path = dir.path().join("test.jsonl");
 
     let mut ledger = Ledger::init(&path, "test-proto", "1.0.0").unwrap();
-    ledger.append("event_a", fields(&[("key", "val")])).unwrap();
+    ledger
+        .append("event_a", fields(&[("key", "val")]), &Recorder::AgentCli)
+        .unwrap();
     drop(ledger);
 
     // Tamper with the hash of the second entry
@@ -123,8 +127,12 @@ fn test_verify_detects_sequence_gap() {
 
     // Create a ledger with 3 entries
     let mut ledger = Ledger::init(&path, "test-proto", "1.0.0").unwrap();
-    ledger.append("event_a", BTreeMap::new()).unwrap();
-    ledger.append("event_b", BTreeMap::new()).unwrap();
+    ledger
+        .append("event_a", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
+    ledger
+        .append("event_b", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
     drop(ledger);
 
     // Remove the middle line (seq=1) to create a gap: 0, 2
@@ -153,7 +161,9 @@ fn test_blank_lines_skipped() {
     let path = dir.path().join("test.jsonl");
 
     let mut ledger = Ledger::init(&path, "test-proto", "1.0.0").unwrap();
-    ledger.append("event_a", BTreeMap::new()).unwrap();
+    ledger
+        .append("event_a", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
     drop(ledger);
 
     // Insert blank lines into the file
@@ -176,8 +186,12 @@ fn test_verify_detects_deletion() {
     let path = dir.path().join("test.jsonl");
 
     let mut ledger = Ledger::init(&path, "test-proto", "1.0.0").unwrap();
-    ledger.append("event_a", BTreeMap::new()).unwrap();
-    ledger.append("event_b", BTreeMap::new()).unwrap();
+    ledger
+        .append("event_a", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
+    ledger
+        .append("event_b", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
     drop(ledger);
 
     // Remove the last entry
@@ -206,16 +220,16 @@ fn test_events_of_type() {
 
     let mut ledger = Ledger::init(&path, "test-proto", "1.0.0").unwrap();
     ledger
-        .append("state_change", fields(&[("to", "a")]))
+        .append("state_change", fields(&[("to", "a")]), &Recorder::AgentCli)
         .unwrap();
     ledger
-        .append("gate_eval", fields(&[("gate", "g1")]))
+        .append("gate_eval", fields(&[("gate", "g1")]), &Recorder::AgentCli)
         .unwrap();
     ledger
-        .append("state_change", fields(&[("to", "b")]))
+        .append("state_change", fields(&[("to", "b")]), &Recorder::AgentCli)
         .unwrap();
     ledger
-        .append("gate_eval", fields(&[("gate", "g2")]))
+        .append("gate_eval", fields(&[("gate", "g2")]), &Recorder::AgentCli)
         .unwrap();
 
     let state_changes = ledger.events_of_type("state_change");
@@ -235,9 +249,15 @@ fn test_tail() {
     let path = dir.path().join("test.jsonl");
 
     let mut ledger = Ledger::init(&path, "test-proto", "1.0.0").unwrap();
-    ledger.append("event_a", BTreeMap::new()).unwrap();
-    ledger.append("event_b", BTreeMap::new()).unwrap();
-    ledger.append("event_c", BTreeMap::new()).unwrap();
+    ledger
+        .append("event_a", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
+    ledger
+        .append("event_b", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
+    ledger
+        .append("event_c", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
 
     // Tail 2 should give last 2 entries
     let last2 = ledger.tail(2);
@@ -262,7 +282,9 @@ fn test_reload_fixes_external_append() {
     let path = dir.path().join("test.jsonl");
 
     let mut ledger = Ledger::init(&path, "test-proto", "1.0.0").unwrap();
-    ledger.append("event_a", BTreeMap::new()).unwrap();
+    ledger
+        .append("event_a", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
 
     // Simulate an external process appending a valid entry
     let last_hash = ledger.last_hash();
@@ -272,6 +294,7 @@ fn test_reload_fixes_external_append() {
         "external_event",
         &ledger.entries()[0].engine,
         &ledger.entries()[0].protocol,
+        "agent:cli",
         fields(&[("source", "external")]),
     );
 
@@ -310,6 +333,7 @@ fn test_external_append_handled_by_lock_and_reread() {
         "external_event",
         &ledger.entries()[0].engine,
         &ledger.entries()[0].protocol,
+        "agent:cli",
         BTreeMap::new(),
     );
 
@@ -323,7 +347,9 @@ fn test_external_append_handled_by_lock_and_reread() {
     // Ledger's in-memory state is stale (doesn't know about external entry).
     // append() re-reads the file under the lock, so it correctly discovers
     // the external entry and chains after it (issue #21 fix).
-    ledger.append("our_event", BTreeMap::new()).unwrap();
+    ledger
+        .append("our_event", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
 
     // In-memory state should now reflect all 3 entries
     assert_eq!(ledger.len(), 3, "genesis + external + our_event");
@@ -333,4 +359,115 @@ fn test_external_append_handled_by_lock_and_reread() {
 
     // Chain should verify cleanly
     ledger.verify().unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// recorded_by, and ledgers written before it existed (sahjhan #50)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_a_ledger_written_before_recorded_by_still_verifies() {
+    // The claim the design rests on: `recorded_by` is omitted from the
+    // canonical form when empty, so an entry written without it hashes exactly
+    // as it did when written. If this ever regresses, every ledger in
+    // existence fails verification on upgrade — which is a worse outcome than
+    // never having shipped provenance at all.
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("legacy.jsonl");
+
+    // Two entries in the pre-#50 on-disk shape: no `recorded_by` key at all.
+    // Hashes are the ones this format has always produced, recomputed here by
+    // the same function that verifies them — with an empty recorder.
+    let genesis = sahjhan::ledger::entry::LedgerEntry::new(
+        0,
+        "0".repeat(64),
+        "genesis",
+        "sahjhan/0.2.0",
+        "legacy/1.0.0",
+        "",
+        fields(&[("protocol_name", "legacy")]),
+    );
+    let second = sahjhan::ledger::entry::LedgerEntry::new(
+        1,
+        genesis.hash.clone(),
+        "finding",
+        "sahjhan/0.2.0",
+        "legacy/1.0.0",
+        "",
+        fields(&[("id", "BH-001")]),
+    );
+
+    let genesis_line = genesis.to_jsonl();
+    assert!(
+        !genesis_line.contains("recorded_by"),
+        "an entry with no recorder must not write the key: {}",
+        genesis_line
+    );
+
+    std::fs::write(&path, format!("{}\n{}\n", genesis_line, second.to_jsonl())).unwrap();
+
+    let ledger = Ledger::open(&path).expect("a pre-#50 ledger must still open");
+    ledger
+        .verify()
+        .expect("and its hash chain must still verify");
+    assert_eq!(ledger.entries()[1].recorded_by, "");
+}
+
+#[test]
+fn test_appending_to_a_legacy_ledger_records_the_new_entry() {
+    // Old entries keep their absent provenance; new ones get theirs. The chain
+    // spans both.
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("legacy.jsonl");
+    let genesis = sahjhan::ledger::entry::LedgerEntry::new(
+        0,
+        "0".repeat(64),
+        "genesis",
+        "sahjhan/0.2.0",
+        "legacy/1.0.0",
+        "",
+        BTreeMap::new(),
+    );
+    std::fs::write(&path, format!("{}\n", genesis.to_jsonl())).unwrap();
+
+    let mut ledger = Ledger::open(&path).unwrap();
+    ledger
+        .append("finding", fields(&[("id", "BH-002")]), &Recorder::AgentCli)
+        .unwrap();
+    ledger.verify().expect("mixed chain must verify");
+
+    let reopened = Ledger::open(&path).unwrap();
+    assert_eq!(reopened.entries()[0].recorded_by, "");
+    assert_eq!(reopened.entries()[1].recorded_by, "agent:cli");
+}
+
+#[test]
+fn test_recorded_by_is_covered_by_the_hash() {
+    // It has to be tamper-evident, or it is decoration: editing it in place
+    // must break the chain the same way editing a field does.
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("ledger.jsonl");
+    let mut ledger = Ledger::init(&path, "test-proto", "1.0.0").unwrap();
+    ledger
+        .append("finding", fields(&[("id", "BH-001")]), &Recorder::AgentCli)
+        .unwrap();
+
+    let tampered = std::fs::read_to_string(&path).unwrap().replace(
+        r#""recorded_by":"agent:cli""#,
+        r#""recorded_by":"hook:courier.py""#,
+    );
+    assert!(
+        tampered.contains("hook:courier.py"),
+        "the tamper must have applied"
+    );
+    std::fs::write(&path, tampered).unwrap();
+
+    let ledger = Ledger::open(&path);
+    match ledger {
+        Err(_) => {}
+        Ok(l) => {
+            l.verify()
+                .expect_err("a rewritten recorded_by must break the hash chain");
+        }
+    }
 }

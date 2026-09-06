@@ -2,6 +2,7 @@
 //
 // Tests for config integrity sealing, verification, and reseal.
 
+use sahjhan::provenance::Recorder;
 use std::collections::BTreeMap;
 use tempfile::tempdir;
 
@@ -174,7 +175,9 @@ fn test_find_effective_seal_prefers_reseal_over_genesis() {
     // Append a config_reseal event with new hashes
     let mut reseal_fields = BTreeMap::new();
     reseal_fields.insert("config_seal_protocol".to_string(), "new_hash".to_string());
-    ledger.append("config_reseal", reseal_fields).unwrap();
+    ledger
+        .append("config_reseal", reseal_fields, &Recorder::AgentCli)
+        .unwrap();
 
     let effective = ledger.find_effective_seal().unwrap();
     assert_eq!(effective.get("config_seal_protocol").unwrap(), "new_hash");
@@ -297,7 +300,9 @@ fn test_verify_config_seal_after_reseal() {
 
     // Reseal with new hashes
     let seals_v2 = sahjhan::config::compute_config_seals(config_dir.path());
-    ledger.append("config_reseal", seals_v2).unwrap();
+    ledger
+        .append("config_reseal", seals_v2, &Recorder::AgentCli)
+        .unwrap();
 
     // Now verify should pass
     assert!(ledger.verify_config_seal(config_dir.path()).is_ok());

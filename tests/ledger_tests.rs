@@ -17,6 +17,7 @@ fn test_jsonl_round_trip() {
         "finding",
         "sahjhan/0.2.0",
         "holtz/1.0.0",
+        "agent:cli",
         fields.clone(),
     );
 
@@ -41,6 +42,7 @@ fn test_hash_excludes_hash_field() {
         "test",
         "sahjhan/0.2.0",
         "test/1.0.0",
+        "agent:cli",
         fields,
     );
 
@@ -52,6 +54,7 @@ fn test_hash_excludes_hash_field() {
         &entry.event_type,
         &entry.engine,
         &entry.protocol,
+        "agent:cli",
         &entry.fields,
     );
     assert_eq!(entry.hash, recomputed);
@@ -69,6 +72,7 @@ fn test_canonical_json_key_ordering() {
         "test",
         "sahjhan/0.2.0",
         "test/1.0.0",
+        "agent:cli",
         fields,
     );
 
@@ -89,6 +93,7 @@ fn test_hash_chain_linkage() {
         "init",
         "sahjhan/0.2.0",
         "test/1.0.0",
+        "agent:cli",
         fields.clone(),
     );
     let entry1 = LedgerEntry::new(
@@ -97,6 +102,7 @@ fn test_hash_chain_linkage() {
         "step",
         "sahjhan/0.2.0",
         "test/1.0.0",
+        "agent:cli",
         fields,
     );
 
@@ -115,6 +121,7 @@ fn test_top_level_key_ordering() {
         "test",
         "eng",
         "proto",
+        "agent:cli",
         BTreeMap::new(),
     );
     let line = entry.to_jsonl();
@@ -159,6 +166,7 @@ fn test_from_jsonl_rejects_unsupported_schema() {
         "test",
         "eng",
         "proto",
+        "agent:cli",
         BTreeMap::new(),
     );
     // Manually craft JSON with schema > SCHEMA_VERSION
@@ -183,6 +191,7 @@ fn test_from_jsonl_rejects_tampered_hash() {
         "test",
         "eng",
         "proto",
+        "agent:cli",
         BTreeMap::new(),
     );
     let line = entry.to_jsonl();
@@ -223,6 +232,7 @@ fn test_empty_fields_map() {
         "test",
         "eng",
         "proto",
+        "agent:cli",
         BTreeMap::new(),
     );
 
@@ -249,6 +259,7 @@ fn test_fields_with_quotes_and_backslashes() {
         "test",
         "eng",
         "proto",
+        "agent:cli",
         fields.clone(),
     );
 
@@ -271,6 +282,7 @@ fn test_fields_with_control_characters() {
         "test",
         "eng",
         "proto",
+        "agent:cli",
         fields.clone(),
     );
 
@@ -297,6 +309,7 @@ fn test_empty_string_values() {
         "test",
         "eng",
         "proto",
+        "agent:cli",
         fields.clone(),
     );
 
@@ -314,6 +327,7 @@ fn test_seq_zero_no_leading_zeros() {
         "test",
         "eng",
         "proto",
+        "agent:cli",
         BTreeMap::new(),
     );
 
@@ -337,6 +351,7 @@ fn test_forward_slashes_not_escaped() {
         "test",
         "sahjhan/0.2.0",
         "test/1.0.0",
+        "agent:cli",
         fields,
     );
 
@@ -365,10 +380,20 @@ fn test_new_with_ts_deterministic() {
         "test",
         "eng",
         "proto",
+        "agent:cli",
         fields.clone(),
         ts.clone(),
     );
-    let b = LedgerEntry::new_with_ts(0, "prev".to_string(), "test", "eng", "proto", fields, ts);
+    let b = LedgerEntry::new_with_ts(
+        0,
+        "prev".to_string(),
+        "test",
+        "eng",
+        "proto",
+        "agent:cli",
+        fields,
+        ts,
+    );
 
     assert_eq!(a.hash, b.hash, "same inputs must produce same hash");
     assert_eq!(a.to_jsonl(), b.to_jsonl());
@@ -386,6 +411,7 @@ fn test_schema_version_in_output() {
         "test",
         "eng",
         "proto",
+        "agent:cli",
         BTreeMap::new(),
     );
     let line = entry.to_jsonl();
@@ -409,6 +435,7 @@ fn test_type_field_rename() {
         "finding",
         "eng",
         "proto",
+        "agent:cli",
         BTreeMap::new(),
     );
     let line = entry.to_jsonl();

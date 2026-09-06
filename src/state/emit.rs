@@ -157,7 +157,9 @@ mod tests {
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
-        ledger.append("finding", map).unwrap();
+        ledger
+            .append("finding", map, &crate::provenance::Recorder::AgentCli)
+            .unwrap();
         // Keep the tempdir alive for the ledger's lifetime by leaking it.
         std::mem::forget(dir);
         ledger

@@ -7,6 +7,7 @@
 use sahjhan::config::{GateConfig, ProtocolConfig, StateParam, TransitionConfig};
 use sahjhan::gates::evaluator::{evaluate_gate, evaluate_gates, GateContext};
 use sahjhan::ledger::chain::Ledger;
+use sahjhan::provenance::Recorder;
 use sahjhan::state::machine::StateMachine;
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
@@ -479,8 +480,12 @@ fn test_ledger_has_event_pass() {
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     let ledger_path = dir.path().join("ledger.jsonl");
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
-    ledger.append("my_event", BTreeMap::new()).unwrap();
-    ledger.append("my_event", BTreeMap::new()).unwrap();
+    ledger
+        .append("my_event", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
+    ledger
+        .append("my_event", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
 
     let gate = make_gate(
         "ledger_has_event",
@@ -507,7 +512,9 @@ fn test_ledger_has_event_fail_count() {
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     let ledger_path = dir.path().join("ledger.jsonl");
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
-    ledger.append("my_event", BTreeMap::new()).unwrap();
+    ledger
+        .append("my_event", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
 
     let gate = make_gate(
         "ledger_has_event",
@@ -537,7 +544,9 @@ fn test_ledger_has_event_with_filter_pass() {
 
     let mut payload = BTreeMap::new();
     payload.insert("status".to_string(), "ok".to_string());
-    ledger.append("my_event", payload).unwrap();
+    ledger
+        .append("my_event", payload, &Recorder::AgentCli)
+        .unwrap();
 
     let mut filter = toml::value::Table::new();
     filter.insert("status".to_string(), toml::Value::String("ok".to_string()));
@@ -571,7 +580,9 @@ fn test_ledger_has_event_with_filter_fail() {
 
     let mut payload = BTreeMap::new();
     payload.insert("status".to_string(), "error".to_string());
-    ledger.append("my_event", payload).unwrap();
+    ledger
+        .append("my_event", payload, &Recorder::AgentCli)
+        .unwrap();
 
     let mut filter = toml::value::Table::new();
     filter.insert("status".to_string(), toml::Value::String("ok".to_string()));
@@ -606,8 +617,12 @@ fn test_ledger_has_event_max_count_pass() {
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     let ledger_path = dir.path().join("ledger.jsonl");
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
-    ledger.append("fix_commit", BTreeMap::new()).unwrap();
-    ledger.append("fix_commit", BTreeMap::new()).unwrap();
+    ledger
+        .append("fix_commit", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
+    ledger
+        .append("fix_commit", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
 
     let gate = make_gate(
         "ledger_has_event",
@@ -637,7 +652,9 @@ fn test_ledger_has_event_max_count_exceeded() {
     let ledger_path = dir.path().join("ledger.jsonl");
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
     for _ in 0..5 {
-        ledger.append("fix_commit", BTreeMap::new()).unwrap();
+        ledger
+            .append("fix_commit", BTreeMap::new(), &Recorder::AgentCli)
+            .unwrap();
     }
 
     let gate = make_gate(
@@ -667,9 +684,15 @@ fn test_ledger_has_event_max_count_with_min_count() {
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     let ledger_path = dir.path().join("ledger.jsonl");
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
-    ledger.append("fix_commit", BTreeMap::new()).unwrap();
-    ledger.append("fix_commit", BTreeMap::new()).unwrap();
-    ledger.append("fix_commit", BTreeMap::new()).unwrap();
+    ledger
+        .append("fix_commit", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
+    ledger
+        .append("fix_commit", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
+    ledger
+        .append("fix_commit", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
 
     // 3 events, min_count=2, max_count=5 → passes (2 <= 3 < 5)
     let gate = make_gate(
@@ -703,12 +726,16 @@ fn test_ledger_has_event_max_count_with_filter() {
     for _ in 0..3 {
         let mut fields = BTreeMap::new();
         fields.insert("perspective".to_string(), "security".to_string());
-        ledger.append("fix_commit", fields).unwrap();
+        ledger
+            .append("fix_commit", fields, &Recorder::AgentCli)
+            .unwrap();
     }
     for _ in 0..2 {
         let mut fields = BTreeMap::new();
         fields.insert("perspective".to_string(), "performance".to_string());
-        ledger.append("fix_commit", fields).unwrap();
+        ledger
+            .append("fix_commit", fields, &Recorder::AgentCli)
+            .unwrap();
     }
 
     let mut filter = toml::value::Table::new();
@@ -765,8 +792,12 @@ fn test_ledger_has_event_since_pass() {
     trans_fields.insert("from".to_string(), "idle".to_string());
     trans_fields.insert("to".to_string(), "working".to_string());
     trans_fields.insert("command".to_string(), "begin".to_string());
-    ledger.append("state_transition", trans_fields).unwrap();
-    ledger.append("check_done", BTreeMap::new()).unwrap();
+    ledger
+        .append("state_transition", trans_fields, &Recorder::AgentCli)
+        .unwrap();
+    ledger
+        .append("check_done", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
 
     let gate = make_gate(
         "ledger_has_event_since",
@@ -795,13 +826,17 @@ fn test_ledger_has_event_since_fail() {
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     // Record the event BEFORE the transition — should not count.
-    ledger.append("check_done", BTreeMap::new()).unwrap();
+    ledger
+        .append("check_done", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
 
     let mut trans_fields = BTreeMap::new();
     trans_fields.insert("from".to_string(), "idle".to_string());
     trans_fields.insert("to".to_string(), "working".to_string());
     trans_fields.insert("command".to_string(), "begin".to_string());
-    ledger.append("state_transition", trans_fields).unwrap();
+    ledger
+        .append("state_transition", trans_fields, &Recorder::AgentCli)
+        .unwrap();
 
     let gate = make_gate(
         "ledger_has_event_since",
@@ -847,11 +882,15 @@ fn test_ledger_has_event_since_last_event_of_type_prefix() {
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     // A `resolved` BEFORE the baseline must not count; one AFTER must.
-    ledger.append("resolved", BTreeMap::new()).unwrap();
     ledger
-        .append("set_member_complete", BTreeMap::new())
+        .append("resolved", BTreeMap::new(), &Recorder::AgentCli)
         .unwrap();
-    ledger.append("resolved", BTreeMap::new()).unwrap();
+    ledger
+        .append("set_member_complete", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
+    ledger
+        .append("resolved", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
 
     let gate = make_gate(
         "ledger_has_event_since",
@@ -876,10 +915,14 @@ fn test_ledger_has_event_since_prefix_baseline_scopes_out_earlier_events() {
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     // Two `resolved` events, THEN the baseline — none after it.
-    ledger.append("resolved", BTreeMap::new()).unwrap();
-    ledger.append("resolved", BTreeMap::new()).unwrap();
     ledger
-        .append("set_member_complete", BTreeMap::new())
+        .append("resolved", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
+    ledger
+        .append("resolved", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
+    ledger
+        .append("set_member_complete", BTreeMap::new(), &Recorder::AgentCli)
         .unwrap();
 
     let gate = make_gate(
@@ -906,10 +949,14 @@ fn test_ledger_has_event_since_honors_min_count() {
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     ledger
-        .append("set_member_complete", BTreeMap::new())
+        .append("set_member_complete", BTreeMap::new(), &Recorder::AgentCli)
         .unwrap();
-    ledger.append("resolved", BTreeMap::new()).unwrap();
-    ledger.append("resolved", BTreeMap::new()).unwrap();
+    ledger
+        .append("resolved", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
+    ledger
+        .append("resolved", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
 
     // min_count = 3 with only 2 resolved after baseline → fail.
     let gate_fail = make_gate(
@@ -952,11 +999,13 @@ fn test_ledger_has_event_since_honors_field_filter() {
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     ledger
-        .append("set_member_complete", BTreeMap::new())
+        .append("set_member_complete", BTreeMap::new(), &Recorder::AgentCli)
         .unwrap();
     let mut other = BTreeMap::new();
     other.insert("perspective".to_string(), "security".to_string());
-    ledger.append("lens_sweep_started", other).unwrap();
+    ledger
+        .append("lens_sweep_started", other, &Recorder::AgentCli)
+        .unwrap();
 
     let gate = make_gate(
         "ledger_has_event_since",
@@ -989,7 +1038,9 @@ fn test_ledger_has_event_since_honors_field_filter() {
     // Now add the matching-perspective sweep → passes.
     let mut mine = BTreeMap::new();
     mine.insert("perspective".to_string(), "integration".to_string());
-    ledger.append("lens_sweep_started", mine).unwrap();
+    ledger
+        .append("lens_sweep_started", mine, &Recorder::AgentCli)
+        .unwrap();
     let ctx2 = _since_ctx(&ledger, &config, dir.path());
     assert!(evaluate_gate(&gate, &ctx2).passed);
 }
@@ -1002,7 +1053,9 @@ fn test_ledger_has_event_since_missing_baseline_counts_from_start() {
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     // No baseline event of the named type exists yet → count from run start.
-    ledger.append("resolved", BTreeMap::new()).unwrap();
+    ledger
+        .append("resolved", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
 
     let gate = make_gate(
         "ledger_has_event_since",
@@ -1029,12 +1082,16 @@ fn test_ledger_has_event_since_missing_baseline_counts_from_start() {
 /// finds one. A gate that passes here has widened its window.
 fn _widening_ledger(path: &Path) -> Ledger {
     let mut ledger = Ledger::init(path, "test", "1.0.0").unwrap();
-    ledger.append("resolved", BTreeMap::new()).unwrap();
+    ledger
+        .append("resolved", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
     let mut trans_fields = BTreeMap::new();
     trans_fields.insert("from".to_string(), "idle".to_string());
     trans_fields.insert("to".to_string(), "working".to_string());
     trans_fields.insert("command".to_string(), "begin".to_string());
-    ledger.append("state_transition", trans_fields).unwrap();
+    ledger
+        .append("state_transition", trans_fields, &Recorder::AgentCli)
+        .unwrap();
     ledger
 }
 
@@ -1123,8 +1180,12 @@ fn test_ledger_has_event_since_non_string_anchor_fails_closed() {
     trans_fields.insert("from".to_string(), "idle".to_string());
     trans_fields.insert("to".to_string(), "working".to_string());
     trans_fields.insert("command".to_string(), "begin".to_string());
-    ledger.append("state_transition", trans_fields).unwrap();
-    ledger.append("resolved", BTreeMap::new()).unwrap();
+    ledger
+        .append("state_transition", trans_fields, &Recorder::AgentCli)
+        .unwrap();
+    ledger
+        .append("resolved", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
     let ctx = _since_ctx(&ledger, &config, dir.path());
 
     // Baseline: the default anchor passes on this ledger.
@@ -1231,7 +1292,9 @@ fn test_set_covered_pass() {
         let mut fields = BTreeMap::new();
         fields.insert("set".to_string(), "check".to_string());
         fields.insert("member".to_string(), member.to_string());
-        ledger.append("set_member_complete", fields).unwrap();
+        ledger
+            .append("set_member_complete", fields, &Recorder::AgentCli)
+            .unwrap();
     }
 
     let gate = make_gate(
@@ -1261,7 +1324,9 @@ fn test_set_covered_fail_partial() {
     let mut fields = BTreeMap::new();
     fields.insert("set".to_string(), "check".to_string());
     fields.insert("member".to_string(), "tests".to_string());
-    ledger.append("set_member_complete", fields).unwrap();
+    ledger
+        .append("set_member_complete", fields, &Recorder::AgentCli)
+        .unwrap();
 
     let gate = make_gate(
         "set_covered",
@@ -1319,7 +1384,9 @@ fn test_min_elapsed_fail_just_happened() {
     let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
     let ledger_path = dir.path().join("ledger.jsonl");
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
-    ledger.append("my_event", BTreeMap::new()).unwrap();
+    ledger
+        .append("my_event", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
 
     let gate = make_gate(
         "min_elapsed",
@@ -1371,7 +1438,7 @@ fn test_no_violations_with_violation() {
     let ledger_path = dir.path().join("ledger.jsonl");
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
     ledger
-        .append("protocol_violation", BTreeMap::new())
+        .append("protocol_violation", BTreeMap::new(), &Recorder::AgentCli)
         .unwrap();
 
     let gate = make_gate("no_violations", vec![]);
@@ -1396,10 +1463,10 @@ fn test_no_violations_with_resolved_violation() {
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     ledger
-        .append("protocol_violation", BTreeMap::new())
+        .append("protocol_violation", BTreeMap::new(), &Recorder::AgentCli)
         .unwrap();
     ledger
-        .append("violation_resolved", BTreeMap::new())
+        .append("violation_resolved", BTreeMap::new(), &Recorder::AgentCli)
         .unwrap();
 
     let gate = make_gate("no_violations", vec![]);
@@ -1429,13 +1496,13 @@ fn test_no_violations_partial_resolution() {
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     ledger
-        .append("protocol_violation", BTreeMap::new())
+        .append("protocol_violation", BTreeMap::new(), &Recorder::AgentCli)
         .unwrap();
     ledger
-        .append("protocol_violation", BTreeMap::new())
+        .append("protocol_violation", BTreeMap::new(), &Recorder::AgentCli)
         .unwrap();
     ledger
-        .append("violation_resolved", BTreeMap::new())
+        .append("violation_resolved", BTreeMap::new(), &Recorder::AgentCli)
         .unwrap();
 
     let gate = make_gate("no_violations", vec![]);
@@ -1736,7 +1803,9 @@ fn test_snapshot_compare_with_ledger_reference() {
     let mut snapshot_fields = BTreeMap::new();
     snapshot_fields.insert("key".to_string(), "baseline".to_string());
     snapshot_fields.insert("value".to_string(), "5".to_string());
-    ledger.append("snapshot", snapshot_fields).unwrap();
+    ledger
+        .append("snapshot", snapshot_fields, &Recorder::AgentCli)
+        .unwrap();
 
     // Command outputs count=10, compare > snapshot:baseline (which resolves to 5).
     let gate = make_gate(
@@ -1827,12 +1896,16 @@ fn test_snapshot_compare_uses_most_recent_snapshot() {
     let mut snap1 = BTreeMap::new();
     snap1.insert("key".to_string(), "baseline".to_string());
     snap1.insert("value".to_string(), "100".to_string());
-    ledger.append("snapshot", snap1).unwrap();
+    ledger
+        .append("snapshot", snap1, &Recorder::AgentCli)
+        .unwrap();
 
     let mut snap2 = BTreeMap::new();
     snap2.insert("key".to_string(), "baseline".to_string());
     snap2.insert("value".to_string(), "5".to_string());
-    ledger.append("snapshot", snap2).unwrap();
+    ledger
+        .append("snapshot", snap2, &Recorder::AgentCli)
+        .unwrap();
 
     // count=10 > snapshot:baseline. If it uses the first snapshot (100), it would fail.
     // If it uses the most recent (5), it should pass.
@@ -1894,7 +1967,6 @@ fn test_field_validation_rejects_invalid_pattern() {
                 pattern: Some(r"^[a-zA-Z0-9_-]+$".to_string()),
                 values: None,
                 optional: false,
-                stamped: false,
             }],
         },
     );
@@ -1952,7 +2024,6 @@ fn test_field_validation_accepts_valid_pattern() {
                 pattern: Some(r"^[a-zA-Z0-9_-]+$".to_string()),
                 values: None,
                 optional: false,
-                stamped: false,
             }],
         },
     );
@@ -2061,7 +2132,9 @@ fn test_query_gate_pass() {
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     for _ in 0..3 {
-        ledger.append("some_event", BTreeMap::new()).unwrap();
+        ledger
+            .append("some_event", BTreeMap::new(), &Recorder::AgentCli)
+            .unwrap();
     }
 
     let gate = make_gate(
@@ -2100,7 +2173,9 @@ fn test_query_gate_fail() {
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     for _ in 0..5 {
-        ledger.append("some_event", BTreeMap::new()).unwrap();
+        ledger
+            .append("some_event", BTreeMap::new(), &Recorder::AgentCli)
+            .unwrap();
     }
 
     let gate = make_gate(
@@ -2291,7 +2366,9 @@ fn test_state_param_source_current() {
     let mut fields = BTreeMap::new();
     fields.insert("set".to_string(), "check".to_string());
     fields.insert("member".to_string(), "tests".to_string());
-    ledger.append("set_member_complete", fields).unwrap();
+    ledger
+        .append("set_member_complete", fields, &Recorder::AgentCli)
+        .unwrap();
 
     let mut machine = StateMachine::new(&config, ledger);
     let result = machine.transition("begin", &[]);
@@ -2342,12 +2419,16 @@ fn test_state_param_source_last_completed() {
     let mut fields = BTreeMap::new();
     fields.insert("set".to_string(), "check".to_string());
     fields.insert("member".to_string(), "tests".to_string());
-    ledger.append("set_member_complete", fields).unwrap();
+    ledger
+        .append("set_member_complete", fields, &Recorder::AgentCli)
+        .unwrap();
 
     let mut fields = BTreeMap::new();
     fields.insert("set".to_string(), "check".to_string());
     fields.insert("member".to_string(), "lint".to_string());
-    ledger.append("set_member_complete", fields).unwrap();
+    ledger
+        .append("set_member_complete", fields, &Recorder::AgentCli)
+        .unwrap();
 
     let mut machine = StateMachine::new(&config, ledger);
     let result = machine.transition("begin", &[]);
@@ -2415,8 +2496,12 @@ fn test_query_gate_interpolates_template_vars() {
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
     // Append events of a specific type
-    ledger.append("tagged_event", BTreeMap::new()).unwrap();
-    ledger.append("tagged_event", BTreeMap::new()).unwrap();
+    ledger
+        .append("tagged_event", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
+    ledger
+        .append("tagged_event", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
 
     // Query using {{target_type}} template var — should be interpolated
     let gate = make_gate(
@@ -2835,7 +2920,9 @@ fn test_ledger_lacks_event_fail_when_event_exists() {
 
     let mut payload = BTreeMap::new();
     payload.insert("detail".to_string(), "something bad".to_string());
-    ledger.append("finding", payload).unwrap();
+    ledger
+        .append("finding", payload, &Recorder::AgentCli)
+        .unwrap();
 
     let gate = make_gate(
         "ledger_lacks_event",
@@ -2871,7 +2958,9 @@ fn test_ledger_lacks_event_with_filter() {
     let mut recon_payload = BTreeMap::new();
     recon_payload.insert("detail".to_string(), "recon finding".to_string());
     recon_payload.insert("phase".to_string(), "recon".to_string());
-    ledger.append("finding", recon_payload).unwrap();
+    ledger
+        .append("finding", recon_payload, &Recorder::AgentCli)
+        .unwrap();
 
     let mut filter = toml::value::Table::new();
     filter.insert(
@@ -2906,7 +2995,9 @@ fn test_ledger_lacks_event_with_filter() {
     let mut audit_payload = BTreeMap::new();
     audit_payload.insert("detail".to_string(), "audit finding".to_string());
     audit_payload.insert("phase".to_string(), "audit".to_string());
-    ledger.append("finding", audit_payload).unwrap();
+    ledger
+        .append("finding", audit_payload, &Recorder::AgentCli)
+        .unwrap();
 
     let gate2 = make_gate(
         "ledger_lacks_event",
@@ -3693,9 +3784,15 @@ fn test_ledger_has_event_since_custom_event() {
     trans_fields.insert("from".to_string(), "idle".to_string());
     trans_fields.insert("to".to_string(), "working".to_string());
     trans_fields.insert("command".to_string(), "begin".to_string());
-    ledger.append("state_transition", trans_fields).unwrap();
-    ledger.append("check_done", BTreeMap::new()).unwrap();
-    ledger.append("failing_test", BTreeMap::new()).unwrap();
+    ledger
+        .append("state_transition", trans_fields, &Recorder::AgentCli)
+        .unwrap();
+    ledger
+        .append("check_done", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
+    ledger
+        .append("failing_test", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
 
     let gate = make_gate(
         "ledger_has_event_since",
@@ -3735,9 +3832,15 @@ fn test_ledger_has_event_since_custom_event_fail() {
     trans_fields.insert("from".to_string(), "idle".to_string());
     trans_fields.insert("to".to_string(), "working".to_string());
     trans_fields.insert("command".to_string(), "begin".to_string());
-    ledger.append("state_transition", trans_fields).unwrap();
-    ledger.append("failing_test", BTreeMap::new()).unwrap();
-    ledger.append("check_done", BTreeMap::new()).unwrap();
+    ledger
+        .append("state_transition", trans_fields, &Recorder::AgentCli)
+        .unwrap();
+    ledger
+        .append("failing_test", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
+    ledger
+        .append("check_done", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
 
     let gate = make_gate(
         "ledger_has_event_since",
@@ -3778,12 +3881,16 @@ fn test_ledger_has_event_since_custom_event_fallback() {
     let ledger_path = dir.path().join("ledger.jsonl");
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
 
-    ledger.append("failing_test", BTreeMap::new()).unwrap();
+    ledger
+        .append("failing_test", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
     let mut trans_fields = BTreeMap::new();
     trans_fields.insert("from".to_string(), "idle".to_string());
     trans_fields.insert("to".to_string(), "working".to_string());
     trans_fields.insert("command".to_string(), "begin".to_string());
-    ledger.append("state_transition", trans_fields).unwrap();
+    ledger
+        .append("state_transition", trans_fields, &Recorder::AgentCli)
+        .unwrap();
 
     let gate = make_gate(
         "ledger_has_event_since",
@@ -3839,7 +3946,9 @@ fn test_query_gate_named_reference_resolves() {
     let ledger_path = dir.path().join("ledger.jsonl");
     let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
     for _ in 0..3 {
-        ledger.append("some_event", BTreeMap::new()).unwrap();
+        ledger
+            .append("some_event", BTreeMap::new(), &Recorder::AgentCli)
+            .unwrap();
     }
 
     let gate = make_gate(
@@ -4082,13 +4191,25 @@ fn test_since_filter_scopes_the_window_to_the_actor() {
     let config = _tdd_config();
     let mut ledger = Ledger::init(&dir.path().join("ledger.jsonl"), "test", "1.0.0").unwrap();
     ledger
-        .append("tdd_evidence", _entry(&[("agent_id", "agent-a")]))
+        .append(
+            "tdd_evidence",
+            _entry(&[("agent_id", "agent-a")]),
+            &Recorder::AgentCli,
+        )
         .unwrap();
     ledger
-        .append("tdd_evidence", _entry(&[("agent_id", "agent-b")]))
+        .append(
+            "tdd_evidence",
+            _entry(&[("agent_id", "agent-b")]),
+            &Recorder::AgentCli,
+        )
         .unwrap();
     ledger
-        .append("fix_commit", _entry(&[("agent_id", "agent-a")]))
+        .append(
+            "fix_commit",
+            _entry(&[("agent_id", "agent-a")]),
+            &Recorder::AgentCli,
+        )
         .unwrap();
 
     let params = vec![
@@ -4146,16 +4267,22 @@ fn test_since_filter_correlates_on_a_field_of_the_counted_event() {
         .append(
             "tdd_evidence",
             _entry(&[("agent_id", "agent-a"), ("finding_id", "f1")]),
+            &Recorder::AgentCli,
         )
         .unwrap();
     ledger
         .append(
             "tdd_evidence",
             _entry(&[("agent_id", "agent-a"), ("finding_id", "f2")]),
+            &Recorder::AgentCli,
         )
         .unwrap();
     ledger
-        .append("finding_resolved", _entry(&[("id", "f1")]))
+        .append(
+            "finding_resolved",
+            _entry(&[("id", "f1")]),
+            &Recorder::AgentCli,
+        )
         .unwrap();
 
     let gate = make_gate(
@@ -4179,7 +4306,11 @@ fn test_since_filter_correlates_on_a_field_of_the_counted_event() {
 
     // Resolve f2 as well and every window closes.
     ledger
-        .append("finding_resolved", _entry(&[("id", "f2")]))
+        .append(
+            "finding_resolved",
+            _entry(&[("id", "f2")]),
+            &Recorder::AgentCli,
+        )
         .unwrap();
     assert!(
         !evaluate_gate(&gate, &_actor_ctx(&ledger, &config, dir.path(), "agent-a")).passed,
@@ -4197,7 +4328,11 @@ fn test_since_filter_does_not_count_a_candidate_it_cannot_scope() {
     let config = _tdd_config();
     let mut ledger = Ledger::init(&dir.path().join("ledger.jsonl"), "test", "1.0.0").unwrap();
     ledger
-        .append("tdd_evidence", _entry(&[("agent_id", "agent-a")]))
+        .append(
+            "tdd_evidence",
+            _entry(&[("agent_id", "agent-a")]),
+            &Recorder::AgentCli,
+        )
         .unwrap();
 
     let gate = make_gate(
@@ -4234,10 +4369,18 @@ fn test_since_filter_matching_no_baseline_measures_from_the_run_start() {
     let config = _tdd_config();
     let mut ledger = Ledger::init(&dir.path().join("ledger.jsonl"), "test", "1.0.0").unwrap();
     ledger
-        .append("fix_commit", _entry(&[("agent_id", "agent-a")]))
+        .append(
+            "fix_commit",
+            _entry(&[("agent_id", "agent-a")]),
+            &Recorder::AgentCli,
+        )
         .unwrap();
     ledger
-        .append("tdd_evidence", _entry(&[("agent_id", "agent-b")]))
+        .append(
+            "tdd_evidence",
+            _entry(&[("agent_id", "agent-b")]),
+            &Recorder::AgentCli,
+        )
         .unwrap();
 
     let gate = make_gate(

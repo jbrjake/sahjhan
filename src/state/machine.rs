@@ -286,7 +286,7 @@ impl StateMachine {
                 // that derives a value from a tree has to be able to say
                 // *which* tree, or a caller-anchored gate and its own emit
                 // disagree about what the transition is a record of (#48).
-                let mut fields = crate::state::emit::resolve_emit(
+                let fields = crate::state::emit::resolve_emit(
                     emit,
                     &state_params,
                     &self.ledger,
@@ -297,18 +297,6 @@ impl StateMachine {
                     event: emit.event.clone(),
                     reason,
                 })?;
-                // Stamp which transition wrote it (#50). Applied here rather
-                // than inside resolve_emit because the identity is the
-                // transition's command, and resolve_emit deliberately knows
-                // only about the emit. Config validation has already refused
-                // an emit whose own `fields` name a stamped field, so this
-                // never overwrites something the author wrote.
-                for (field, value) in crate::provenance::stamps_for(
-                    self.config.events.get(&emit.event),
-                    &crate::provenance::Recorder::Emit(command.to_string()),
-                ) {
-                    fields.insert(field, value);
-                }
                 pending_emits.push((emit.event.clone(), fields));
             }
 
@@ -319,7 +307,11 @@ impl StateMachine {
             fields.insert("command".to_string(), command.to_string());
 
             self.ledger
-                .append("state_transition", fields)
+                .append(
+                    "state_transition",
+                    fields,
+                    &crate::provenance::Recorder::Transition(command.to_string()),
+                )
                 .map_err(StateError::Ledger)?;
 
             self.current_state = candidate.to.clone();
@@ -343,7 +335,11 @@ impl StateMachine {
                 att_fields.insert("working_dir".to_string(), att.working_dir.clone());
                 att_fields.insert("transition_command".to_string(), command.to_string());
                 self.ledger
-                    .append("gate_attestation", att_fields)
+                    .append(
+                        "gate_attestation",
+                        att_fields,
+                        &crate::provenance::Recorder::Transition(command.to_string()),
+                    )
                     .map_err(StateError::Ledger)?;
             }
 
@@ -352,7 +348,11 @@ impl StateMachine {
             let mut emitted_events: Vec<String> = Vec::with_capacity(pending_emits.len());
             for (event_type, event_fields) in pending_emits {
                 self.ledger
-                    .append(&event_type, event_fields)
+                    .append(
+                        &event_type,
+                        event_fields,
+                        &crate::provenance::Recorder::Emit(command.to_string()),
+                    )
                     .map_err(StateError::Ledger)?;
                 emitted_events.push(event_type);
             }
@@ -393,10 +393,11 @@ impl StateMachine {
         &mut self,
         event_type: &str,
         fields: HashMap<String, String>,
+        recorder: &crate::provenance::Recorder,
     ) -> Result<(), StateError> {
         let btree_fields: BTreeMap<String, String> = fields.into_iter().collect();
         self.ledger
-            .append(event_type, btree_fields)
+            .append(event_type, btree_fields, recorder)
             .map_err(StateError::Ledger)
     }
 

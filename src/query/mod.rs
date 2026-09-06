@@ -132,7 +132,11 @@ impl QueryEngine {
         execute_sql(&ctx, sql).await
     }
 
-    /// Build the Arrow schema: 8 envelope columns + one column per declared field.
+    /// Build the Arrow schema: 9 envelope columns + one column per declared field.
+    ///
+    /// `recorded_by` is an envelope column, not a declared one, because it is
+    /// the engine's record of the append rather than data a writer supplied
+    /// (#50) — the same reason `ts` and `hash` sit here.
     fn build_schema(&self, with_source: bool) -> Schema {
         let mut fields = vec![
             Field::new("schema", DataType::Int32, false),
@@ -143,6 +147,7 @@ impl QueryEngine {
             Field::new("type", DataType::Utf8, false),
             Field::new("engine", DataType::Utf8, false),
             Field::new("protocol", DataType::Utf8, false),
+            Field::new(crate::provenance::RECORDED_BY, DataType::Utf8, false),
         ];
 
         // One nullable column per declared field
@@ -179,6 +184,7 @@ impl QueryEngine {
         let type_col: Vec<&str> = entries.iter().map(|e| e.event_type.as_str()).collect();
         let engine_col: Vec<&str> = entries.iter().map(|e| e.engine.as_str()).collect();
         let protocol_col: Vec<&str> = entries.iter().map(|e| e.protocol.as_str()).collect();
+        let recorded_by_col: Vec<&str> = entries.iter().map(|e| e.recorded_by.as_str()).collect();
 
         let arrow_schema = Arc::new(self.build_schema(source.is_some()));
 
@@ -191,6 +197,7 @@ impl QueryEngine {
             Arc::new(StringArray::from(type_col)),
             Arc::new(StringArray::from(engine_col)),
             Arc::new(StringArray::from(protocol_col)),
+            Arc::new(StringArray::from(recorded_by_col)),
         ];
 
         // Field columns — one per declared field name

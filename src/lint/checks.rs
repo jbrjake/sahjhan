@@ -19,7 +19,7 @@ use crate::config::GateConfig;
 
 use super::index::{
     gate_event_refs, is_engine_event, producible_stamps, provenance_filters, sql_event_mentions,
-    stamped_columns, EventRef,
+    EventRef,
 };
 use super::similarity;
 use super::{Analysis, LintFinding};
@@ -852,50 +852,40 @@ fn collect_attested_refs(
 ///   that can run the binary, so as *evidence* it constrains nobody. Excluding
 ///   it (`!= 'agent:cli'`) is the correct use and is not reported.
 ///
-/// What counts as a provenance filter comes from the config, not from how the
-/// value is spelled: a literal is checked when it is compared against a column
-/// some event declares `stamped`. So `reason = 'hook:whatever'` on an ordinary
-/// field is none of this check's business, and a field named anything at all is
-/// this check's business the moment it is declared stamped.
+/// What counts as a provenance filter is a comparison against `recorded_by`,
+/// the column every entry carries. So `reason = 'hook:whatever'` on an ordinary
+/// field is none of this check's business — the value's spelling decides
+/// nothing.
 ///
-/// The writers compared against are those of the events declaring *that*
-/// column, narrowed to the ones the predicate names when it names any. Both
-/// directions are decided from config alone — the daemon's
-/// `trusted-callers.toml` included, since `hook:<path>` is the one identity
-/// that comes from content hashing rather than from a command line.
+/// The writers compared against are those of the events the predicate names,
+/// or every writer in the protocol when it names none. Decided from config
+/// alone — the daemon's `trusted-callers.toml` included, since `hook:<path>` is
+/// the one identity that comes from content hashing rather than from a command
+/// line. `import:<source>` is never judged: the source is a path someone
+/// imported, which the config cannot know.
 pub fn l8_provenance_filters(analysis: &Analysis) -> Vec<LintFinding> {
     let config = analysis.config;
-    let columns = stamped_columns(config);
-    if columns.is_empty() {
-        return Vec::new();
-    }
     let mut findings = Vec::new();
 
     for (location, sql) in all_predicates(config) {
-        let filters = provenance_filters(&sql, &columns);
+        let filters = provenance_filters(&sql);
         if filters.is_empty() {
             continue;
         }
         let mentioned = sql_event_mentions(&sql, config);
+        let producible = producible_stamps(config, &mentioned);
+        let scope = if mentioned.is_empty() {
+            vec!["any event this protocol declares".to_string()]
+        } else {
+            mentioned.clone()
+        };
 
         for filter in filters {
-            // The events that declare this column stamped — narrowed to the
-            // ones this predicate names, when the two overlap.
-            let owners = columns
-                .get(filter.column.as_str())
-                .cloned()
-                .unwrap_or_default();
-            let narrowed: Vec<String> = owners
-                .iter()
-                .filter(|e| mentioned.contains(e))
-                .cloned()
-                .collect();
-            let scope = if narrowed.is_empty() {
-                owners
-            } else {
-                narrowed
-            };
-            let producible = producible_stamps(config, &scope);
+            // The source of an import is a path someone chose, not something
+            // the config can know, so there is nothing to check it against.
+            if filter.value.starts_with("import:") {
+                continue;
+            }
 
             if !producible.contains(&filter.value) {
                 findings.push(
@@ -903,11 +893,10 @@ pub fn l8_provenance_filters(analysis: &Analysis) -> Vec<LintFinding> {
                         "L8",
                         location.clone(),
                         format!(
-                            "predicate filters '{}' on provenance '{}', which no writer of \
-                             '{}' can stamp",
-                            filter.column,
+                            "predicate filters recorded_by on '{}', which no writer of \
+                             {} can record",
                             filter.value,
-                            scope.join("', '")
+                            scope.join(", ")
                         ),
                     )
                     .with_hint(hint_for_unproducible(&filter.value)),
@@ -925,8 +914,9 @@ pub fn l8_provenance_filters(analysis: &Analysis) -> Vec<LintFinding> {
                     )
                     .with_hint(format!(
                         "as evidence this constrains nobody. Exclude it \
-                         ({} <> '{}') or filter on a writer the agent cannot be.",
-                        filter.column, filter.value
+                         (recorded_by <> '{}') or filter on a writer the agent \
+                         cannot be.",
+                        filter.value
                     )),
                 );
             }

@@ -12,8 +12,7 @@
 // - [consumed-events]     consumed_events()        — every event name any config surface reads
 // - [sql-event-mentions]  sql_event_mentions()     — declared event names quoted inside a SQL predicate
 // - [producible-stamps]   producible_stamps()      — the provenance values some writer of an event can stamp
-// - [stamped-columns]     stamped_columns()        — field name -> the events declaring it `stamped`
-// - ProvenanceFilter      — one comparison a predicate makes against a stamped column
+// - ProvenanceFilter      — one comparison a predicate makes against `recorded_by`
 // - [provenance-filters]  provenance_filters()     — those comparisons, and whether each is an equality
 
 use std::collections::{HashMap, HashSet};
@@ -333,6 +332,14 @@ pub fn sql_event_mentions(sql: &str, config: &ProtocolConfig) -> Vec<String> {
 /// - `hook:<path>` — one per entry in `trusted-callers.toml`. With no manifest
 ///   the daemon authenticates nobody, so what it can stamp is
 ///   `daemon:unverified` and nothing else.
+/// - `engine:transition:<command>` / `engine:init` — the entries the engine
+///   writes about itself. Not scoped by `events`, because the event types they
+///   carry (`state_transition`, `genesis`, …) are never declared, so a
+///   predicate naming one contributes nothing to `events` to scope by.
+///
+/// `import:<source>` is deliberately absent: the source is whatever path was
+/// imported, unknowable at rest, so [`super::checks::l8_provenance_filters`]
+/// does not judge those.
 pub fn producible_stamps(config: &ProtocolConfig, events: &[String]) -> HashSet<String> {
     let names: Vec<&String> = if events.is_empty() {
         config.events.keys().collect()
@@ -358,6 +365,12 @@ pub fn producible_stamps(config: &ProtocolConfig, events: &[String]) -> HashSet<
                 out.insert(Recorder::UnverifiedPeer.id());
             }
         }
+    }
+
+    // The engine's own entries, available wherever a transition or an init is.
+    out.insert(Recorder::Init.id());
+    for t in &config.transitions {
+        out.insert(Recorder::Transition(t.command.clone()).id());
     }
 
     for name in names {
@@ -388,37 +401,10 @@ pub fn producible_stamps(config: &ProtocolConfig, events: &[String]) -> HashSet<
     out
 }
 
-// [stamped-columns]
-/// Every field name some declared event marks `stamped = true`, mapped to the
-/// events that mark it.
-///
-/// This is what makes L8 a check on the *declaration* rather than on how a
-/// value happens to be spelled. An earlier cut matched literals against a
-/// reserved set of prefixes (`hook:`, `engine:`, …), which meant an ordinary
-/// field holding an ordinary value — `reason = 'hook:something'` — was read as
-/// a provenance filter and reported. Reserved-string rules also teach the
-/// reader that the syntax is a pile of special cases; the config already says
-/// which columns are provenance, so ask it.
-pub fn stamped_columns(config: &ProtocolConfig) -> HashMap<&str, Vec<String>> {
-    let mut out: HashMap<&str, Vec<String>> = HashMap::new();
-    for (name, event) in &config.events {
-        for field in crate::provenance::stamped_fields(event) {
-            out.entry(field).or_default().push(name.clone());
-        }
-    }
-    for events in out.values_mut() {
-        events.sort();
-    }
-    out
-}
-
-/// One comparison a predicate makes against a stamped column.
+/// One comparison a predicate makes against the provenance column.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProvenanceFilter {
-    /// The stamped field the literal is compared against, table qualifier
-    /// stripped (`d.recorded_by` → `recorded_by`).
-    pub column: String,
-    /// The literal it is compared against.
+    /// The literal compared against `recorded_by`.
     pub value: String,
     /// Whether a bare `=` reaches it, as opposed to `!=` / `<>` / `NOT (… = …)`
     /// / an `IN` list.
@@ -426,7 +412,7 @@ pub struct ProvenanceFilter {
 }
 
 // [provenance-filters]
-/// Every literal in a SQL predicate compared against one of `columns`.
+/// Every literal in a SQL predicate compared against `recorded_by`.
 ///
 /// Syntactic, like the rest of lint, and this is not a SQL parser. The column
 /// is found by scanning left from the literal past whitespace, comparison and
@@ -438,14 +424,15 @@ pub struct ProvenanceFilter {
 /// quotes is read as a literal by the same scan and so is missed; that is the
 /// price of one pass over the characters.
 ///
+/// The column is fixed because provenance is: it is a property of the append
+/// that the engine records on every entry, like `ts` and `seq`, not a field a
+/// protocol declares (#50).
+///
 /// The equality flag is decided by the operator immediately before the opening
 /// quote. Anything unreadable that way counts as *not* an equality, so the
 /// check depending on it stays quiet rather than guessing — a false "this
 /// filter is decoration" is worse than a miss.
-pub fn provenance_filters(
-    sql: &str,
-    columns: &HashMap<&str, Vec<String>>,
-) -> Vec<ProvenanceFilter> {
+pub fn provenance_filters(sql: &str) -> Vec<ProvenanceFilter> {
     let chars: Vec<char> = sql.chars().collect();
     let mut out = Vec::new();
     let mut i = 0;
@@ -465,14 +452,10 @@ pub fn provenance_filters(
         }
         i += 1; // step past the closing quote (or off the end)
 
-        let Some(column) = column_before(&chars, open) else {
-            continue;
-        };
-        if !columns.contains_key(column.as_str()) {
+        if column_before(&chars, open).as_deref() != Some(crate::provenance::RECORDED_BY) {
             continue;
         }
         out.push(ProvenanceFilter {
-            column,
             value,
             positive_equality: positive_equality_before(&chars, open),
         });
@@ -609,25 +592,19 @@ fn quoted_literals(sql: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
-    /// `recorded_by` is declared stamped; `reason` is an ordinary field.
-    fn columns() -> HashMap<&'static str, Vec<String>> {
-        HashMap::from([("recorded_by", vec!["finding_deferred".to_string()])])
-    }
-
     fn filters(sql: &str) -> Vec<ProvenanceFilter> {
-        provenance_filters(sql, &columns())
+        provenance_filters(sql)
     }
 
     #[test]
-    fn only_comparisons_against_a_stamped_column_count() {
-        // The declaration decides, not the literal's spelling. An ordinary
-        // field holding a stamp-shaped value is none of L8's business.
+    fn only_comparisons_against_recorded_by_count() {
+        // The column decides, not the literal's spelling. An ordinary field
+        // holding a stamp-shaped value is none of L8's business.
         assert!(filters("WHERE reason='hook:something'").is_empty());
         assert!(filters("WHERE type='finding_deferred'").is_empty());
         assert_eq!(
             filters("WHERE recorded_by='agent:cli'"),
             vec![ProvenanceFilter {
-                column: "recorded_by".to_string(),
                 value: "agent:cli".to_string(),
                 positive_equality: true,
             }]
@@ -682,7 +659,6 @@ mod tests {
     fn an_in_list_resolves_every_value_to_its_column() {
         let f = filters("WHERE recorded_by IN ('hook:a', 'hook:b')");
         assert_eq!(f.len(), 2, "{f:?}");
-        assert!(f.iter().all(|x| x.column == "recorded_by"));
         assert_eq!(f[0].value, "hook:a");
         assert_eq!(f[1].value, "hook:b");
     }

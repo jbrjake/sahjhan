@@ -2,6 +2,7 @@ use sahjhan::config::events::{EventConfig, EventFieldConfig};
 use sahjhan::config::transitions::{EmitConfig, GateConfig, TransitionConfig};
 use sahjhan::config::ProtocolConfig;
 use sahjhan::ledger::chain::Ledger;
+use sahjhan::provenance::Recorder;
 use sahjhan::state::machine::StateMachine;
 use std::collections::HashMap;
 use std::path::Path;
@@ -67,12 +68,14 @@ fn test_set_completion_enables_transition() {
     let mut fields = HashMap::new();
     fields.insert("set".to_string(), "check".to_string());
     fields.insert("member".to_string(), "tests".to_string());
-    sm.record_event("set_member_complete", fields).unwrap();
+    sm.record_event("set_member_complete", fields, &Recorder::AgentCli)
+        .unwrap();
 
     let mut fields = HashMap::new();
     fields.insert("set".to_string(), "check".to_string());
     fields.insert("member".to_string(), "lint".to_string());
-    sm.record_event("set_member_complete", fields).unwrap();
+    sm.record_event("set_member_complete", fields, &Recorder::AgentCli)
+        .unwrap();
 
     // Now the set_covered gate should pass
     let result = sm.transition("complete", &[]);
@@ -95,7 +98,8 @@ fn test_set_status() {
     let mut fields = HashMap::new();
     fields.insert("set".to_string(), "check".to_string());
     fields.insert("member".to_string(), "tests".to_string());
-    sm.record_event("set_member_complete", fields).unwrap();
+    sm.record_event("set_member_complete", fields, &Recorder::AgentCli)
+        .unwrap();
 
     let status = sm.set_status("check");
     assert_eq!(status.completed, 1);

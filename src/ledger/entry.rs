@@ -4,13 +4,27 @@
 //
 // ## Index
 // - LedgerError              — Io, Parse, Integrity, SchemaVersion, ConfigIntegrityViolation, etc.
-// - LedgerEntry              — seq, ts, event_type, fields, hash, prev_hash
+// - LedgerEntry              — seq, ts, event_type, recorded_by, fields, hash, prev_hash
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use thiserror::Error;
+
+/// The `"recorded_by":<value>,` fragment of an entry's canonical JSON, or the
+/// empty string when there is no value.
+///
+/// Shared by the hash input and the on-disk form so the two cannot disagree
+/// about whether the key is present — which is the whole basis of an old entry
+/// still verifying (see [`LedgerEntry::compute_hash`]).
+fn recorded_by_key(recorded_by: &str) -> String {
+    if recorded_by.is_empty() {
+        String::new()
+    } else {
+        format!(r#""recorded_by":{},"#, json_string(recorded_by))
+    }
+}
 
 /// Current schema version for JSONL ledger entries.
 pub const SCHEMA_VERSION: u64 = 1;
@@ -81,10 +95,16 @@ pub enum LedgerError {
 
 /// A single entry in the Sahjhan ledger (JSONL format).
 ///
-/// Each entry is one JSON line containing 9 top-level keys (engine, fields,
-/// hash, prev, protocol, schema, seq, ts, type) sorted alphabetically per
-/// RFC 8785. The `hash` field is a SHA-256 hex digest computed over the
-/// canonical JSON of all other fields (the hash input excludes hash itself).
+/// Each entry is one JSON line whose top-level keys are sorted alphabetically
+/// per RFC 8785: engine, fields, hash, prev, protocol, recorded_by, schema,
+/// seq, ts, type. The `hash` field is a SHA-256 hex digest computed over the
+/// canonical JSON of all other keys (the hash input excludes hash itself).
+///
+/// `fields` is the only one of those the writer supplies. Everything beside it
+/// is the engine's record *of the append* — when it happened, what it chained
+/// to, and which write path made it. `recorded_by` belongs to that group and
+/// not to `fields`, which is a schema of what a caller provides: a provenance
+/// value a caller could provide would be worth nothing (#50).
 ///
 /// Legacy fields (`entry_hash`, `prev_hash`, `timestamp`, `payload`) are
 /// retained as `#[serde(skip)]` shims so that callers in chain.rs,
@@ -101,6 +121,13 @@ pub struct LedgerEntry {
     pub event_type: String,
     pub engine: String,
     pub protocol: String,
+    /// Which write path appended this entry — see [`crate::provenance::Recorder`].
+    ///
+    /// Empty only on entries written before this key existed. Those hash and
+    /// re-serialize without it, exactly as they did when written, so an old
+    /// ledger still verifies; see [`LedgerEntry::compute_hash`].
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub recorded_by: String,
     pub fields: BTreeMap<String, String>,
 
     // ----- Legacy shims (serde-skipped, Tasks 3-6 will remove) -----
@@ -131,21 +158,33 @@ impl LedgerEntry {
         event_type: &str,
         engine: &str,
         protocol: &str,
+        recorded_by: &str,
         fields: BTreeMap<String, String>,
     ) -> Self {
         let ts = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-        Self::new_with_ts(seq, prev, event_type, engine, protocol, fields, ts)
+        Self::new_with_ts(
+            seq,
+            prev,
+            event_type,
+            engine,
+            protocol,
+            recorded_by,
+            fields,
+            ts,
+        )
     }
 
     /// Create a new `LedgerEntry` with an externally-supplied timestamp.
     ///
     /// Useful for imports, deterministic testing, and migration tooling.
+    #[allow(clippy::too_many_arguments)]
     pub fn new_with_ts(
         seq: u64,
         prev: String,
         event_type: &str,
         engine: &str,
         protocol: &str,
+        recorded_by: &str,
         fields: BTreeMap<String, String>,
         ts: String,
     ) -> Self {
@@ -157,6 +196,7 @@ impl LedgerEntry {
             event_type,
             engine,
             protocol,
+            recorded_by,
             &fields,
         );
 
@@ -176,6 +216,7 @@ impl LedgerEntry {
             event_type: event_type.to_string(),
             engine: engine.to_string(),
             protocol: protocol.to_string(),
+            recorded_by: recorded_by.to_string(),
             fields,
             entry_hash,
             prev_hash,
@@ -189,6 +230,7 @@ impl LedgerEntry {
     /// The canonical form includes every field EXCEPT `hash` itself. Keys are
     /// sorted alphabetically at all nesting levels. No optional whitespace.
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     pub fn compute_hash(
         schema: u64,
         seq: u64,
@@ -197,16 +239,25 @@ impl LedgerEntry {
         event_type: &str,
         engine: &str,
         protocol: &str,
+        recorded_by: &str,
         fields: &BTreeMap<String, String>,
     ) -> String {
         let fields_json = canonical_json_object(fields);
-        // Keys in alphabetical order: engine, fields, prev, protocol, schema, seq, ts, type
+        // Keys in alphabetical order: engine, fields, prev, protocol, recorded_by,
+        // schema, seq, ts, type.
+        //
+        // An empty `recorded_by` omits the key entirely rather than hashing an
+        // empty string. Entries written before this key existed have no value
+        // for it, and a canonical form that invented one would recompute to a
+        // different digest than the one on disk — every ledger in existence
+        // would fail verification on upgrade. Absent stays absent.
         let canonical = format!(
-            r#"{{"engine":{},"fields":{},"prev":{},"protocol":{},"schema":{},"seq":{},"ts":{},"type":{}}}"#,
+            r#"{{"engine":{},"fields":{},"prev":{},"protocol":{},{}"schema":{},"seq":{},"ts":{},"type":{}}}"#,
             json_string(engine),
             fields_json,
             json_string(prev),
             json_string(protocol),
+            recorded_by_key(recorded_by),
             schema,
             seq,
             json_string(ts),
@@ -222,12 +273,13 @@ impl LedgerEntry {
         // Build canonical JSON by hand to guarantee key order and RFC 8785 compliance.
         let fields_json = canonical_json_object(&self.fields);
         format!(
-            r#"{{"engine":{},"fields":{},"hash":{},"prev":{},"protocol":{},"schema":{},"seq":{},"ts":{},"type":{}}}"#,
+            r#"{{"engine":{},"fields":{},"hash":{},"prev":{},"protocol":{},{}"schema":{},"seq":{},"ts":{},"type":{}}}"#,
             json_string(&self.engine),
             fields_json,
             json_string(&self.hash),
             json_string(&self.prev),
             json_string(&self.protocol),
+            recorded_by_key(&self.recorded_by),
             self.schema,
             self.seq,
             json_string(&self.ts),
@@ -255,6 +307,7 @@ impl LedgerEntry {
             &entry.event_type,
             &entry.engine,
             &entry.protocol,
+            &entry.recorded_by,
             &entry.fields,
         );
         if recomputed != entry.hash {

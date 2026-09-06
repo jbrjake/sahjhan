@@ -10,6 +10,7 @@ use sahjhan::config::{
 };
 use sahjhan::hooks::eval::{evaluate_hooks, HookEvalRequest};
 use sahjhan::ledger::chain::Ledger;
+use sahjhan::provenance::Recorder;
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use tempfile::tempdir;
@@ -106,7 +107,9 @@ fn setup_ledger_in_state(dir: &Path, state: &str) -> Ledger {
         fields.insert("from".to_string(), "idle".to_string());
         fields.insert("to".to_string(), state.to_string());
         fields.insert("command".to_string(), "begin".to_string());
-        ledger.append("state_transition", fields).unwrap();
+        ledger
+            .append("state_transition", fields, &Recorder::AgentCli)
+            .unwrap();
     }
     ledger
 }
@@ -192,7 +195,9 @@ fn test_hook_eval_gate_allows_when_condition_met() {
     // Record the required event
     let mut fields = BTreeMap::new();
     fields.insert("detail".to_string(), "reviewed".to_string());
-    ledger.append("code_review", fields).unwrap();
+    ledger
+        .append("code_review", fields, &Recorder::AgentCli)
+        .unwrap();
 
     // Add a gate-based hook that requires a ledger_has_event
     config.hooks.push(HookConfig {
@@ -351,7 +356,9 @@ fn test_hook_eval_monitor_warning() {
     for i in 0..5 {
         let mut fields = BTreeMap::new();
         fields.insert("detail".to_string(), format!("event {}", i));
-        ledger.append("work_item", fields).unwrap();
+        ledger
+            .append("work_item", fields, &Recorder::AgentCli)
+            .unwrap();
     }
 
     // Monitor that fires when event count >= 3
@@ -521,7 +528,6 @@ fn test_hook_eval_auto_record() {
                 pattern: None,
                 values: None,
                 optional: false,
-                stamped: false,
             }],
             restricted: None,
         },
@@ -623,7 +629,9 @@ fn test_hook_eval_event_count_check() {
     for i in 0..10 {
         let mut fields = BTreeMap::new();
         fields.insert("detail".to_string(), format!("item {}", i));
-        ledger.append("work_item", fields).unwrap();
+        ledger
+            .append("work_item", fields, &Recorder::AgentCli)
+            .unwrap();
     }
 
     // Check that fires when event count >= 5
@@ -796,7 +804,9 @@ fn record_failing_test(ledger: &mut Ledger, actor: &str) {
     let mut fields = BTreeMap::new();
     fields.insert("agent_id".to_string(), actor.to_string());
     fields.insert("test_name".to_string(), "test_thing".to_string());
-    ledger.append("test_failed_before_fix", fields).unwrap();
+    ledger
+        .append("test_failed_before_fix", fields, &Recorder::AgentCli)
+        .unwrap();
 }
 
 fn edit_request(actor: Option<&str>) -> HookEvalRequest {
@@ -902,87 +912,4 @@ fn test_an_unfiltered_gate_is_unchanged_by_actor_scoping() {
         dir.path(),
     );
     assert_eq!(result.decision, "allow", "{:?}", result.messages);
-}
-
-// ---------------------------------------------------------------------------
-// Auto-record provenance (sahjhan #50)
-// ---------------------------------------------------------------------------
-
-#[test]
-fn test_hook_eval_auto_record_stamps_an_agent_reachable_identity() {
-    // `sahjhan hook eval` is normally run by the harness, but the agent can run
-    // it too, with the same arguments — so the stamp is honest about that
-    // rather than implying a hook wrote it. What the result *reports* is what
-    // gets appended, so it is stamped before the report is built.
-    let dir = tempdir().unwrap();
-    let mut config = base_config();
-
-    config.events.insert(
-        "tool_usage".to_string(),
-        sahjhan::config::EventConfig {
-            attestation: None,
-            producers: vec![],
-            description: "Tool usage event".to_string(),
-            fields: vec![
-                sahjhan::config::EventFieldConfig {
-                    name: "file_path".to_string(),
-                    field_type: "string".to_string(),
-                    pattern: None,
-                    values: None,
-                    optional: false,
-                    stamped: false,
-                },
-                sahjhan::config::EventFieldConfig {
-                    name: "recorded_by".to_string(),
-                    field_type: "string".to_string(),
-                    pattern: None,
-                    values: None,
-                    optional: false,
-                    stamped: true,
-                },
-            ],
-            restricted: None,
-        },
-    );
-
-    let ledger = setup_ledger_in_state(dir.path(), "working");
-
-    config.hooks.push(HookConfig {
-        event: HookEvent::PostToolUse,
-        tools: Some(vec!["Edit".to_string()]),
-        states: None,
-        states_not: None,
-        action: None,
-        message: None,
-        gate: None,
-        check: None,
-        auto_record: Some(AutoRecordConfig {
-            event_type: "tool_usage".to_string(),
-            fields: {
-                let mut f = HashMap::new();
-                f.insert("file_path".to_string(), "{tool.file_path}".to_string());
-                f
-            },
-        }),
-        filter: None,
-    });
-
-    let request = HookEvalRequest {
-        event: HookEvent::PostToolUse,
-        tool: Some("Edit".to_string()),
-        file: Some("src/lib.rs".to_string()),
-        output_text: None,
-        agent_id: None,
-    };
-
-    let result = evaluate_hooks(&config, &ledger, &request, dir.path(), dir.path());
-    assert_eq!(result.auto_records.len(), 1);
-    assert_eq!(
-        result.auto_records[0].fields.get("recorded_by").unwrap(),
-        "agent:hook-eval"
-    );
-    assert_eq!(
-        result.auto_records[0].fields.get("file_path").unwrap(),
-        "src/lib.rs"
-    );
 }

@@ -36,6 +36,7 @@ fn make_config(managed: Vec<&str>) -> ProtocolConfig {
         lint: Default::default(),
         daemon: Default::default(),
         vault_policies: std::collections::HashMap::new(),
+        trusted_callers: None,
     }
 }
 

@@ -24,3 +24,22 @@ fields = []
 [[events.context_reset.producers]]
 id = "hook:session-start"
 available_in_states = ["awaiting_clear"]
+
+[events.finding_deferred]
+description = "A finding was set aside rather than fixed"
+attestation = "agent"
+# `recorded_by` is stamped: the engine writes which path recorded the event and
+# refuses a caller that supplies it (#50). That is what lets the query below ask
+# *who* deferred a finding — a question `restricted` cannot answer here, because
+# this event is also a transition emit and a restricted event may not be emitted.
+fields = [
+    { name = "id", type = "string" },
+    { name = "reason", type = "string", pattern = "^(low_priority|theoretical)$" },
+    { name = "recorded_by", type = "string", stamped = true },
+]
+
+# The `defer` transition emits it, which is a producer with the window of that
+# transition's `from` state.
+[[events.finding_deferred.producers]]
+id = "transition:defer"
+available_in_states = ["fix_loop"]

@@ -145,6 +145,16 @@ pub fn evaluate_hooks(
             for (k, v) in &auto.fields {
                 fields.insert(k.clone(), resolve_tool_template(v, request));
             }
+            // Stamped here rather than at the append, so what `hook eval`
+            // *reports* in its `auto_records` is byte-for-byte what it wrote
+            // (#50). The identity is an agent-reachable one: the harness
+            // normally runs `sahjhan hook eval`, but so can the agent.
+            for (field, value) in crate::provenance::stamps_for(
+                config.events.get(&auto.event_type),
+                &crate::provenance::Recorder::AgentHookEval,
+            ) {
+                fields.insert(field, value);
+            }
             auto_records.push(AutoRecordResult {
                 event_type: auto.event_type.clone(),
                 fields,
@@ -725,6 +735,7 @@ mod tests {
             lint: Default::default(),
             daemon: Default::default(),
             vault_policies: HashMap::new(),
+            trusted_callers: None,
         };
 
         // Should block: file is under managed path

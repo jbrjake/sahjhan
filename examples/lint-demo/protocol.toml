@@ -1,5 +1,5 @@
 # A small protocol that exercises everything `sahjhan lint` knows how to check
-# (issue #32), and passes all seven checks. Break any one declaration here and
+# (issue #32), and passes all eight checks. Break any one declaration here and
 # lint will tell you which one and why.
 
 [protocol]
@@ -20,6 +20,19 @@ render_dir = "output"
 [queries.fix_budget]
 sql    = "SELECT count(*) < 3 as result FROM events WHERE event_type = 'fix_commit'"
 intent = "three fixes is the budget for one merge"
+
+# A provenance filter (lint L8). `recorded_by` is a stamped field, so its value
+# names the write path rather than anything the caller asserted — and the value
+# here is only producible by a script trusted-callers.toml lists. Point it at a
+# script that file does not list, or misspell the namespace, and L8 reports a
+# gate that can never pass.
+[queries.theoretical_deferrals]
+sql    = """
+SELECT count(*) = 0 as result FROM events
+WHERE type = 'finding_deferred' AND reason = 'theoretical'
+  AND recorded_by = 'hook:hooks/theoretical_courier.py'
+"""
+intent = "only the courier may grade a finding theoretical"
 
 # --- Boundaries --------------------------------------------------------------
 # Returning to the fix loop after a merge must pass through the context reset.

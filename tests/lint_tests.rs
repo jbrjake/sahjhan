@@ -34,6 +34,7 @@ struct Fixture {
     transitions: String,
     events: String,
     hooks: String,
+    callers: Option<String>,
 }
 
 impl Fixture {
@@ -45,6 +46,7 @@ impl Fixture {
             transitions: String::new(),
             events: String::new(),
             hooks: String::new(),
+            callers: None,
         }
     }
 
@@ -73,6 +75,13 @@ impl Fixture {
         self
     }
 
+    /// The daemon's trusted-callers manifest. `None` (the default) is an
+    /// *absent* file, which L8 reads as "caller auth was never configured".
+    fn callers(mut self, toml: &str) -> Self {
+        self.callers = Some(toml.to_string());
+        self
+    }
+
     fn write(&self) -> &std::path::Path {
         let p = self.dir.path();
         std::fs::write(p.join("protocol.toml"), &self.protocol).unwrap();
@@ -83,6 +92,9 @@ impl Fixture {
         }
         if !self.hooks.is_empty() {
             std::fs::write(p.join("hooks.toml"), &self.hooks).unwrap();
+        }
+        if let Some(ref callers) = self.callers {
+            std::fs::write(p.join("trusted-callers.toml"), callers).unwrap();
         }
         p
     }
@@ -1820,5 +1832,273 @@ fn test_lint_demo_example_rerouted_pause_opens_a_bypass() {
             .contains("merge_done -(pause)-> paused -(resume)-> fix_loop"),
         "the finding should print the bypass it found: {}",
         l3[0].message
+    );
+}
+
+// ---------------------------------------------------------------------------
+// L8 — provenance filters (sahjhan #50)
+//
+// A `stamped = true` field carries which write path recorded an event. That
+// only buys a gate something if the value it filters on is one some writer can
+// actually stamp — and it buys nothing at all if the writer is the agent.
+// ---------------------------------------------------------------------------
+
+/// idle -(go)-> done, with `deferral` declared and `sql` as a named query.
+fn provenance_fixture(sql: &str) -> Fixture {
+    Fixture::new()
+        .states(
+            r#"
+[states.idle]
+label = "Idle"
+initial = true
+
+[states.done]
+label = "Done"
+terminal = true
+"#,
+        )
+        .transitions(
+            r#"
+[[transitions]]
+from = "idle"
+to = "done"
+command = "go"
+gates = []
+  [[transitions.emits]]
+  event = "deferral"
+  fields = { reason = "low_priority" }
+"#,
+        )
+        .events(
+            r#"
+[events.deferral]
+description = "a finding set aside"
+fields = [
+    { name = "reason", type = "string" },
+    { name = "recorded_by", type = "string", stamped = true },
+]
+"#,
+        )
+        .protocol(&format!(
+            "\n[queries.closed]\nsql = \"\"\"\n{}\n\"\"\"\n",
+            sql
+        ))
+}
+
+#[test]
+fn test_l8_hook_provenance_no_manifest_lists_is_an_error() {
+    // The issue's own gate. With no trusted-callers.toml the daemon
+    // authenticates nobody, so nothing can ever stamp `hook:<anything>` and
+    // the gate is a wall.
+    let f = provenance_fixture(
+        "SELECT count(*) = 0 AS result FROM events \
+         WHERE type='deferral' AND recorded_by='hook:hooks/theoretical_courier.py'",
+    );
+    let findings = f.lint();
+    let l8 = findings_for(&findings, "L8");
+    assert_eq!(l8.len(), 1, "expected one L8 finding: {:?}", findings);
+    assert_eq!(l8[0].severity, Severity::Error);
+    assert!(
+        l8[0]
+            .message
+            .contains("provenance 'hook:hooks/theoretical_courier.py'"),
+        "the finding must name the value nothing can write: {}",
+        l8[0].message
+    );
+    assert!(
+        l8[0]
+            .hint
+            .as_deref()
+            .unwrap_or_default()
+            .contains("trusted-callers.toml"),
+        "the hint must say where a hook earns that identity: {:?}",
+        l8[0].hint
+    );
+}
+
+#[test]
+fn test_l8_hook_provenance_is_clean_once_the_manifest_lists_it() {
+    let f = provenance_fixture(
+        "SELECT count(*) = 0 AS result FROM events \
+         WHERE type='deferral' AND recorded_by='hook:hooks/theoretical_courier.py'",
+    )
+    .callers(
+        r#"
+[callers]
+"hooks/theoretical_courier.py" = "sha256:0000"
+"#,
+    );
+    assert!(
+        findings_for(&f.lint(), "L8").is_empty(),
+        "a listed script can authenticate, so the filter names a writer that exists"
+    );
+}
+
+#[test]
+fn test_l8_hook_provenance_naming_a_different_script_is_still_an_error() {
+    let f = provenance_fixture(
+        "SELECT count(*) = 0 AS result FROM events \
+         WHERE type='deferral' AND recorded_by='hook:hooks/courier.py'",
+    )
+    .callers(
+        r#"
+[callers]
+"hooks/theoretical_courier.py" = "sha256:0000"
+"#,
+    );
+    let findings = f.lint();
+    let l8 = findings_for(&findings, "L8");
+    assert_eq!(l8.len(), 1, "{:?}", l8);
+    assert_eq!(l8[0].severity, Severity::Error);
+}
+
+#[test]
+fn test_l8_catches_a_misspelled_engine_stamp() {
+    // `engine:emits:` — the spelling issue #50 itself used in prose. One
+    // letter off, and the gate silently never matches; a namespace that only
+    // recognized well-formed values would be silent on exactly this.
+    let f = provenance_fixture(
+        "SELECT count(*) = 0 AS result FROM events \
+         WHERE type='deferral' AND recorded_by='engine:emits:go'",
+    );
+    let findings = f.lint();
+    let l8 = findings_for(&findings, "L8");
+    assert_eq!(l8.len(), 1, "{:?}", l8);
+    assert_eq!(l8[0].severity, Severity::Error);
+    assert!(
+        l8[0].message.contains("engine:emits:go"),
+        "{}",
+        l8[0].message
+    );
+}
+
+#[test]
+fn test_l8_accepts_the_stamp_the_emit_actually_writes() {
+    let f = provenance_fixture(
+        "SELECT count(*) = 0 AS result FROM events \
+         WHERE type='deferral' AND recorded_by='engine:emit:go'",
+    );
+    assert!(
+        findings_for(&f.lint(), "L8").is_empty(),
+        "the `go` transition emits `deferral`, so it stamps exactly this"
+    );
+}
+
+#[test]
+fn test_l8_warns_when_a_gate_requires_an_agent_reachable_provenance() {
+    let f = provenance_fixture(
+        "SELECT count(*) > 0 AS result FROM events \
+         WHERE type='deferral' AND recorded_by = 'agent:cli'",
+    );
+    let findings = f.lint();
+    let l8 = findings_for(&findings, "L8");
+    assert_eq!(l8.len(), 1, "{:?}", l8);
+    assert_eq!(l8[0].severity, Severity::Warning);
+    assert!(
+        l8[0].message.contains("any caller that can run the binary"),
+        "{}",
+        l8[0].message
+    );
+}
+
+#[test]
+fn test_l8_stays_quiet_when_an_agent_provenance_is_excluded() {
+    // `<> 'agent:cli'` is the correct use of the value — it is the exclusion
+    // the whole feature exists to express. Reporting it would train consumers
+    // to disable the check.
+    for predicate in [
+        "recorded_by <> 'agent:cli'",
+        "recorded_by != 'agent:cli'",
+        "NOT (recorded_by = 'agent:cli')",
+    ] {
+        let f = provenance_fixture(&format!(
+            "SELECT count(*) = 0 AS result FROM events WHERE type='deferral' AND {}",
+            predicate
+        ));
+        let findings = f.lint();
+        let l8 = findings_for(&findings, "L8");
+        assert!(
+            l8.is_empty(),
+            "`{}` excludes the agent rather than trusting it: {:?}",
+            predicate,
+            l8
+        );
+    }
+}
+
+#[test]
+fn test_l8_ignores_literals_outside_the_stamp_namespace() {
+    let f = provenance_fixture(
+        "SELECT count(*) = 0 AS result FROM events \
+         WHERE type='deferral' AND reason='theoretical'",
+    );
+    assert!(
+        findings_for(&f.lint(), "L8").is_empty(),
+        "an ordinary field value is not a provenance filter"
+    );
+}
+
+#[test]
+fn test_l8_checks_inline_gate_predicates_too() {
+    // A named query is one place to get this wrong; an inline gate `sql` is
+    // the other, and L6 deliberately looks only at the second.
+    let f = Fixture::new()
+        .states(
+            r#"
+[states.idle]
+label = "Idle"
+initial = true
+
+[states.done]
+label = "Done"
+terminal = true
+"#,
+        )
+        .transitions(
+            r#"
+[[transitions]]
+from = "idle"
+to = "done"
+command = "go"
+gates = [
+    { type = "query", sql = "SELECT count(*) = 0 AS result FROM events WHERE type='deferral' AND recorded_by='hook:hooks/absent.py'", expect = "true" },
+]
+"#,
+        )
+        .events(
+            r#"
+[events.deferral]
+description = "a finding set aside"
+fields = [
+    { name = "recorded_by", type = "string", stamped = true },
+]
+"#,
+        );
+    let findings = f.lint();
+    let l8 = findings_for(&findings, "L8");
+    assert_eq!(l8.len(), 1, "{:?}", l8);
+    assert!(
+        l8[0].location.contains("transition 'go'"),
+        "the finding must point at the gate: {}",
+        l8[0].location
+    );
+}
+
+#[test]
+fn test_l8_is_selectable_by_name() {
+    let f = provenance_fixture(
+        "SELECT count(*) = 0 AS result FROM events \
+         WHERE type='deferral' AND recorded_by='hook:hooks/absent.py'",
+    );
+    let findings = lint::run(
+        &f.load(),
+        &LintOptions {
+            only: vec!["L8".to_string()],
+        },
+    );
+    assert!(
+        !findings.is_empty() && findings.iter().all(|x| x.check == "L8"),
+        "only L8 should be reported: {:?}",
+        findings
     );
 }

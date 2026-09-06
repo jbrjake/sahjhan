@@ -110,6 +110,7 @@ pub fn cmd_authed_event(
         event_type,
         fields,
         targeting,
+        &crate::provenance::Recorder::AuthedCli,
     )
 }
 

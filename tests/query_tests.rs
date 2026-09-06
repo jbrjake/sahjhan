@@ -22,6 +22,7 @@ fn test_events() -> HashMap<String, EventConfig> {
                     pattern: None,
                     values: None,
                     optional: false,
+                    stamped: false,
                 },
                 EventFieldConfig {
                     name: "severity".to_string(),
@@ -29,6 +30,7 @@ fn test_events() -> HashMap<String, EventConfig> {
                     pattern: None,
                     values: None,
                     optional: false,
+                    stamped: false,
                 },
             ],
         },

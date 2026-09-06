@@ -9,6 +9,8 @@
 // - [validate-gate]         ProtocolConfig::validate_gate()  — recursive gate validator (composite + leaf)
 // - [check-gate-anchor]     check_gate_anchor()              — recursive scan for an `anchor` the engine cannot act on
 // - [check-emit-anchor]     check_emit_anchor()              — an emit's `anchor`: unreadable, or on an emit that runs no command
+//                                                             (stamped-field checks live inline in [validate]: 3c/3d for a
+//                                                              config surface writing one, 5b for a constraint on one)
 // - [resolve-gate-since]    ProtocolConfig::resolve_gate_since()   — a gate's `since` param as written → baseline event type
 // - [resolve-since-anchor]  ProtocolConfig::resolve_since_anchor() — `since` form → baseline event type, or why not
 // - SinceAnchorError        — a non-string value, an unrecognized form, or a prefixed form naming an undeclared event type
@@ -21,6 +23,7 @@ pub mod protocol;
 pub mod renders;
 pub mod states;
 pub mod transitions;
+pub mod trusted_callers;
 pub mod vault_policy;
 
 pub use events::{EventConfig, EventFieldConfig, ProducerConfig};
@@ -36,6 +39,7 @@ pub use protocol::{
 pub use renders::RenderConfig;
 pub use states::{StateConfig, StateParam};
 pub use transitions::{EmitConfig, GateConfig, IntegrityConfig, TransitionConfig};
+pub use trusted_callers::TrustedCallersManifest;
 pub use vault_policy::{VaultAccess, VaultPolicy};
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -122,6 +126,14 @@ pub struct ProtocolConfig {
     /// Per-key state-based vault access policies, keyed by vault entry name.
     /// Empty when no `vault.toml` is present (all keys unrestricted).
     pub vault_policies: HashMap<String, vault_policy::VaultPolicy>,
+    /// The daemon's `trusted-callers.toml`, when the file exists.
+    ///
+    /// `None` and `Some(empty)` are different configurations and both are
+    /// meaningful: absent means caller auth was never set up, so the daemon
+    /// serves any peer and can name none of them; present means it is enforced
+    /// as written. Lint L8 reads the distinction to decide whether a
+    /// `hook:<path>` provenance filter names a writer that can exist.
+    pub trusted_callers: Option<TrustedCallersManifest>,
 }
 
 impl ProtocolConfig {
@@ -206,6 +218,22 @@ impl ProtocolConfig {
             }
         };
 
+        // --- trusted-callers.toml (optional) ---
+        // Absent is not the same as empty (see the field docs), so this stays
+        // an Option rather than defaulting to an empty table. A file that is
+        // present but unparseable is a load error: the daemon would refuse to
+        // start on it, and lint must not silently read it as "no callers".
+        let trusted_callers = {
+            let callers_path = dir.join("trusted-callers.toml");
+            if callers_path.exists() {
+                Some(trusted_callers::TrustedCallersManifest::load(
+                    &callers_path,
+                )?)
+            } else {
+                None
+            }
+        };
+
         Ok(ProtocolConfig {
             protocol: proto_file.protocol,
             paths: proto_file.paths,
@@ -227,6 +255,7 @@ impl ProtocolConfig {
             hooks: hooks_vec,
             monitors: monitors_vec,
             vault_policies: vault_policies_map,
+            trusted_callers,
         })
     }
 
@@ -313,6 +342,45 @@ impl ProtocolConfig {
                     _ => {}
                 }
             }
+
+            // 3c. An emit must not set a stamped field. The engine writes that
+            // field to say the transition produced the event; a template that
+            // also writes it would be the config forging its own provenance,
+            // and silently letting the engine win would make a config that
+            // *forgot* to stamp read exactly like one that did (#50).
+            for emit in &t.emits {
+                if let Some(ev) = self.events.get(&emit.event) {
+                    for field in crate::provenance::stamped_fields(ev) {
+                        if emit.fields.contains_key(field) {
+                            errors.push(format!(
+                                "transition '{}' emit of '{}' sets field '{}', which is \
+                                 stamped — the engine records who wrote the event, so \
+                                 remove it from the emit's fields",
+                                t.command, emit.event, field
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3d. The same rule for a hook's auto_record: its `fields` are written
+        // by the config, and a stamped field is not the config's to write.
+        for (idx, hook) in self.hooks.iter().enumerate() {
+            if let Some(ref auto) = hook.auto_record {
+                if let Some(ev) = self.events.get(&auto.event_type) {
+                    for field in crate::provenance::stamped_fields(ev) {
+                        if auto.fields.contains_key(field) {
+                            errors.push(format!(
+                                "hooks.toml: hook[{}] auto_record of '{}' sets field \
+                                 '{}', which is stamped — the engine records who wrote \
+                                 the event, so remove it from the auto_record's fields",
+                                idx, auto.event_type, field
+                            ));
+                        }
+                    }
+                }
+            }
         }
 
         // 4. Sets referenced in state params exist.
@@ -358,6 +426,29 @@ impl ProtocolConfig {
                         "event '{}' field '{}' has unknown type '{}'",
                         event_name, field.name, field.field_type
                     ));
+                }
+
+                // 5b. A stamped field's value comes from the engine, never from
+                // a caller. Every constraint that exists to police what a
+                // caller may write is therefore inert on one — and an inert
+                // line that looks load-bearing is what #48 was about. Rejected
+                // here, in the validation `init` and `reseal` both run, so a
+                // config carrying one cannot be sealed.
+                if field.stamped {
+                    for (key, present) in [
+                        ("pattern", field.pattern.is_some()),
+                        ("values", field.values.is_some()),
+                        ("optional", field.optional),
+                    ] {
+                        if present {
+                            errors.push(format!(
+                                "event '{}' field '{}' is stamped and also declares \
+                                 '{}' — a stamped field's value is written by the \
+                                 engine, so '{}' would constrain nothing",
+                                event_name, field.name, key, key
+                            ));
+                        }
+                    }
                 }
             }
         }

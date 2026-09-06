@@ -5,7 +5,7 @@
 // ## Index
 // - EventsFile              — top-level wrapper
 // - EventConfig             — single event type definition; `restricted` marks HMAC-only events; `attestation` names its evidence strength
-// - EventFieldConfig        — field name, type, pattern, allowed values, optional flag
+// - EventFieldConfig        — field name, type, pattern, allowed values, optional flag, `stamped` provenance
 // - ProducerConfig          — a declared producer of an event, with an optional state window
 // - ENGINE_EVENTS           — event types the engine itself writes; part of the vocabulary without being declared
 // - is_engine_event()       — whether an event type is one of those
@@ -88,4 +88,24 @@ pub struct EventFieldConfig {
     pub values: Option<Vec<String>>,
     #[serde(default)]
     pub optional: bool,
+    /// The engine owns this field's value: it records which write path the
+    /// event arrived on, and a caller that supplies it is refused (#50).
+    ///
+    /// ```toml
+    /// { name = "recorded_by", type = "string", stamped = true }
+    /// ```
+    ///
+    /// This is per *field* where `restricted` is per event, which is the whole
+    /// reason it exists: an event with transition `emits` cannot be restricted
+    /// at all, so before #50 it could carry no provenance whatsoever. A stamped
+    /// field leaves every existing writer working and gives a SQL gate a column
+    /// that says which one wrote the row — see [`crate::provenance`] for the
+    /// values, and lint L8 for what it checks about them.
+    ///
+    /// A stamped field is always present in the recorded event, so `optional`
+    /// on one is inert; its value never comes from the caller, so `pattern` and
+    /// `values` on one constrain nothing. Config validation rejects all three
+    /// rather than accepting a line that does nothing.
+    #[serde(default)]
+    pub stamped: bool,
 }

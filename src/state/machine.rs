@@ -286,7 +286,7 @@ impl StateMachine {
                 // that derives a value from a tree has to be able to say
                 // *which* tree, or a caller-anchored gate and its own emit
                 // disagree about what the transition is a record of (#48).
-                let fields = crate::state::emit::resolve_emit(
+                let mut fields = crate::state::emit::resolve_emit(
                     emit,
                     &state_params,
                     &self.ledger,
@@ -297,6 +297,18 @@ impl StateMachine {
                     event: emit.event.clone(),
                     reason,
                 })?;
+                // Stamp which transition wrote it (#50). Applied here rather
+                // than inside resolve_emit because the identity is the
+                // transition's command, and resolve_emit deliberately knows
+                // only about the emit. Config validation has already refused
+                // an emit whose own `fields` name a stamped field, so this
+                // never overwrites something the author wrote.
+                for (field, value) in crate::provenance::stamps_for(
+                    self.config.events.get(&emit.event),
+                    &crate::provenance::Recorder::Emit(command.to_string()),
+                ) {
+                    fields.insert(field, value);
+                }
                 pending_emits.push((emit.event.clone(), fields));
             }
 

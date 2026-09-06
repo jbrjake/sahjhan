@@ -3514,3 +3514,250 @@ fn test_directory_outside_any_repository_still_anchors_on_itself() {
 
     assert!(dir.path().join("output/.sahjhan/ledger.jsonl").exists());
 }
+
+// ---------------------------------------------------------------------------
+// Stamped fields — per-field provenance end to end (sahjhan #50)
+//
+// The shape from the issue: an event that stays agent-writable, has transition
+// emits (so `restricted` is unavailable to it), and still tells a SQL gate
+// which writer produced a given row.
+// ---------------------------------------------------------------------------
+
+/// The minimal example, with `check_done` reshaped as the issue's
+/// `finding_deferred`: an id, a reason, and a stamped `recorded_by`. Two
+/// transitions write it — the agent CLI, and a `defer_low` emit.
+fn setup_stamped_protocol() -> tempfile::TempDir {
+    let dir = tempdir().unwrap();
+    copy_minimal_config(dir.path());
+    let config_dir = dir.path().join("enforcement");
+
+    std::fs::write(
+        config_dir.join("events.toml"),
+        r#"
+[events.set_member_complete]
+description = "A check passed"
+fields = [
+    { name = "set", type = "string" },
+    { name = "member", type = "string" },
+]
+
+[events.check_done]
+description = "A finding set aside"
+fields = [
+    { name = "id", type = "string" },
+    { name = "reason", type = "string", pattern = "^(low_priority|theoretical)$" },
+    { name = "recorded_by", type = "string", stamped = true },
+]
+"#,
+    )
+    .unwrap();
+
+    let transitions = std::fs::read_to_string(config_dir.join("transitions.toml")).unwrap();
+    std::fs::write(
+        config_dir.join("transitions.toml"),
+        format!(
+            r#"{}
+
+[[transitions]]
+from = "working"
+to = "working"
+command = "defer_low"
+args = ["item_id"]
+gates = []
+  [[transitions.emits]]
+  event = "check_done"
+  fields = {{ id = "{{{{item_id}}}}", reason = "low_priority" }}
+"#,
+            transitions
+        ),
+    )
+    .unwrap();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "init"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+    dir
+}
+
+fn ledger_rows(dir: &std::path::Path) -> Vec<serde_json::Value> {
+    std::fs::read_to_string(dir.join("output/.sahjhan/ledger.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect()
+}
+
+#[test]
+fn test_the_cli_stamps_the_agent_and_the_emit_stamps_the_transition() {
+    let dir = setup_stamped_protocol();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "event",
+            "check_done",
+            "--field",
+            "id=BH-001",
+            "--field",
+            "reason=theoretical",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "transition", "begin"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "transition",
+            "defer_low",
+            "BH-002",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    let rows = ledger_rows(dir.path());
+    let deferrals: Vec<&serde_json::Value> =
+        rows.iter().filter(|r| r["type"] == "check_done").collect();
+    assert_eq!(deferrals.len(), 2, "{:#?}", rows);
+    assert_eq!(deferrals[0]["fields"]["recorded_by"], "agent:cli");
+    assert_eq!(deferrals[0]["fields"]["id"], "BH-001");
+    assert_eq!(
+        deferrals[1]["fields"]["recorded_by"], "engine:emit:defer_low",
+        "an emit is named by the transition that wrote it — a row nothing but \
+         taking that transition can produce"
+    );
+    assert_eq!(deferrals[1]["fields"]["id"], "BH-002");
+}
+
+#[test]
+fn test_a_caller_supplied_stamp_is_refused_and_appends_nothing() {
+    // The rule the issue asked to decide explicitly: refuse, do not silently
+    // overwrite. A config that forgot to stamp and one being forged must not
+    // read identically at the gate.
+    let dir = setup_stamped_protocol();
+    let before = ledger_rows(dir.path()).len();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "event",
+            "check_done",
+            "--field",
+            "id=BH-001",
+            "--field",
+            "reason=theoretical",
+            "--field",
+            "recorded_by=hook:hooks/theoretical_courier.py",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .code(4)
+        .stderr(predicate::str::contains("is stamped"));
+
+    assert_eq!(
+        ledger_rows(dir.path()).len(),
+        before,
+        "a refused write must leave the ledger alone"
+    );
+}
+
+#[test]
+fn test_a_stamped_field_is_not_a_missing_required_field() {
+    // The field is required, and the caller never supplies it. If the required
+    // check did not exempt it, declaring one would break every existing caller.
+    let dir = setup_stamped_protocol();
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "event",
+            "check_done",
+            "--field",
+            "id=BH-001",
+            "--field",
+            "reason=theoretical",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_a_gate_tells_the_agents_row_from_a_writer_it_trusts() {
+    // The driven attack from the issue, run against the shipped binary: one
+    // agent-typed word used to close a finding the run itself filed. The
+    // predicate now asks *who wrote it*, and the agent cannot answer.
+    let dir = setup_stamped_protocol();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "event",
+            "check_done",
+            "--field",
+            "id=BH-001",
+            "--field",
+            "reason=theoretical",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    let output = Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "query",
+            "SELECT count(*) AS n FROM events WHERE type='check_done' \
+             AND reason='theoretical' \
+             AND recorded_by='hook:hooks/theoretical_courier.py'",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.lines().any(|l| l.trim() == "0"),
+        "the agent's deferral must not satisfy a predicate keyed on the \
+         courier's provenance:\n{}",
+        stdout
+    );
+
+    let output = Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "query",
+            "SELECT recorded_by FROM events WHERE type='check_done'",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("agent:cli"),
+        "the stamp is an ordinary queryable column:\n{}",
+        stdout
+    );
+}

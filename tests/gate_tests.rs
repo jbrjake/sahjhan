@@ -1894,6 +1894,7 @@ fn test_field_validation_rejects_invalid_pattern() {
                 pattern: Some(r"^[a-zA-Z0-9_-]+$".to_string()),
                 values: None,
                 optional: false,
+                stamped: false,
             }],
         },
     );
@@ -1951,6 +1952,7 @@ fn test_field_validation_accepts_valid_pattern() {
                 pattern: Some(r"^[a-zA-Z0-9_-]+$".to_string()),
                 values: None,
                 optional: false,
+                stamped: false,
             }],
         },
     );

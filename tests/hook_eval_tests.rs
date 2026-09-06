@@ -93,6 +93,7 @@ fn base_config() -> ProtocolConfig {
         lint: Default::default(),
         daemon: Default::default(),
         vault_policies: std::collections::HashMap::new(),
+        trusted_callers: None,
     }
 }
 
@@ -520,6 +521,7 @@ fn test_hook_eval_auto_record() {
                 pattern: None,
                 values: None,
                 optional: false,
+                stamped: false,
             }],
             restricted: None,
         },
@@ -900,4 +902,87 @@ fn test_an_unfiltered_gate_is_unchanged_by_actor_scoping() {
         dir.path(),
     );
     assert_eq!(result.decision, "allow", "{:?}", result.messages);
+}
+
+// ---------------------------------------------------------------------------
+// Auto-record provenance (sahjhan #50)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_hook_eval_auto_record_stamps_an_agent_reachable_identity() {
+    // `sahjhan hook eval` is normally run by the harness, but the agent can run
+    // it too, with the same arguments — so the stamp is honest about that
+    // rather than implying a hook wrote it. What the result *reports* is what
+    // gets appended, so it is stamped before the report is built.
+    let dir = tempdir().unwrap();
+    let mut config = base_config();
+
+    config.events.insert(
+        "tool_usage".to_string(),
+        sahjhan::config::EventConfig {
+            attestation: None,
+            producers: vec![],
+            description: "Tool usage event".to_string(),
+            fields: vec![
+                sahjhan::config::EventFieldConfig {
+                    name: "file_path".to_string(),
+                    field_type: "string".to_string(),
+                    pattern: None,
+                    values: None,
+                    optional: false,
+                    stamped: false,
+                },
+                sahjhan::config::EventFieldConfig {
+                    name: "recorded_by".to_string(),
+                    field_type: "string".to_string(),
+                    pattern: None,
+                    values: None,
+                    optional: false,
+                    stamped: true,
+                },
+            ],
+            restricted: None,
+        },
+    );
+
+    let ledger = setup_ledger_in_state(dir.path(), "working");
+
+    config.hooks.push(HookConfig {
+        event: HookEvent::PostToolUse,
+        tools: Some(vec!["Edit".to_string()]),
+        states: None,
+        states_not: None,
+        action: None,
+        message: None,
+        gate: None,
+        check: None,
+        auto_record: Some(AutoRecordConfig {
+            event_type: "tool_usage".to_string(),
+            fields: {
+                let mut f = HashMap::new();
+                f.insert("file_path".to_string(), "{tool.file_path}".to_string());
+                f
+            },
+        }),
+        filter: None,
+    });
+
+    let request = HookEvalRequest {
+        event: HookEvent::PostToolUse,
+        tool: Some("Edit".to_string()),
+        file: Some("src/lib.rs".to_string()),
+        output_text: None,
+        agent_id: None,
+    };
+
+    let result = evaluate_hooks(&config, &ledger, &request, dir.path(), dir.path());
+    assert_eq!(result.auto_records.len(), 1);
+    assert_eq!(
+        result.auto_records[0].fields.get("recorded_by").unwrap(),
+        "agent:hook-eval"
+    );
+    assert_eq!(
+        result.auto_records[0].fields.get("file_path").unwrap(),
+        "src/lib.rs"
+    );
 }

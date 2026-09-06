@@ -399,14 +399,27 @@ fn handle_connection(
     // all connections are allowed (the development default). A present
     // manifest is enforced as written: an empty `[callers]` table denies
     // every caller rather than allowing every caller.
-    let (authenticated, auth_reason) = match trusted_callers {
-        None => (true, None),
+    //
+    // The verified script path doubles as this peer's recorded identity: a
+    // `record_event` from it stamps `hook:<path>` (#50). With no manifest there
+    // is no identity to stamp, and the daemon says so — `daemon:unverified` —
+    // rather than implying it authenticated something.
+    let (authenticated, auth_reason, recorder) = match trusted_callers {
+        None => (true, None, crate::provenance::Recorder::UnverifiedPeer),
         Some(manifest) => match auth::authenticate_peer(&stream, manifest, plugin_root) {
-            Ok(()) => (true, None),
+            Ok(script) => (
+                true,
+                None,
+                crate::provenance::Recorder::TrustedCaller(script),
+            ),
             Err(e) => {
                 let reason = e.reason_code().to_string();
                 eprintln!("auth: {} (reason: {})", e, reason);
-                (false, Some(reason))
+                (
+                    false,
+                    Some(reason),
+                    crate::provenance::Recorder::UnverifiedPeer,
+                )
             }
         },
     };
@@ -442,6 +455,7 @@ fn handle_connection(
                     last_activity,
                     idle_timeout,
                     plugin_root,
+                    &recorder,
                 )
             }
             Ok(req) => {
@@ -458,6 +472,7 @@ fn handle_connection(
                         last_activity,
                         idle_timeout,
                         plugin_root,
+                        &recorder,
                     )
                 } else {
                     let reason = auth_reason.as_deref().unwrap_or("pid_resolution_failed");
@@ -491,6 +506,7 @@ fn handle_request(
     last_activity: Instant,
     idle_timeout: u64,
     config_dir: &Path,
+    recorder: &crate::provenance::Recorder,
 ) -> Response {
     match req {
         Request::Sign { event_type, fields } => {
@@ -638,7 +654,7 @@ fn handle_request(
             PatchMode::Recursive,
         ),
         Request::RecordEvent { event_type, fields } => {
-            handle_record_event(config_dir, &event_type, fields)
+            handle_record_event(config_dir, &event_type, fields, recorder)
         }
     }
 }
@@ -825,6 +841,7 @@ fn handle_record_event(
     config_dir: &Path,
     event_type: &str,
     fields: HashMap<String, String>,
+    recorder: &crate::provenance::Recorder,
 ) -> Response {
     let config = match ProtocolConfig::load(config_dir) {
         Ok(c) => c,
@@ -872,6 +889,7 @@ fn handle_record_event(
         event_type,
         fields,
         &targeting,
+        recorder,
     );
     if code == EXIT_SUCCESS {
         let seq = machine

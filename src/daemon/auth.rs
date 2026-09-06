@@ -12,7 +12,7 @@
 // inherited: only the process *directly* holding the socket is examined.
 //
 // ## Index
-// - TrustedCallersManifest    — manifest struct + loader
+// - TrustedCallersManifest    — re-export of the manifest struct + loader (config::trusted_callers)
 // - TrustedCallersManifest::verify_caller — path lookup + SHA-256 verification
 // - extract_script_path       — extract script path from interpreter cmdline
 // - AuthError                 — authentication error type
@@ -20,13 +20,16 @@
 // - authenticate_peer         — direct-peer caller authentication (no ancestor walk)
 
 use crate::daemon::platform;
-use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use subtle::ConstantTimeEq;
 use thiserror::Error;
+
+// The manifest is sealed config, and lint reads it too (L8 asks whether a
+// `hook:<path>` provenance filter names a script anything can produce). One
+// parse, in config; the verification below is the daemon's half.
+pub use crate::config::trusted_callers::TrustedCallersManifest;
 
 #[derive(Debug, Error)]
 pub enum AuthError {
@@ -50,18 +53,7 @@ pub enum AuthError {
     Platform(String),
 }
 
-#[derive(Debug, Deserialize)]
-pub struct TrustedCallersManifest {
-    pub callers: HashMap<String, String>,
-}
-
 impl TrustedCallersManifest {
-    pub fn load(path: &Path) -> Result<Self, AuthError> {
-        let content = std::fs::read_to_string(path)?;
-        let manifest: TrustedCallersManifest = toml::from_str(&content)?;
-        Ok(manifest)
-    }
-
     pub fn verify_caller(&self, plugin_root: &Path, relative_path: &str) -> Result<(), AuthError> {
         let expected_hash =
             self.callers
@@ -129,6 +121,11 @@ pub fn extract_script_path(args: &[String]) -> Option<String> {
 /// canonicalizes under `plugin_root` (the `--config-dir`) and appears in
 /// the trusted-callers manifest with a matching SHA-256.
 ///
+/// Returns the manifest-relative script path on success. That path is the only
+/// caller identity the daemon has, so it is what a `record_event` from this
+/// peer stamps into a `stamped = true` field (`hook:<path>`, #50) — the
+/// verification and the recorded claim are then the same fact, not two.
+///
 /// Deliberately absent, both removed with the ancestor walk:
 ///
 /// - **No walk up the process tree.** Manifest authority must not be
@@ -142,7 +139,7 @@ pub fn authenticate_peer(
     stream: &UnixStream,
     manifest: &TrustedCallersManifest,
     plugin_root: &Path,
-) -> Result<(), AuthError> {
+) -> Result<String, AuthError> {
     let peer_pid = platform::get_peer_pid(stream)
         .map_err(|e| AuthError::Platform(format!("cannot get peer PID: {}", e)))?;
 
@@ -167,7 +164,10 @@ pub fn authenticate_peer(
         .strip_prefix(&plugin_root_canonical)
         .map_err(|_| AuthError::NotInManifest {
             path: canonical.display().to_string(),
-        })?;
+        })?
+        .to_string_lossy()
+        .into_owned();
 
-    manifest.verify_caller(&plugin_root_canonical, &relative.to_string_lossy())
+    manifest.verify_caller(&plugin_root_canonical, &relative)?;
+    Ok(relative)
 }

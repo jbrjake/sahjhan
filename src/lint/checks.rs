@@ -11,11 +11,16 @@
 // - [check-l5]  l5_dead_vocabulary()      — a declared event nothing produces or consumes
 // - [check-l6]  l6_predicate_drift()      — inline predicates near-identical to a named query or to each other
 // - [check-l7]  l7_forgeable_evidence()   — a gate requiring evidence stronger than its producer supplies
+// - [check-l8]  l8_provenance_filters()   — a predicate filtering on a stamp no writer produces, or one the agent writes
 // - [inline-predicates] inline_query_predicates() — every inline query gate SQL, with its location
+// - [all-predicates]    all_predicates()          — the above plus every named query
 
 use crate::config::GateConfig;
 
-use super::index::{gate_event_refs, is_engine_event, EventRef};
+use super::index::{
+    gate_event_refs, is_engine_event, producible_stamps, provenance_filters, sql_event_mentions,
+    EventRef,
+};
 use super::similarity;
 use super::{Analysis, LintFinding};
 
@@ -829,6 +834,133 @@ fn collect_attested_refs(
             },
         }
     }
+}
+
+// [check-l8]
+/// L8 — a provenance filter must name a writer that can exist.
+///
+/// A `stamped = true` field carries the write path an event arrived on, and its
+/// value comes from the engine rather than the caller (#50). That only buys a
+/// gate anything if the value it filters on is one some writer actually
+/// produces:
+///
+/// - **no writer produces it** — error. `recorded_by = 'hook:hooks/courier.py'`
+///   where the manifest lists no such script is a gate that can never pass; the
+///   same literal under `!=` is a filter that excludes nothing. Either way the
+///   predicate names a writer that does not exist, which is the defect.
+/// - **an agent-reachable writer produces it** — warning, and only for a
+///   positive equality. `recorded_by = 'agent:cli'` is satisfied by anything
+///   that can run the binary, so as *evidence* it constrains nobody. Excluding
+///   it (`!= 'agent:cli'`) is the correct use and is not reported.
+///
+/// Scope of the writer set: predicates that name declared event types are
+/// checked against the writers of those types; one that names none is checked
+/// against every writer in the protocol, which is the weakest sound question
+/// available. Both directions are decided from config alone — the daemon's
+/// `trusted-callers.toml` included, since `hook:<path>` is the one identity
+/// that comes from content hashing rather than from a command line.
+pub fn l8_provenance_filters(analysis: &Analysis) -> Vec<LintFinding> {
+    let config = analysis.config;
+    let mut findings = Vec::new();
+
+    for (location, sql) in all_predicates(config) {
+        let filters = provenance_filters(&sql);
+        if filters.is_empty() {
+            continue;
+        }
+        let mentioned = sql_event_mentions(&sql, config);
+        let producible = producible_stamps(config, &mentioned);
+        let scope = if mentioned.is_empty() {
+            "any event this protocol declares".to_string()
+        } else {
+            format!("'{}'", mentioned.join("', '"))
+        };
+
+        for (literal, positive_equality) in filters {
+            if !producible.contains(&literal) {
+                findings.push(
+                    LintFinding::error(
+                        "L8",
+                        location.clone(),
+                        format!(
+                            "predicate filters on provenance '{}', which no writer of \
+                             {} can stamp",
+                            literal, scope
+                        ),
+                    )
+                    .with_hint(hint_for_unproducible(&literal)),
+                );
+            } else if positive_equality && is_agent_reachable_stamp(&literal) {
+                findings.push(
+                    LintFinding::warning(
+                        "L8",
+                        location.clone(),
+                        format!(
+                            "predicate requires provenance '{}', which any caller that \
+                             can run the binary produces",
+                            literal
+                        ),
+                    )
+                    .with_hint(
+                        "as evidence this constrains nobody. Exclude it \
+                         (<> 'agent:cli') or filter on a writer the agent cannot be.",
+                    ),
+                );
+            }
+        }
+    }
+
+    findings
+}
+
+/// Whether `literal` is a stamp an agent-reachable write path produces.
+fn is_agent_reachable_stamp(literal: &str) -> bool {
+    [
+        crate::provenance::Recorder::AgentCli,
+        crate::provenance::Recorder::AgentHookEval,
+    ]
+    .iter()
+    .any(|r| r.id() == literal)
+}
+
+/// What to do about a stamp value nothing can write, by namespace.
+fn hint_for_unproducible(literal: &str) -> String {
+    if let Some(path) = literal.strip_prefix("hook:") {
+        format!(
+            "'{}' is stamped only for a peer whose script trusted-callers.toml \
+             lists and hashes. Add it there, or fix the path.",
+            path
+        )
+    } else if let Some(command) = literal.strip_prefix("engine:emit:") {
+        format!(
+            "no transition named '{}' emits one of these events. Check the \
+             transition's command, or add the emit.",
+            command
+        )
+    } else if literal.starts_with("engine:") {
+        "the only provenance the engine stamps for itself is \
+         'engine:emit:<transition command>'."
+            .to_string()
+    } else {
+        "check the spelling against the stamp values in docs/hardening.md".to_string()
+    }
+}
+
+// [all-predicates]
+/// Every SQL predicate in the config, inline or named, with a location.
+///
+/// L6 deliberately looks only at inline predicates — a named query is already
+/// single-sourced, so it cannot drift from itself. L8 asks a different
+/// question, one a named query can get wrong just as easily.
+fn all_predicates(config: &crate::config::ProtocolConfig) -> Vec<(String, String)> {
+    let mut out = inline_query_predicates(config);
+    for (name, query) in &config.queries {
+        out.push((
+            format!("protocol.toml: [queries.{}]", name),
+            query.sql.clone(),
+        ));
+    }
+    out
 }
 
 // [inline-predicates]

@@ -48,3 +48,16 @@ from = "merge_done"
 to = "shipped"
 command = "ship"
 gates = []
+
+# Emits `finding_deferred` rather than asking the agent to restate the fact. The
+# emitted row is stamped `engine:emit:defer`, which nothing but taking this
+# transition can write.
+[[transitions]]
+from = "fix_loop"
+to = "fix_loop"
+command = "defer"
+args = ["item_id"]
+gates = []
+  [[transitions.emits]]
+  event = "finding_deferred"
+  fields = { id = "{{item_id}}", reason = "low_priority" }

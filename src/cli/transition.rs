@@ -404,7 +404,13 @@ pub fn cmd_gate_check(
 
 // [record-and-render]
 /// Shared event recording + render triggering logic.
-/// Used by both cmd_event and cmd_authed_event after their respective validations.
+///
+/// Used by `cmd_event`, `cmd_authed_event`, and the daemon's `record_event`
+/// after their respective validations. `recorder` names which of those this
+/// call is, and is the *only* place those three paths stamp provenance — the
+/// alternative was three call sites each remembering to, which is one
+/// forgotten line away from an unstamped row that reads like a stamped one
+/// (#50).
 #[allow(clippy::too_many_arguments)]
 pub fn record_and_render(
     config: &crate::config::ProtocolConfig,
@@ -413,9 +419,14 @@ pub fn record_and_render(
     manifest: &mut crate::manifest::tracker::Manifest,
     data_dir: &std::path::Path,
     event_type: &str,
-    fields: HashMap<String, String>,
+    mut fields: HashMap<String, String>,
     targeting: &LedgerTargeting,
+    recorder: &crate::provenance::Recorder,
 ) -> i32 {
+    for (field, value) in crate::provenance::stamps_for(config.events.get(event_type), recorder) {
+        fields.insert(field, value);
+    }
+
     match machine.record_event(event_type, fields) {
         Ok(()) => {
             if let Err((code, msg)) =
@@ -489,14 +500,28 @@ pub fn record_and_render(
 ///
 /// Checks that required fields are present, and validates pattern/values
 /// constraints on all provided fields (including optional ones).
+///
+/// A `stamped = true` field is the engine's to write (#50): supplying one is
+/// refused outright, and *not* supplying one is never "missing" — so it is
+/// excluded from the required-field check rather than added to every caller.
 pub fn validate_event_fields(
     event_config: &EventConfig,
     fields: &HashMap<String, String>,
     event_type: &str,
 ) -> Result<(), (i32, String)> {
-    // Check required fields are present (skip optional fields)
+    // Refused before anything else, so a forged provenance is reported as the
+    // forgery it is rather than as some downstream pattern failure.
+    if let Err(msg) = crate::provenance::reject_supplied_stamp(
+        Some(event_config),
+        event_type,
+        fields.keys().map(|k| k.as_str()),
+    ) {
+        return Err((EXIT_USAGE_ERROR, msg));
+    }
+
+    // Check required fields are present (skip optional and stamped fields)
     for field_def in &event_config.fields {
-        if !field_def.optional && !fields.contains_key(&field_def.name) {
+        if !field_def.optional && !field_def.stamped && !fields.contains_key(&field_def.name) {
             return Err((
                 EXIT_USAGE_ERROR,
                 format!(
@@ -616,5 +641,6 @@ pub fn cmd_event(
         event_type,
         fields,
         targeting,
+        &crate::provenance::Recorder::AgentCli,
     )
 }

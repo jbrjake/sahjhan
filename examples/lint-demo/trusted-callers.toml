@@ -1,0 +1,11 @@
+# The daemon's caller manifest: which scripts may speak the socket protocol, by
+# config-dir-relative path, pinned by content hash.
+#
+# lint L8 reads the *paths* here, because a `hook:<path>` provenance filter can
+# only be satisfied by a script this file lists — see the theoretical_deferrals
+# query in protocol.toml. The daemon reads the hashes, at connect time.
+
+[callers]
+# Replace with `sha256:` + the script's SHA-256. lint checks the key; only the
+# daemon checks the value.
+"hooks/theoretical_courier.py" = "sha256:REPLACE-WITH-THE-SCRIPTS-SHA256"

@@ -56,6 +56,16 @@ fields = [
     { name = "run", type = "string", pattern = "^\\d+$" },
     { name = "trigger", type = "string", pattern = "^user_prompt_submit$" },
 ]
+
+# Agent-writable, and carrying a stamped field the engine owns (#50): the
+# daemon must record *which peer* it authenticated, not what the peer claims.
+[events.finding_deferred]
+description = "A finding set aside"
+fields = [
+    { name = "id", type = "string" },
+    { name = "reason", type = "string" },
+    { name = "recorded_by", type = "string", stamped = true },
+]
 "#,
     )
     .unwrap();
@@ -197,4 +207,132 @@ fn test_record_event_rejects_missing_required_field() {
     assert!(ledger_events(dir.path(), "context_reset").is_empty());
 
     stop_daemon(&mut daemon);
+}
+
+// ---------------------------------------------------------------------------
+// Provenance stamping on the record path (sahjhan #50)
+// ---------------------------------------------------------------------------
+
+#[test]
+#[ignore]
+fn test_record_event_stamps_daemon_unverified_when_auth_is_unconfigured() {
+    // No trusted-callers.toml, so the daemon serves every peer and can name
+    // none of them. It says exactly that rather than implying it verified
+    // something — a gate filtering on this value is filtering on "anyone".
+    let dir = setup_dir();
+    let mut daemon = start_daemon(dir.path());
+    wait_for_socket(dir.path());
+
+    let req = r#"{"op": "record_event", "event_type": "finding_deferred", "fields": {"id": "BH-001", "reason": "theoretical"}}"#;
+    let resp = send_request(dir.path(), req);
+    assert_eq!(resp["ok"], true, "record_event failed: {:?}", resp);
+
+    let events = ledger_events(dir.path(), "finding_deferred");
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["fields"]["recorded_by"], "daemon:unverified");
+
+    stop_daemon(&mut daemon);
+}
+
+#[test]
+#[ignore]
+fn test_record_event_refuses_a_peer_supplied_stamp() {
+    let dir = setup_dir();
+    let mut daemon = start_daemon(dir.path());
+    wait_for_socket(dir.path());
+
+    let req = r#"{"op": "record_event", "event_type": "finding_deferred", "fields": {"id": "BH-001", "reason": "theoretical", "recorded_by": "hook:hooks/courier.py"}}"#;
+    let resp = send_request(dir.path(), req);
+    assert_eq!(resp["ok"], false, "{:?}", resp);
+    assert_eq!(resp["error"], "invalid_field");
+    assert!(
+        ledger_events(dir.path(), "finding_deferred").is_empty(),
+        "a forged provenance must not be persisted, stamped over, or otherwise \
+         quietly accepted"
+    );
+
+    stop_daemon(&mut daemon);
+}
+
+/// The issue's arrangement: a courier script that speaks the socket itself,
+/// listed and hashed in trusted-callers.toml, recording the event whose
+/// provenance a gate keys on.
+fn setup_dir_with_courier() -> tempfile::TempDir {
+    let dir = setup_dir();
+    let config_dir = dir.path().join("enforcement");
+    let hooks_dir = config_dir.join("hooks");
+    std::fs::create_dir_all(&hooks_dir).unwrap();
+
+    let courier = r#"#!/usr/bin/env python3
+import json, socket, sys
+s = socket.socket(socket.AF_UNIX)
+s.connect(sys.argv[1])
+req = {"op": "record_event", "event_type": "finding_deferred",
+       "fields": {"id": "BH-001", "reason": "theoretical"}}
+s.sendall((json.dumps(req) + "\n").encode())
+resp = s.makefile().readline()
+print(resp, end="")
+sys.exit(0 if json.loads(resp).get("ok") else 1)
+"#;
+    std::fs::write(hooks_dir.join("theoretical_courier.py"), courier).unwrap();
+
+    use sha2::{Digest, Sha256};
+    let hash = format!(
+        "sha256:{}",
+        hex::encode(Sha256::digest(
+            std::fs::read(hooks_dir.join("theoretical_courier.py")).unwrap()
+        ))
+    );
+    std::fs::write(
+        config_dir.join("trusted-callers.toml"),
+        format!(
+            "[callers]\n\"hooks/theoretical_courier.py\" = \"{}\"\n",
+            hash
+        ),
+    )
+    .unwrap();
+
+    // trusted-callers.toml is sealed config, and it did not exist when `init`
+    // ran — re-init so the genesis seal covers the file as written.
+    std::fs::remove_dir_all(dir.path().join("output")).unwrap();
+    std::fs::create_dir_all(dir.path().join("output")).unwrap();
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "init"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    dir
+}
+
+#[test]
+#[ignore]
+fn test_record_event_stamps_the_authenticated_script_path() {
+    // The half of #50 that no existing mechanism reached: the courier's
+    // deferral and an agent-typed one no longer write a byte-identical row.
+    let dir = setup_dir_with_courier();
+    let mut daemon = start_daemon(dir.path());
+    wait_for_socket(dir.path());
+
+    let output = std::process::Command::new("python3")
+        .arg(dir.path().join("enforcement/hooks/theoretical_courier.py"))
+        .arg(dir.path().join("output/.sahjhan/daemon.sock"))
+        .output()
+        .expect("courier should run");
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+
+    stop_daemon(&mut daemon);
+
+    assert!(
+        output.status.success(),
+        "the courier is listed and hashed, so it authenticates: {}",
+        stdout
+    );
+    let events = ledger_events(dir.path(), "finding_deferred");
+    assert_eq!(events.len(), 1, "{}", stdout);
+    assert_eq!(
+        events[0]["fields"]["recorded_by"], "hook:hooks/theoretical_courier.py",
+        "the identity the daemon verified is the identity it records"
+    );
 }

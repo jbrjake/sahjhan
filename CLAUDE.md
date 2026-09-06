@@ -54,7 +54,7 @@ conversation and then lost with the session.
 
 ```
 cargo build                    # Build
-cargo test                     # Run all tests (583+ tests)
+cargo test                     # Run all tests (750+ tests)
 cargo test <test_name>         # Run one test
 cargo clippy -- -D warnings    # Lint (Rust)
 sahjhan lint                   # Lint (protocol graph — static integrity checks)
@@ -64,7 +64,7 @@ cargo fmt --all -- --check     # CI format check (run before every commit)
 
 **Config dir:** Protocol TOML files (protocol.toml, states.toml, transitions.toml, events.toml, renders.toml, hooks.toml)
 **Data dir:** Runtime state (ledger.jsonl, manifest.json, ledgers.toml registry, active-ledger marker)
-**Example config:** `examples/minimal/` (smallest working protocol), `examples/lint-demo/` (every lint-checked surface: named queries, boundaries, producers, attestation)
+**Example config:** `examples/minimal/` (smallest working protocol), `examples/lint-demo/` (every lint-checked surface: named queries, boundaries, producers, attestation, stamped provenance)
 
 ---
 
@@ -99,6 +99,7 @@ Sahjhan is a protocol enforcement engine. It has:
 | Anchor filter check | `config/mod.rs` | `[check-since-filter]`, `check_filter_field` | `since_filter` shape + both field sides against the declared vocabulary; silent where undecidable (engine events, events declared with no fields) (#35) |
 | Gate anchor check | `config/mod.rs` | `[check-gate-anchor]` | Recursive scan of a gate tree for an `anchor` the engine cannot act on: a value naming neither anchor or not a string, and an `anchor` on a gate type that runs no command (composites included — anchoring is per leaf) (#46) |
 | Emit anchor check | `config/mod.rs` | `[check-emit-anchor]` | The same two defects on a transition's emit: an `anchor` naming neither anchor or not a string, and an `anchor` on an emit that declares no `commands` (nothing there has a directory) (#48) |
+| Stamped-field checks | `config/mod.rs` | `[validate]` 3c/3d, 5b | A config surface writing a field the engine owns — a transition emit's `fields`, a hook `auto_record`'s `fields` — and a caller-facing constraint on one (`pattern` / `values` / `optional`), which would be inert (#50) |
 | Recursive gate validator | `config/mod.rs` | `[validate-gate]` | Validates composite (any_of, all_of, not, k_of_n) and leaf gates recursively |
 | Protocol metadata | `config/protocol.rs` | `ProtocolMeta`, `PathsConfig`, `SetConfig` | protocol.toml structures |
 | Ledger template | `config/protocol.rs` | `LedgerTemplateConfig` | `[ledgers]` section; path or path_template for template-based ledger creation |
@@ -122,10 +123,11 @@ Sahjhan is a protocol enforcement engine. It has:
 | Transition integrity | `config/transitions.rs` | `IntegrityConfig` | `[transitions.integrity] requires_attestation`; a gate may override it with its own `requires_attestation` param (#32) |
 | Transition defs | `config/transitions.rs` | `TransitionConfig`, `GateConfig` | transitions.toml; `args` declares positional params; `boundary` tags the edge as satisfying a `[[boundaries]]` entry; `intent` is optional per-gate "why"; `gates` holds nested child gates for composite types (any_of, all_of, not, k_of_n); remaining fields are `#[serde(flatten)]` into params |
 | Transition emit | `config/transitions.rs` | `EmitConfig` | `emits = [...]`: the event a successful transition appends by itself — `commands` derive values, `fields` template them, `anchor` says which tree those commands run in (#48). `deny_unknown_fields`: a key this struct cannot act on is a load error, not an inert line |
-| Event definitions | `config/events.rs` | `EventConfig`, `EventFieldConfig` | events.toml; field patterns for validation; `restricted` marks HMAC-only events; `optional` marks non-required fields; `attestation` names its evidence strength |
+| Event definitions | `config/events.rs` | `EventConfig`, `EventFieldConfig` | events.toml; field patterns for validation; `restricted` marks HMAC-only events; `optional` marks non-required fields; `attestation` names its evidence strength; `stamped` marks a field the engine owns (#50) |
 | Event producers | `config/events.rs` | `ProducerConfig` | `[[events.X.producers]]`; opaque `id` + optional `available_in_states`; consumed by lint L1/L2 (#32) |
 | Engine events | `config/events.rs` | `ENGINE_EVENTS`, `is_engine_event` | Event types the engine writes itself — part of the vocabulary without being declared; re-exported by `lint/index.rs` |
 | Render definitions | `config/renders.rs` | `RenderConfig` | renders.toml; trigger/template/target/ledger/ledger_template |
+| Trusted callers | `config/trusted_callers.rs` | `TrustedCallersManifest` | trusted-callers.toml as loaded config: path → `sha256:<hex>`. One parse, two readers — the daemon verifies a peer against it, lint L8 asks whether a `hook:<path>` provenance can be produced at all. `None` (absent file) and `Some(empty)` are different claims (#50) |
 | Config seal hashing | `config/mod.rs` | `compute_config_seals()` | SHA-256 hash all eight sealed config files (incl. `trusted-callers.toml` and `vault.toml`) |
 
 ### gates/ — Gate Evaluation
@@ -193,6 +195,8 @@ Config-only analysis: no ledger is opened, no gate command runs. Answers "is thi
 | Gate event refs | `lint/index.rs` | `EventRef`, `[gate-event-refs]` | Recursive walk; `not` flips polarity, `any_of`/`k_of_n` mark disjunctive |
 | Consumed events | `lint/index.rs` | `[consumed-events]` | Every event any config surface reads |
 | SQL event mentions | `lint/index.rs` | `[sql-event-mentions]` | Declared event names quoted in a predicate |
+| Producible stamps | `lint/index.rs` | `[producible-stamps]` | Every provenance value some writer of an event can stamp — one arm per `Recorder`, since each is reachable under different config (#50) |
+| Provenance filters | `lint/index.rs` | `[provenance-filters]` | Stamp-namespace literals in a predicate, each with whether a *positive equality* reaches it. `!=`, `<>` and `NOT (<col> = …)` are recognized as negations; anything else reads as positive, which is the cost of not shipping a SQL parser into a lint pass |
 | L1 unsatisfiable gate | `lint/checks.rs` | `[check-l1]` | Required event with no producer (error if restricted or `require_producers`) |
 | L2 temporal unsatisfiability | `lint/checks.rs` | `[check-l2]` | Producer windows vs `ancestors(from) ∪ {from}`; a producer with no window is unconstrained |
 | L3 boundary route-around | `lint/checks.rs` | `[check-l3]` | Delete tagged edges, re-test reachability; prints the surviving bypass path |
@@ -200,7 +204,9 @@ Config-only analysis: no ledger is opened, no gate command runs. Answers "is thi
 | L5 dead vocabulary | `lint/checks.rs` | `[check-l5]` | Declared event nothing produces or consumes |
 | L7 forgeable evidence | `lint/checks.rs` | `[check-l7]` | Event attestation vs the level a transition/gate requires, over the `[attestation]` ordering |
 | L6 predicate drift | `lint/checks.rs` | `[check-l6]` | Inline predicate near-identical to a named query or to another inline one |
+| L8 provenance filter | `lint/checks.rs` | `[check-l8]` | A stamp literal no writer can produce (error — the gate names a writer that does not exist), or one the agent produces required by a positive equality (warning — as evidence it constrains nobody) (#50) |
 | Inline predicates | `lint/checks.rs` | `[inline-predicates]` | Every query gate carrying inline `sql`, with its location |
+| All predicates | `lint/checks.rs` | `[all-predicates]` | The above plus every named query. L6 deliberately skips named queries (a named query cannot drift from itself); L8 asks a question one can get wrong just as easily |
 | SQL normalization | `lint/similarity.rs` | `[normalize-sql]` | Case/whitespace/punctuation-insensitive form |
 | Predicate similarity | `lint/similarity.rs` | `[similarity]`, `DEFAULT_THRESHOLD` | Token-level normalized edit distance (0.0..=1.0), default cutoff 0.85 |
 
@@ -210,7 +216,7 @@ Config-only analysis: no ledger is opened, no gate command runs. Answers "is thi
 |---------|------|-------------|---------|
 | State machine | `state/machine.rs` | `StateMachine` | Owns config + ledger, executes transitions; holds both anchors (`working_dir` = project root, `caller_dir` = the cwd it was constructed from), and hands **both** to gates and to emits (#46, #48) |
 | Transition outcome | `state/machine.rs` | `TransitionOutcome` | Result of a successful transition (from, to, attestations, emitted_events) |
-| Transition | `state/machine.rs` | `[transition]` | Execute named command: build params → check gates → resolve emits → append event → emit gate_attestation events → append the resolved emits |
+| Transition | `state/machine.rs` | `[transition]` | Execute named command: build params → check gates → resolve emits → stamp each with `engine:emit:<command>` → append event → emit gate_attestation events → append the resolved emits |
 | Emit resolution | `state/emit.rs` | `[resolve-emit]` | One emitted event's fields: ledger field inheritance → `state_params` → `commands` stdout → `fields` templates. Any failure returns `Err` **before** anything is appended, so a transition with a bad emit is atomic |
 | Emit working dir | `state/emit.rs` | `[emit-working-dir]` | The directory an emit's `commands` run in — the same two anchors a gate has, read by `[resolve-anchor]`. Unreadable fails the emit rather than falling back to the project, because the fallback is spelled exactly like a deliberate project anchor and the record it writes is false (#48) |
 | Build state params | `state/machine.rs` | `[build-state-params]` | Derive params from state config + set state (`source` field) |
@@ -245,6 +251,24 @@ Config-only analysis: no ledger is opened, no gate command runs. Answers "is thi
 | Find effective seal | `ledger/chain.rs` | `[find-effective-seal]` | Most recent config_reseal or genesis seals |
 | Verify config seal | `ledger/chain.rs` | `[verify-config-seal]` | Verify config files match sealed hashes |
 | Config integrity error | `ledger/entry.rs` | `ConfigIntegrityViolation` | Error when config files don't match seal |
+
+### provenance.rs — Who Recorded an Event (#50)
+
+**The rule:** `restricted` says *whether* an event may be recorded and says it
+for the whole event type. A `stamped = true` field says *which write path*
+recorded one row of it, on an event that stays writable by everything that
+could write it before. Reach for this module before adding a sixth way to
+append a consumer-declared event — a write path with no `Recorder` arm writes
+an unstamped row that reads exactly like a stamped one.
+
+| Concept | File | Anchor/Item | Purpose |
+|---------|------|-------------|---------|
+| Write paths | `provenance.rs` | `Recorder` | The five ways a declared event reaches the ledger, plus the daemon's unauthenticated one; `agent:`-prefixed arms say plainly the agent could have produced them |
+| Stamp value | `provenance.rs` | `[recorder-id]` | `agent:cli`, `agent:hook-eval`, `authed:cli`, `engine:emit:<transition>`, `hook:<script path>`, `daemon:unverified` |
+| Reserved namespace | `provenance.rs` | `STAMP_NAMESPACES`, `[is-stamp-value]` | The prefixes lint reads back out of SQL. Each stops one segment short of the values under it (`engine:`, not `engine:emit:`) so a *misspelled* stamp is still recognized as one — otherwise L8 is silent on exactly the typo it exists to catch |
+| Stamped fields | `provenance.rs` | `[stamped-fields]` | The fields of an event whose values the engine owns |
+| Apply | `provenance.rs` | `[stamps-for]` | The `(field, value)` pairs one recorder writes; empty for an undeclared event, so every write path calls it unconditionally |
+| Refuse | `provenance.rs` | `[reject-supplied]` | A caller that supplied a stamped field is refused, never overwritten — silently winning would make a config that *forgot* to stamp read like one being forged |
 
 ### paths.rs — Project-Root Anchoring
 
@@ -320,7 +344,7 @@ current directory. Reach for this module before writing
 | Hook message | `hooks/eval.rs` | `HookMessage` | Single enforcement message (source, rule_index, action, message) |
 | Auto-record result | `hooks/eval.rs` | `AutoRecordResult` | Event to auto-record in ledger |
 | Monitor warning | `hooks/eval.rs` | `MonitorWarning` | Monitor that fired (name, message) |
-| Evaluate hooks | `hooks/eval.rs` | `evaluate_hooks` | Main entry: managed paths, write-gated, hooks, monitors |
+| Evaluate hooks | `hooks/eval.rs` | `evaluate_hooks` | Main entry: managed paths, write-gated, hooks, monitors; an `auto_record` is stamped `agent:hook-eval` here rather than at the append, so what the result *reports* is what gets written (#50) |
 | Derive current state | `hooks/eval.rs` | `derive_current_state` | Find current state from last state_transition (pub(crate): also used by daemon enforcement_read overlay) |
 | Hook matching | `hooks/eval.rs` | `hook_matches` | Check event/tool/states/filter |
 | Glob matching | `hooks/eval.rs` | `glob_match` | Simple glob: `*`, `**`, `*.ext` |
@@ -339,9 +363,9 @@ current directory. Reach for this module before writing
 | Server start | `daemon/mod.rs` | `DaemonServer::start` | Bind socket, set 0600 perms, write PID, signal handling, non-blocking accept loop |
 | Idle timeout | `daemon/mod.rs` | `DaemonServer::start` | last_activity tracking in accept loop; clean shutdown on idle_timeout expiry |
 | Server cleanup | `daemon/mod.rs` | `DaemonServer::cleanup` | Remove socket and PID files |
-| Handle connection | `daemon/mod.rs` | `handle_connection` | Read JSON lines from stream, dispatch to handle_request, write responses; I/O bounded by `CONNECTION_IO_TIMEOUT` (10s) so a silent client cannot wedge the sequential accept loop |
+| Handle connection | `daemon/mod.rs` | `handle_connection` | Read JSON lines from stream, dispatch to handle_request, write responses; I/O bounded by `CONNECTION_IO_TIMEOUT` (10s) so a silent client cannot wedge the sequential accept loop. Resolves the peer's `Recorder` once — the verified script path, or `daemon:unverified` when no manifest exists (#50) |
 | Handle request | `daemon/mod.rs` | `handle_request` | Dispatch Request variant to sign/vault/status/enforcement/record_event operation |
-| Record event (authed peer) | `daemon/mod.rs` | `handle_record_event` | Append a consumer-declared event to the active ledger for an authenticated peer; ledger-write analog of `enforcement_write` (validates against events.toml, no HMAC proof) |
+| Record event (authed peer) | `daemon/mod.rs` | `handle_record_event` | Append a consumer-declared event to the active ledger for an authenticated peer; ledger-write analog of `enforcement_write` (validates against events.toml, no HMAC proof). Stamps `hook:<verified script path>` — the identity it authenticated is the identity it records (#50) |
 | Ledger-state overlay | `daemon/mod.rs` | `overlay_ledger_state` | Override enforcement blob `state` key with ledger-derived state on enforcement_read (holtz #57); fail-soft to stored bytes |
 | Derive ledger state | `daemon/mod.rs` | `derive_ledger_state` | Resolve active ledger (marker → registry → default), verify chain, derive current state; None on any failure |
 | Compute sign | `daemon/mod.rs` | `compute_sign` | HMAC-SHA256 proof computation (same algorithm as authed_event.rs) |
@@ -368,7 +392,7 @@ current directory. Reach for this module before writing
 | Script path extractor | `daemon/auth.rs` | `extract_script_path` | Extracts first non-flag arg from interpreter cmdline (the script path) |
 | Auth error | `daemon/auth.rs` | `AuthError` | NotInManifest, HashMismatch, ScriptNotFound, NoScriptPath, ManifestLoad, ManifestParse, Platform |
 | Auth reason codes | `daemon/auth.rs` | `AuthError::reason_code` | Maps error to diagnostic reason: pid_resolution_failed, hash_mismatch, peer_cred_unavailable (#26) |
-| Peer authentication | `daemon/auth.rs` | `authenticate_peer` | Direct-peer caller auth: peer PID → cmdline → script canonicalizes under --config-dir → manifest hash verify. No ancestor walk (authority is not inheritable), no own-binary exemption (the CLI never authenticates). Hardening, not the boundary — see daemon/fuse.rs |
+| Peer authentication | `daemon/auth.rs` | `authenticate_peer` | Direct-peer caller auth: peer PID → cmdline → script canonicalizes under --config-dir → manifest hash verify. No ancestor walk (authority is not inheritable), no own-binary exemption (the CLI never authenticates). Returns the manifest-relative path, which is what a `record_event` from this peer stamps (#50). Hardening, not the boundary — see daemon/fuse.rs |
 | Peer PID | `daemon/platform.rs` | `[get-peer-pid]` | Extract connecting PID from Unix socket (macOS: LOCAL_PEERPID, Linux: SO_PEERCRED) |
 | Exe path | `daemon/platform.rs` | `[get-exe-path]` | Resolve PID to executable path (macOS: proc_pidpath, Linux: /proc/pid/exe) |
 | Command line | `daemon/platform.rs` | `[get-cmdline]` | Read process command-line arguments (macOS: KERN_PROCARGS2, Linux: /proc/pid/cmdline) |
@@ -390,7 +414,7 @@ current directory. Reach for this module before writing
 | Path anchoring | `cli/commands.rs` | `[resolve-data-dir]`, `[resolve-project-root]` | Resolve `data_dir` and the project root; both delegate to `paths.rs` so they cannot drift |
 | Lint | `cli/lint.rs` | `[cmd-lint]` | Static integrity analysis; `--only <CHECK>`, `--strict`; exit 3 on errors |
 | Init/validate/reset | `cli/init.rs` | `[cmd-init]`, `[cmd-validate]`, `[cmd-reset]` | Lifecycle commands; init writes status-cache.json; reset requires HMAC proof via daemon (#26) |
-| Transition/gate/event | `cli/transition.rs` | `[cmd-transition]`, `[render-after-transitions]`, `[cmd-gate-check]`, `[record-and-render]`, `validate_event_fields`, `[cmd-event]` | State machine commands; transition updates status-cache.json |
+| Transition/gate/event | `cli/transition.rs` | `[cmd-transition]`, `[render-after-transitions]`, `[cmd-gate-check]`, `[record-and-render]`, `validate_event_fields`, `[cmd-event]` | State machine commands; transition updates status-cache.json. `[record-and-render]` takes the `Recorder` and is the one place `event` / `authed-event` / the daemon's `record_event` stamp; `validate_event_fields` refuses a caller-supplied stamp and exempts stamped fields from the required-field check (#50) |
 | Batch | `cli/batch.rs` | `[cmd-batch]`, `[parse-selector]`, `[select-steps]`, `[items-of]` | `[batches.<name>]`: one transition per item a named query returns; selector flag named by the batch's own `param`; gate refusals are reported per item, not fatal; renders once at the end |
 | Status/sets | `cli/status.rs` | `[cmd-status]`, `[cmd-set-status]`, `[cmd-set-complete]` | Status display + set management; status warns on missing cache; `--no-gates` skips transition gate evaluation (fast, side-effect-free for hook callers) |
 | Log inspection | `cli/log.rs` | `[cmd-log-dump]`, `[cmd-log-verify]`, `[cmd-log-tail]` | Ledger viewing |
@@ -451,6 +475,7 @@ main.rs [cli-main]
           → state/emit.rs [emit-working-dir]      ← project anchor, or the caller's — per emit (#48)
           → gates/command.rs [run-shell-output-with-timeout]  ← each `commands` entry, at that anchor
           → gates/template.rs [resolve-template-plain]        ← `fields` templates
+        → provenance.rs [stamps-for] Recorder::Emit(command)  ← `engine:emit:<command>` (#50)
       → ledger/chain.rs [ledger-append]           ← state_transition event
       → for each GateAttestation from passing gates:
         → ledger/chain.rs [ledger-append]           ← gate_attestation event (stdout_hash, exit_code, working_dir)
@@ -606,6 +631,56 @@ main.rs [cli-main] → Commands::Set → SetAction::Complete
     → render/engine.rs [render-triggered] trigger="on_event" event="set_member_complete"
 ```
 
+### Flow: Event Provenance (who wrote this row)
+
+Every path that appends a *consumer-declared* event, and the identity it stamps
+into a `stamped = true` field. A sixth path added without a `Recorder` arm
+writes an unstamped row that a gate cannot tell from a stamped one, which is
+why they are listed here rather than left to be found (#50):
+
+```
+provenance.rs Recorder                      ← the identity; [recorder-id] the value
+  ├ sahjhan event
+  │   → cli/transition.rs [cmd-event]
+  │     → validate_event_fields             ← [reject-supplied]: a caller-set stamp is REFUSED
+  │     → [record-and-render] Recorder::AgentCli            → agent:cli
+  ├ sahjhan authed-event  (HMAC proof verified by the daemon)
+  │   → cli/authed_event.rs [cmd-authed-event]
+  │     → [record-and-render] Recorder::AuthedCli           → authed:cli
+  ├ a transition's emits
+  │   → state/machine.rs [transition] → state/emit.rs [resolve-emit]
+  │     → Recorder::Emit(command)                           → engine:emit:<command>
+  │       config [validate] 3c already refused an emit that sets the field itself
+  ├ a hook rule's auto_record
+  │   → hooks/eval.rs evaluate_hooks → Recorder::AgentHookEval   → agent:hook-eval
+  │       stamped where the result is BUILT, so the reported record is the written one
+  └ the daemon's record_event op
+      → daemon/mod.rs handle_connection
+        → daemon/auth.rs authenticate_peer  ← returns the manifest-relative script path
+          ├ manifest present, peer verified  → Recorder::TrustedCaller(path) → hook:<path>
+          └ no trusted-callers.toml at all   → Recorder::UnverifiedPeer      → daemon:unverified
+        → handle_record_event → validate_event_fields → [record-and-render]
+```
+
+**Why refuse rather than overwrite.** If the engine quietly replaced a caller's
+`recorded_by`, a config that *forgot* to declare the field stamped and one whose
+stamp is being forged would produce identical ledger rows, and the gate reading
+them could not tell which it had. The refusal makes the attempt visible at the
+moment it is made — `sahjhan event … recorded_by=…` exits 4 and appends nothing.
+
+**Why `restricted` could not do this.** `restricted` is per event type and
+forbids transition emits outright (an emit appends directly, bypassing the HMAC
+proof). An event with emits — the shape #82 taught the consumer to prefer — was
+therefore unable to carry any provenance at all. `stamped` is per field, leaves
+every existing writer working, and is a plain SQL column at the gate.
+
+**What the values do and do not prove.** `agent:` says the agent could have
+written it; `hook:<path>` says the daemon authenticated a peer whose script that
+path names and whose contents matched `trusted-callers.toml`; `engine:emit:<t>`
+says the only way to produce it was to take transition `t`, gates and all.
+`daemon:unverified` is the honest answer when caller auth was never configured.
+Lint L8 is what keeps a gate from filtering on one nothing can write.
+
 ### Flow: Enforcement Read (state overlay)
 
 Why enforcement_read never serves a stale `state` (holtz #57):
@@ -717,6 +792,8 @@ main.rs [cli-main] → Commands::Lint
       → lint/checks.rs [check-l5]         ← declared event nothing produces or consumes
       → lint/checks.rs [check-l6]         ← similarity.rs normalize + token edit distance over inline predicates
       → lint/checks.rs [check-l7]         ← rank(event.attestation) vs rank(requires_attestation); silent with no [attestation]
+      → lint/checks.rs [check-l8]         ← index.rs [provenance-filters] over every named + inline predicate,
+                                            vs index.rs [producible-stamps] for the events it names
       → filter by --only / [lint] disabled_checks, sort by (check, location, message)
     → exit 3 if any error-severity finding (or any warning under --strict)
 ```
@@ -748,6 +825,10 @@ cli/commands.rs [load-config]
                                           no command (where nothing would read it)
     → config/mod.rs [check-emit-anchor] — every transition emit: the same unreadable values, and an
                                           `anchor` on an emit that declares no commands
+    → [validate] 3c/3d — a transition emit's `fields` or a hook `auto_record`'s `fields` writing a
+                         field the engine owns (#50)
+    → [validate] 5b    — `pattern` / `values` / `optional` on a stamped field, all of which police
+                         what a *caller* may write and are inert on a field no caller writes
   → config/mod.rs [validate-deep] (via cmd_validate) — file/alias/gate/ledger checks
 ```
 
@@ -830,10 +911,10 @@ main.rs [cli-main]
 | Test file | Tests |
 |-----------|-------|
 | `tests/gate_tests.rs` | All gate types, template interpolation, field validation, StateParam source, attestation, `since` anchors failing closed — unrecognized, undeclared, and non-string (#34), `since_filter` per-actor and per-candidate windows (#35), gate `anchor` — project default, caller opt-in on all three command gates, unreadable anchors failing closed, attested working_dir (#46) |
-| `tests/integration_tests.rs` | Full CLI end-to-end (init, transition, events, queries, renders, sets); gate anchoring from a nested worktree — the default unchanged from any cwd, `anchor = "caller"` differing, and the transition attesting where it ran (#46); emit anchoring on the same layout — a caller-anchored emit recording the tree that carries the fix while the gate attests the same tree, an unanchored emit still deriving at the project, and an unreadable anchor appending nothing at all (#48); the project anchor against **real** `git worktree add` — a sibling worktree reaching the project's ledger and writing to it rather than growing one of its own, a nested worktree unaffected, a plain directory still anchoring on itself (#47) |
+| `tests/integration_tests.rs` | Full CLI end-to-end (init, transition, events, queries, renders, sets); provenance stamping (#50) — `sahjhan event` writing `agent:cli` and the same event's emit writing `engine:emit:<command>`, a caller-supplied stamp exiting 4 with the ledger untouched, a stamped field not counting as a missing required one, and the issue's driven attack: the agent's `theoretical` deferral failing a predicate keyed on the courier's provenance; gate anchoring from a nested worktree — the default unchanged from any cwd, `anchor = "caller"` differing, and the transition attesting where it ran (#46); emit anchoring on the same layout — a caller-anchored emit recording the tree that carries the fix while the gate attests the same tree, an unanchored emit still deriving at the project, and an unreadable anchor appending nothing at all (#48); the project anchor against **real** `git worktree add` — a sibling worktree reaching the project's ledger and writing to it rather than growing one of its own, a nested worktree unaffected, a plain directory still anchoring on itself (#47) |
 | `tests/paths_tests.rs` | Project-root anchoring: the walk-up from every subdirectory, manifest keys with one spelling, component-wise containment (holtz #85); linked worktrees with the on-disk shapes git writes — sibling and nested, a submodule's `commondir`-less gitdir not anchoring on its superproject, every unreadable `.git` file anchoring on the caller (#47) |
 | `tests/chain_integrity_tests.rs` | Ledger hash chain, append, reload, tamper detection |
-| `tests/config_tests.rs` | Config loading, validation, hooks/monitors/write_gated validation, `since` anchor rejection in transition + hook + composite gates, incl. non-string values (#34), `since_filter` field/shape rejection and TOML round-trip (#35), gate `anchor` rejection — unrecognized, non-string, on a gate that runs no command, on a composite, and nested in one (#46); emit `anchor` rejection — the same unreadable values, an anchor on an emit with no commands, and an unknown emit key failing to parse at all (#48) |
+| `tests/config_tests.rs` | Config loading, validation, hooks/monitors/write_gated validation, `since` anchor rejection in transition + hook + composite gates, incl. non-string values (#34), `since_filter` field/shape rejection and TOML round-trip (#35), gate `anchor` rejection — unrecognized, non-string, on a gate that runs no command, on a composite, and nested in one (#46); emit `anchor` rejection — the same unreadable values, an anchor on an emit with no commands, and an unknown emit key failing to parse at all (#48); `stamped` fields — the three inert caller-facing constraints refused, an emit and a hook `auto_record` refused for writing one, and trusted-callers.toml as loaded config: absent is `None`, empty is `Some(empty)`, malformed is a load error (#50) |
 | `tests/state_machine_tests.rs` | StateMachine transitions, gates, sets, transition emits |
 | `tests/query_tests.rs` | DataFusion SQL queries over ledger |
 | `tests/ledger_tests.rs` | LedgerEntry serialization, hashing, schema |
@@ -850,8 +931,8 @@ main.rs [cli-main]
 | `tests/render_filter_tests.rs` | Custom Tera filters (where_eq, unique_by) |
 | `tests/json_output_tests.rs` | JSON envelope serialization, per-command data structs, CLI --json integration |
 | `tests/horizons1_tests.rs` | HORIZONS-1 mission protocol: status, transitions, gates, sets with --json |
-| `tests/lint_tests.rs` | Static analysis (incl. `examples/lint-demo` lints clean): L1 producer closure (restricted/require_producers/emits/auto_record/polarity), L2 producer windows vs reachability, L3 boundary route-arounds, L4 dead ends, L5 dead vocabulary, L6 predicate drift + similarity scoring, L7 attestation lattice, check selection, CLI exit codes + JSON |
-| `tests/hook_eval_tests.rs` | Hook evaluation engine: gate/check/filter/state/monitor/write-gated/managed-path/CLI eval |
+| `tests/lint_tests.rs` | Static analysis (incl. `examples/lint-demo` lints clean): L1 producer closure (restricted/require_producers/emits/auto_record/polarity), L2 producer windows vs reachability, L3 boundary route-arounds, L4 dead ends, L5 dead vocabulary, L6 predicate drift + similarity scoring, L7 attestation lattice, L8 provenance filters — a `hook:` path the manifest does not list, the same path once it does, the `engine:emits:` misspelling from #50's own prose, the `agent:cli` warning and the three negations that must not trigger it, inline gate predicates as well as named queries — check selection, CLI exit codes + JSON |
+| `tests/hook_eval_tests.rs` | Hook evaluation engine: gate/check/filter/state/monitor/write-gated/managed-path/CLI eval; an `auto_record` stamped `agent:hook-eval` in the reported result (#50) |
 | `tests/concurrent_append_tests.rs` | Concurrent ledger append stress tests (issue #21 TOCTOU race) |
 | `tests/daemon_platform_tests.rs` | Platform API smoke tests: preload env, exe path, cmdline, parent PID, mlock |
 | `tests/daemon_protocol_tests.rs` | Wire protocol types: Request deserialization (all ops + unknowns, incl. `enforcement_merge` and the optional `expect_version` absent and present), Response serialization (all constructors incl. idle fields, and `version` present only when attached) |
@@ -861,5 +942,5 @@ main.rs [cli-main]
 | `tests/daemon_vault_e2e_tests.rs` | E2E vault via CLI: store+read, list, delete, read-nonexistent (all require live daemon) |
 | `tests/daemon_enforcement_tests.rs` | Enforcement state ops: write/read round-trip, update merge, not_found, reserved namespace, vault_list filtering, status enforcement_active, validation (#27); per-actor merge — siblings surviving the interleaving from the report, `null` deleting an entry, `enforcement_update` still replacing wholesale — and compare-and-set: a stale `expect_version` refused with the current one attached and nothing changed, the retry succeeding, and a ledger transition not invalidating a token (#49). All `#[ignore]`, need a live daemon; the merge rules and the version token themselves are unit-tested in `daemon/enforcement.rs` |
 | `tests/active_ledger_tests.rs` | Active-ledger marker: activate/deactivate, create --activate, resolution priority, stale marker fallback, reset clears marker, status display, events land in active ledger |
-| `tests/daemon_record_event_tests.rs` | E2E `record_event` op: authenticated ledger append lands event in ledger (read-back), rejects undeclared event type, field pattern violation, and missing required field (all `#[ignore]`, need live daemon) |
+| `tests/daemon_record_event_tests.rs` | E2E `record_event` op: authenticated ledger append lands event in ledger (read-back), rejects undeclared event type, field pattern violation, and missing required field; provenance — a peer-supplied stamp refused and nothing persisted, `daemon:unverified` with no manifest, and a real trusted courier script on the socket recording `hook:hooks/theoretical_courier.py` (#50). All `#[ignore]`, need live daemon |
 | `tests/daemon_fuse_tests.rs` | E2E sandbox fuse: armed daemon follows the settings lifecycle (refuse → serve → refuse against one process), rejects weakened settings and in-project sockets, unarmed daemon unaffected (all `#[ignore]`, need live daemon; fuse check logic itself is unit-tested in `daemon/fuse.rs`) |

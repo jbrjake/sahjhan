@@ -59,6 +59,10 @@ pub const CHECKS: &[(&str, &str)] = &[
         "L7",
         "evidence is at least as strong as the gate relying on it",
     ),
+    (
+        "L8",
+        "a provenance filter names a writer that can produce it",
+    ),
 ];
 
 /// How serious a finding is.
@@ -184,6 +188,7 @@ pub fn run(config: &ProtocolConfig, opts: &LintOptions) -> Vec<LintFinding> {
     findings.extend(checks::l5_dead_vocabulary(&analysis));
     findings.extend(checks::l6_predicate_drift(&analysis));
     findings.extend(checks::l7_forgeable_evidence(&analysis));
+    findings.extend(checks::l8_provenance_filters(&analysis));
 
     let selected: HashSet<String> = selected_checks(config, opts).into_iter().collect();
     findings.retain(|f| selected.contains(f.check.as_str()));

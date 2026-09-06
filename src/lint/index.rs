@@ -11,10 +11,13 @@
 // - [gate-event-refs]     gate_event_refs()        — recursive walk over a gate tree
 // - [consumed-events]     consumed_events()        — every event name any config surface reads
 // - [sql-event-mentions]  sql_event_mentions()     — declared event names quoted inside a SQL predicate
+// - [producible-stamps]   producible_stamps()      — the provenance values some writer of an event can stamp
+// - [provenance-filters]  provenance_filters()     — stamp literals in a predicate, and whether each is an equality
 
 use std::collections::{HashMap, HashSet};
 
 use crate::config::{GateConfig, ProtocolConfig};
+use crate::provenance::{is_stamp_value, Recorder};
 
 // The engine's own event vocabulary lives with the rest of the vocabulary, in
 // config::events — the `since` anchor validator needs it too, and one list is
@@ -311,6 +314,164 @@ pub fn sql_event_mentions(sql: &str, config: &ProtocolConfig) -> Vec<String> {
     found
 }
 
+// [producible-stamps]
+/// Every provenance value that some writer of `events` can stamp.
+///
+/// An empty `events` means "any declared event" — used when a predicate names
+/// no declared event, so the only sound question left is whether the value is
+/// producible *anywhere* in this protocol.
+///
+/// The enumeration mirrors [`crate::provenance::Recorder`] one arm at a time,
+/// because each arm is reachable under different config:
+///
+/// - `agent:cli` / `authed:cli` — `sahjhan event` records any declared,
+///   non-restricted event; `authed-event` records the restricted ones.
+/// - `engine:emit:<command>` — one per transition that emits the event.
+/// - `agent:hook-eval` — one per hook `auto_record` targeting it.
+/// - `hook:<path>` — one per entry in `trusted-callers.toml`. With no manifest
+///   the daemon authenticates nobody, so what it can stamp is
+///   `daemon:unverified` and nothing else.
+pub fn producible_stamps(config: &ProtocolConfig, events: &[String]) -> HashSet<String> {
+    let names: Vec<&String> = if events.is_empty() {
+        config.events.keys().collect()
+    } else {
+        events
+            .iter()
+            .filter(|e| config.events.contains_key(*e))
+            .collect()
+    };
+
+    let mut out = HashSet::new();
+
+    // The daemon's record_event is not scoped to an event type, so its
+    // identities are available wherever any event is.
+    if !names.is_empty() {
+        match &config.trusted_callers {
+            Some(manifest) => {
+                for path in manifest.callers.keys() {
+                    out.insert(Recorder::TrustedCaller(path.clone()).id());
+                }
+            }
+            None => {
+                out.insert(Recorder::UnverifiedPeer.id());
+            }
+        }
+    }
+
+    for name in names {
+        let Some(event) = config.events.get(name) else {
+            continue;
+        };
+        if event.restricted == Some(true) {
+            out.insert(Recorder::AuthedCli.id());
+        } else {
+            out.insert(Recorder::AgentCli.id());
+        }
+        for t in &config.transitions {
+            if t.emits.iter().any(|e| &e.event == name) {
+                out.insert(Recorder::Emit(t.command.clone()).id());
+            }
+        }
+        for hook in &config.hooks {
+            if hook
+                .auto_record
+                .as_ref()
+                .is_some_and(|a| &a.event_type == name)
+            {
+                out.insert(Recorder::AgentHookEval.id());
+            }
+        }
+    }
+
+    out
+}
+
+// [provenance-filters]
+/// Stamp-namespace literals in a SQL predicate, each paired with whether it is
+/// reached by a positive equality (`recorded_by = 'x'`) rather than a negation
+/// (`!= 'x'`, `<> 'x'`) or anything else.
+///
+/// Syntactic, like the rest of lint: this is not a SQL parser, and the
+/// equality flag is decided by looking at the operator immediately before the
+/// opening quote. Anything it cannot read that way is reported as *not* an
+/// equality, so the check that depends on the flag stays quiet rather than
+/// guessing — a false "this filter is decoration" is worse than a miss.
+pub fn provenance_filters(sql: &str) -> Vec<(String, bool)> {
+    let chars: Vec<char> = sql.chars().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c != '\'' && c != '"' {
+            i += 1;
+            continue;
+        }
+        let quote = c;
+        let open = i;
+        let mut literal = String::new();
+        i += 1;
+        while i < chars.len() && chars[i] != quote {
+            literal.push(chars[i]);
+            i += 1;
+        }
+        i += 1; // step past the closing quote (or off the end)
+        if is_stamp_value(&literal) {
+            out.push((literal, positive_equality_before(&chars, open)));
+        }
+    }
+    out
+}
+
+/// Whether the literal opening at `open` is compared with a bare `=` that no
+/// visible negation inverts.
+///
+/// Three spellings of "not this writer" are recognized and excluded: `!=`,
+/// `<>`, and `NOT (<column> = '…')`. A negation spelled any other way — one
+/// scoped further out, a `CASE`, a subquery — reads as positive here, which is
+/// the cost of not shipping a SQL parser into a lint pass.
+fn positive_equality_before(chars: &[char], open: usize) -> bool {
+    let j = skip_ws_back(chars, open);
+    if j == 0 || chars[j - 1] != '=' {
+        return false;
+    }
+    let eq = j - 1;
+    // `!=`, `<>`, `>=`, `<=` — anything but a lone `=`.
+    if eq > 0 && matches!(chars[eq - 1], '!' | '<' | '>') {
+        return false;
+    }
+    !wrapped_in_not(chars, eq)
+}
+
+/// Whether the comparison whose `=` sits at `eq` is written `NOT (<column> = …`.
+fn wrapped_in_not(chars: &[char], eq: usize) -> bool {
+    // Back over the column expression on the left of the `=`.
+    let mut j = skip_ws_back(chars, eq);
+    while j > 0 && (chars[j - 1].is_alphanumeric() || matches!(chars[j - 1], '_' | '.' | '"')) {
+        j -= 1;
+    }
+    j = skip_ws_back(chars, j);
+    if j == 0 || chars[j - 1] != '(' {
+        return false;
+    }
+    j = skip_ws_back(chars, j - 1);
+    if j < 3 {
+        return false;
+    }
+    let word: String = chars[j - 3..j].iter().collect();
+    // A word boundary, so `cannot (` is not read as a negation.
+    word.eq_ignore_ascii_case("not") && (j == 3 || !chars[j - 4].is_alphanumeric())
+}
+
+/// The index `k` such that `chars[k - 1]` is the first non-whitespace character
+/// before `from`, or 0.
+fn skip_ws_back(chars: &[char], from: usize) -> usize {
+    let mut k = from;
+    while k > 0 && chars[k - 1].is_whitespace() {
+        k -= 1;
+    }
+    k
+}
+
 /// Extract single- and double-quoted string literals from `sql`.
 fn quoted_literals(sql: &str) -> Vec<String> {
     let mut out = Vec::new();
@@ -331,4 +492,77 @@ fn quoted_literals(sql: &str) -> Vec<String> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The literals a predicate filters provenance on, with the equality flag.
+    fn filters(sql: &str) -> Vec<(String, bool)> {
+        provenance_filters(sql)
+    }
+
+    #[test]
+    fn only_stamp_namespace_literals_are_filters() {
+        assert!(filters("WHERE reason='theoretical'").is_empty());
+        assert!(filters("WHERE type='finding_deferred'").is_empty());
+        assert_eq!(
+            filters("WHERE recorded_by='agent:cli'"),
+            vec![("agent:cli".to_string(), true)]
+        );
+    }
+
+    #[test]
+    fn a_misspelling_is_still_recognized_as_a_filter() {
+        // The point of stopping the namespace one segment short: lint has to
+        // see the typo to report it.
+        assert_eq!(
+            filters("WHERE recorded_by='engine:emits:defer_low'"),
+            vec![("engine:emits:defer_low".to_string(), true)]
+        );
+    }
+
+    #[test]
+    fn negations_are_not_equalities() {
+        for sql in [
+            "WHERE recorded_by <> 'agent:cli'",
+            "WHERE recorded_by != 'agent:cli'",
+            "WHERE recorded_by!='agent:cli'",
+            "WHERE NOT (recorded_by = 'agent:cli')",
+            "WHERE NOT(d.recorded_by='agent:cli')",
+            "WHERE recorded_by IN ('agent:cli')",
+            "WHERE recorded_by >= 'agent:cli'",
+        ] {
+            let f = filters(sql);
+            assert_eq!(f.len(), 1, "{sql}");
+            assert!(!f[0].1, "`{sql}` is not a positive equality");
+        }
+    }
+
+    #[test]
+    fn equalities_are_recognized_through_whitespace_and_qualifiers() {
+        for sql in [
+            "WHERE recorded_by='agent:cli'",
+            "WHERE recorded_by = 'agent:cli'",
+            "WHERE d.recorded_by   =   'agent:cli'",
+            "WHERE cannot (recorded_by = 'agent:cli')",
+        ] {
+            let f = filters(sql);
+            assert_eq!(f.len(), 1, "{sql}");
+            assert!(f[0].1, "`{sql}` is a positive equality");
+        }
+    }
+
+    #[test]
+    fn every_literal_in_a_predicate_is_reported() {
+        let f = filters("WHERE recorded_by='hook:hooks/courier.py' OR recorded_by <> 'agent:cli'");
+        assert_eq!(
+            f,
+            vec![
+                ("hook:hooks/courier.py".to_string(), true),
+                ("agent:cli".to_string(), false),
+            ]
+        );
+    }
 }

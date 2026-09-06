@@ -1761,3 +1761,232 @@ emits = [
         err
     );
 }
+
+// ---------------------------------------------------------------------------
+// Stamped fields — per-field provenance (sahjhan #50)
+//
+// `restricted` is per event and unavailable to any event a transition emits,
+// so before #50 an event with emits could carry no provenance at all. A
+// `stamped = true` field is the engine's to write; these tests pin the config
+// surfaces that must not write it, and the constraints that would be inert on
+// it.
+// ---------------------------------------------------------------------------
+
+/// examples/minimal, with `check_done` given the field shape from the issue:
+/// agent-writable event, one field the engine owns.
+fn config_with_stamped_event(extra_field: &str) -> sahjhan::config::ProtocolConfig {
+    let dir = tempfile::tempdir().unwrap();
+    let src = Path::new("examples/minimal");
+    for name in [
+        "protocol.toml",
+        "states.toml",
+        "transitions.toml",
+        "hooks.toml",
+    ] {
+        std::fs::copy(src.join(name), dir.path().join(name)).unwrap();
+    }
+    std::fs::write(
+        dir.path().join("events.toml"),
+        format!(
+            r#"
+[events.check_done]
+description = "A check was completed"
+fields = [
+    {{ name = "id", type = "string" }},
+    {{ name = "recorded_by", type = "string", stamped = true{} }},
+]
+"#,
+            extra_field
+        ),
+    )
+    .unwrap();
+    let config = sahjhan::config::ProtocolConfig::load(dir.path()).unwrap();
+    std::mem::forget(dir);
+    config
+}
+
+#[test]
+fn test_stamped_defaults_false_and_parses_true() {
+    let toml_str = r#"
+[events.finding_deferred]
+description = "a finding set aside"
+fields = [
+    { name = "reason", type = "string" },
+    { name = "recorded_by", type = "string", stamped = true },
+]
+"#;
+    let events_file: sahjhan::config::events::EventsFile = toml::from_str(toml_str).unwrap();
+    let event = &events_file.events["finding_deferred"];
+    assert!(!event.fields[0].stamped, "an ordinary field is not stamped");
+    assert!(event.fields[1].stamped);
+}
+
+#[test]
+fn test_validate_accepts_a_plain_stamped_field() {
+    let errors = config_with_stamped_event("").validate();
+    assert!(errors.is_empty(), "{:?}", errors);
+}
+
+#[test]
+fn test_validate_rejects_caller_constraints_on_a_stamped_field() {
+    // Every one of these exists to police what a *caller* may write. On a field
+    // the caller never writes they are inert, and an inert line that looks
+    // load-bearing is the #48 defect wearing a different hat.
+    for (extra, key) in [
+        (r#", pattern = "^hook:""#, "pattern"),
+        (r#", values = ["agent:cli"]"#, "values"),
+        (", optional = true", "optional"),
+    ] {
+        let errors = config_with_stamped_event(extra).validate();
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("is stamped and also declares") && e.contains(key)),
+            "'{}' on a stamped field must be refused: {:?}",
+            key,
+            errors
+        );
+    }
+}
+
+#[test]
+fn test_validate_rejects_an_emit_that_sets_a_stamped_field() {
+    use sahjhan::config::*;
+    let mut config = config_with_stamped_event("");
+    config.transitions = vec![TransitionConfig {
+        from: "idle".to_string(),
+        to: "working".to_string(),
+        command: "begin".to_string(),
+        emits: vec![EmitConfig {
+            event: "check_done".to_string(),
+            fields: std::collections::HashMap::from([(
+                "recorded_by".to_string(),
+                "hook:hooks/courier.py".to_string(),
+            )]),
+            ..Default::default()
+        }],
+        ..Default::default()
+    }];
+    let errors = config.validate();
+    assert!(
+        errors.iter().any(
+            |e| e.contains("emit of 'check_done' sets field 'recorded_by'")
+                && e.contains("stamped")
+        ),
+        "an emit forging its own provenance must be refused, not silently overwritten: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_validate_rejects_an_auto_record_that_sets_a_stamped_field() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = Path::new("examples/minimal");
+    for name in ["protocol.toml", "states.toml", "transitions.toml"] {
+        std::fs::copy(src.join(name), dir.path().join(name)).unwrap();
+    }
+    std::fs::write(
+        dir.path().join("events.toml"),
+        r#"
+[events.check_done]
+description = "A check was completed"
+fields = [
+    { name = "recorded_by", type = "string", stamped = true },
+]
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("hooks.toml"),
+        r#"
+[[hooks]]
+event = "PostToolUse"
+tools = ["Bash"]
+  [hooks.auto_record]
+  event_type = "check_done"
+  fields = { recorded_by = "hook:hooks/courier.py" }
+"#,
+    )
+    .unwrap();
+    let errors = sahjhan::config::ProtocolConfig::load(dir.path())
+        .unwrap()
+        .validate();
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("auto_record of 'check_done' sets field 'recorded_by'")),
+        "a hook's auto_record is config too, and a stamped field is not the config's to write: {:?}",
+        errors
+    );
+}
+
+// ---------------------------------------------------------------------------
+// trusted-callers.toml as loaded config (#50)
+//
+// The daemon has always read this file; lint L8 needs it too, to answer
+// whether a `hook:<path>` provenance filter names a script anything can be.
+// One parse, so the two cannot disagree about who is listed.
+// ---------------------------------------------------------------------------
+
+fn minimal_config_dir_with(callers: Option<&str>) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let src = Path::new("examples/minimal");
+    for name in [
+        "protocol.toml",
+        "states.toml",
+        "transitions.toml",
+        "events.toml",
+        "hooks.toml",
+    ] {
+        std::fs::copy(src.join(name), dir.path().join(name)).unwrap();
+    }
+    if let Some(body) = callers {
+        std::fs::write(dir.path().join("trusted-callers.toml"), body).unwrap();
+    }
+    dir
+}
+
+#[test]
+fn test_absent_trusted_callers_is_none_not_empty() {
+    // Absent means caller auth was never configured, which is not the same
+    // claim as "no caller is trusted" — the daemon treats them differently and
+    // so must anything reading the config.
+    let dir = minimal_config_dir_with(None);
+    let config = sahjhan::config::ProtocolConfig::load(dir.path()).unwrap();
+    assert!(config.trusted_callers.is_none());
+}
+
+#[test]
+fn test_present_trusted_callers_loads_its_entries() {
+    let dir = minimal_config_dir_with(Some(
+        r#"
+[callers]
+"hooks/courier.py" = "sha256:abc"
+"#,
+    ));
+    let config = sahjhan::config::ProtocolConfig::load(dir.path()).unwrap();
+    let manifest = config.trusted_callers.expect("present file loads");
+    assert_eq!(manifest.callers.len(), 1);
+    assert!(manifest.callers.contains_key("hooks/courier.py"));
+
+    let empty = minimal_config_dir_with(Some("[callers]\n"));
+    let config = sahjhan::config::ProtocolConfig::load(empty.path()).unwrap();
+    assert!(
+        config
+            .trusted_callers
+            .expect("an empty table still loads")
+            .callers
+            .is_empty(),
+        "a present-but-empty manifest denies everyone; it is not an absent one"
+    );
+}
+
+#[test]
+fn test_unparseable_trusted_callers_is_a_load_error() {
+    // The daemon refuses to start on this file. Reading it as "no callers"
+    // would let lint call a protocol clean that the daemon will not serve.
+    let dir = minimal_config_dir_with(Some("callers = not toml ["));
+    let err = sahjhan::config::ProtocolConfig::load(dir.path())
+        .expect_err("a malformed manifest must not read as absent");
+    assert!(err.contains("trusted-callers.toml"), "{}", err);
+}

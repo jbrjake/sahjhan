@@ -274,6 +274,7 @@ mechanism, and it is why the value means anything at a gate.
 | Entry key | `ledger/entry.rs` | `LedgerEntry.recorded_by` | Hashed like every other key, so rewriting it breaks the chain. Empty **only** on entries written before the key existed |
 | Canonical form | `ledger/entry.rs` | `recorded_by_key()` | Omits the key when empty, shared by the hash input and `to_jsonl` — which is the entire basis of a pre-#50 ledger still verifying |
 | SQL column | `query/mod.rs` | `[build-schema]` | An envelope column beside `ts` and `hash`, not a declared-field column |
+| Reserved names | `ledger/entry.rs` | `ENVELOPE_COLUMNS` | The entry's own keys. A declared field colliding with one would give `sahjhan query` two columns of a name and fail *every* query, so `[validate]` 5b refuses it |
 
 ### paths.rs — Project-Root Anchoring
 

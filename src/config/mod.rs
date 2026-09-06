@@ -386,6 +386,24 @@ impl ProtocolConfig {
                         event_name, field.name, field.field_type
                     ));
                 }
+
+                // 5b. A declared field must not collide with one of the entry's
+                // own keys. `sahjhan query` puts both in the same table, so a
+                // collision is two columns of one name and *every* query then
+                // fails with a schema error — a long way from the declaration
+                // that caused it. `recorded_by` is the one people reach for
+                // after reading about provenance; it is the engine's record of
+                // the append, not a field, and there is nothing to declare.
+                if crate::ledger::entry::ENVELOPE_COLUMNS.contains(&field.name.as_str()) {
+                    errors.push(format!(
+                        "event '{}' declares field '{}', which is one of the ledger \
+                         entry's own columns ({}) — every query would see two \
+                         columns of that name. Rename the field",
+                        event_name,
+                        field.name,
+                        crate::ledger::entry::ENVELOPE_COLUMNS.join(", ")
+                    ));
+                }
             }
         }
 

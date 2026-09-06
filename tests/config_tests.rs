@@ -1832,3 +1832,80 @@ fn test_unparseable_trusted_callers_is_a_load_error() {
         .expect_err("a malformed manifest must not read as absent");
     assert!(err.contains("trusted-callers.toml"), "{}", err);
 }
+
+#[test]
+fn test_validate_rejects_a_field_colliding_with_an_entry_column() {
+    // `sahjhan query` puts the entry's own keys and the declared fields in one
+    // table, so a collision is two columns of one name and *every* query then
+    // fails with a schema error — a long way from the declaration that caused
+    // it. `recorded_by` is the one a reader reaches for after learning about
+    // provenance; it is the engine's record of the append, not a field.
+    for name in ["recorded_by", "ts", "seq", "type", "hash"] {
+        let dir = tempfile::tempdir().unwrap();
+        let src = Path::new("examples/minimal");
+        for file in [
+            "protocol.toml",
+            "states.toml",
+            "transitions.toml",
+            "hooks.toml",
+        ] {
+            std::fs::copy(src.join(file), dir.path().join(file)).unwrap();
+        }
+        std::fs::write(
+            dir.path().join("events.toml"),
+            format!(
+                r#"
+[events.check_done]
+description = "A check was completed"
+fields = [
+    {{ name = "{}", type = "string" }},
+]
+"#,
+                name
+            ),
+        )
+        .unwrap();
+        let errors = sahjhan::config::ProtocolConfig::load(dir.path())
+            .unwrap()
+            .validate();
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains(&format!("declares field '{}'", name))),
+            "'{}' collides with an entry column and must be refused: {:?}",
+            name,
+            errors
+        );
+    }
+}
+
+#[test]
+fn test_validate_accepts_ordinary_field_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = Path::new("examples/minimal");
+    for file in [
+        "protocol.toml",
+        "states.toml",
+        "transitions.toml",
+        "hooks.toml",
+    ] {
+        std::fs::copy(src.join(file), dir.path().join(file)).unwrap();
+    }
+    std::fs::write(
+        dir.path().join("events.toml"),
+        r#"
+[events.check_done]
+description = "A check was completed"
+fields = [
+    { name = "id", type = "string" },
+    { name = "reason", type = "string" },
+    { name = "recorder", type = "string" },
+]
+"#,
+    )
+    .unwrap();
+    let errors = sahjhan::config::ProtocolConfig::load(dir.path())
+        .unwrap()
+        .validate();
+    assert!(errors.is_empty(), "{:?}", errors);
+}

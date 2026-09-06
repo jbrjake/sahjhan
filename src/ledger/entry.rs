@@ -4,6 +4,7 @@
 //
 // ## Index
 // - LedgerError              — Io, Parse, Integrity, SchemaVersion, ConfigIntegrityViolation, etc.
+// - ENVELOPE_COLUMNS         — the entry's own keys, reserved against declared field names
 // - LedgerEntry              — seq, ts, event_type, recorded_by, fields, hash, prev_hash
 
 use chrono::Utc;
@@ -11,6 +12,24 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use thiserror::Error;
+
+/// The top-level keys every entry carries, which `sahjhan query` exposes as
+/// columns beside one per declared field.
+///
+/// Reserved: a declared field sharing one of these names produces two columns
+/// with the same name and every query fails with a schema error, so
+/// [`crate::config::ProtocolConfig::validate`] refuses the config instead.
+pub const ENVELOPE_COLUMNS: &[&str] = &[
+    "schema",
+    "seq",
+    "prev",
+    "hash",
+    "ts",
+    "type",
+    "engine",
+    "protocol",
+    crate::provenance::RECORDED_BY,
+];
 
 /// The `"recorded_by":<value>,` fragment of an entry's canonical JSON, or the
 /// empty string when there is no value.

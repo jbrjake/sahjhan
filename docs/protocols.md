@@ -221,13 +221,9 @@ fields = [
 
 Omit `evidence_path` and sahjhan accepts the event. Provide it and it's still checked against `pattern`. Deciding *when* the field matters is a job for your gates. The schema only decides whether to reject the event for leaving it out.
 
-Three more keys live here. `restricted = true` means the event needs an HMAC proof and `sahjhan event` will refuse it. `attestation = "<level>"` names how strong the evidence is. And a single field can be marked `stamped = true`, which hands its value to the engine:
+The key `restricted = true` means the event needs an HMAC proof and `sahjhan event` through the CLI will refuse it. `attestation = "<level>"` names how strong the evidence is. Both are covered in [hardening.md](hardening.md) and [lint.md](lint.md).
 
-```toml
-    { name = "recorded_by", type = "string", stamped = true },
-```
-
-Nothing about who may record the event changes. What changes is that the row now says which of them did — `agent:cli` from the CLI, `engine:emit:fix_commit` from a transition, `hook:<script>` from a script the daemon authenticated. A caller that supplies the field is refused, and so is a config that tries to write it from an emit or a hook. It's the field to reach for when an event has to stay agent-writable and a gate still needs to tell one writer from another. Those three are covered in [hardening.md](hardening.md) and [lint.md](lint.md).
+`fields` are what a *writer supplies*. Everything the engine records about an append, like when it happened, what it chained to, and which write path made it, lives on the ledger entry and is queryable without being declared. Those names are reserved, and `sahjhan validate` refuses a declared field that collides with one. See [provenance](hardening.md#provenance-who-recorded-an-entry).
 
 ### renders: status files the agent can't write
 
@@ -370,7 +366,7 @@ When every gate passes, each emit resolves its `fields` and the event lands righ
 
 It's atomic. Emits resolve *before* anything is appended, so a failed command or an unresolved `{{var}}` blocks the whole transition and leaves the ledger untouched. An emit can't name a `restricted` event. That would route around the HMAC proof `authed-event` demands.
 
-That last rule is why a [stamped field](hardening.md#stamped-fields-per-field-provenance) exists: an event with emits can never be restricted, so `stamped` is the only provenance available to it. An emitted row is stamped `engine:emit:<command>`, which nothing can write without taking the transition. The emit's own `fields` may not name the stamped field — `sahjhan validate` refuses that config, and refuses to seal it.
+That last rule is why an event with emits can never be restricted — and why it doesn't need to be. An emitted entry records `recorded_by = engine:emit:<command>`, which nothing can produce without taking the transition, gates and all. A gate can filter on that without the event giving up being agent-writable. See [provenance](hardening.md#provenance-who-recorded-an-entry).
 
 **`anchor` says which tree the derivation reads**, exactly as it does on a gate. It matters most when the two appear together: the gate above asks whether the *caller's* commit references the item, so the hash recorded beside it had better come from the same tree. Without the anchor the emit derives at the project root, and the transition reports one tree while recording a commit from another. `anchor = "project"` is the default.
 

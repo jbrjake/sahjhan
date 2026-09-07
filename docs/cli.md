@@ -39,8 +39,6 @@ sahjhan render --dump-context             Dump the render context as JSON
 sahjhan mermaid [--rendered]              Protocol diagram: stateDiagram-v2, or ASCII
 ```
 
-`sahjhan event` refuses `restricted` event types, and refuses a `--field` naming a `stamped` one (exit 4, nothing appended — the engine writes that field itself).
-
 ## the ledger
 
 ```

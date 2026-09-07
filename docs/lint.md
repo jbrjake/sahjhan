@@ -155,7 +155,7 @@ The levels are opaque strings whose only property is their position in your list
 
 ## provenance filters
 
-A [stamped field](hardening.md#stamped-fields-per-field-provenance) carries which write path recorded an event, so a predicate can filter on it. That only buys the gate something if some writer can produce the value:
+Every ledger entry carries [`recorded_by`](hardening.md#provenance-who-recorded-an-entry), the write path that appended it, so a predicate can filter on it. That only matters if someone actually writes it:
 
 ```sql
 SELECT count(*) = 0 as result FROM events
@@ -163,7 +163,9 @@ WHERE type = 'finding_deferred' AND reason = 'theoretical'
   AND recorded_by = 'hook:hooks/theoretical_courier.py'
 ```
 
-L8 works out what the config's writers can actually stamp — `agent:cli` for anything the CLI may record, `engine:emit:<command>` for each transition emitting the event, `hook:<path>` for each script `trusted-callers.toml` lists — and compares. A value nothing can stamp is an error: the gate names a writer who does not exist, so it can never pass (and under `!=` it excludes nothing). That is the case for the query above until the courier is listed in the manifest.
+L8 works out what the config's writers can actually record: `agent:cli` for anything the CLI may record, `engine:emit:<command>` for each transition emitting the event, `engine:transition:<command>` for each transition, `hook:<path>` for each script `trusted-callers.toml` lists, and compares them. A value nothing can record is an error. a gate that names a writer who does not exist can never pass (and under `!=` it excludes nothing). That is the case for the query above until the courier is listed in the manifest.
+
+Only comparisons against `recorded_by` count. An ordinary field that happens to hold a value shaped like a writer identity is not a provenance filter, and `import:<source>` is never judged.
 
 The other direction is a warning. `recorded_by = 'agent:cli'` is producible by anything that can run the binary, so as *evidence* of a particular writer it constrains nobody:
 

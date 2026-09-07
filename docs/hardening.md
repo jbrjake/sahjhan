@@ -139,41 +139,45 @@ sign failed: caller not authenticated
 
 The socket peer is the CLI, and the CLI can never be in the manifest, whatever spawned it — including a trusted hook that shells out to it. That isn't a limitation to work around. It's the whole mechanism, because `sahjhan sign` is exactly the door the agent would knock on. What a hardened deployment loses here is the CLI as a courier, not the proof itself.
 
-## Stamped fields: per-field provenance
+## Provenance: who recorded an entry
 
-`restricted` answers "may this event be recorded at all," and it answers it for the whole event type. Sometimes the question is narrower: an event has to stay agent-writable, and a gate still has to tell *which* writer produced a given row.
+`restricted` lets you trust all events of the same type came from a trusted source. Sometimes you can't do that, and have to allow both trusted and untrusted callers to write the same event. In that case, you're going to care who wrote it. This sourcing info gets written into events automatically.
 
-Take a deferral. The agent legitimately defers findings — low priority, over budget, can't reproduce — so the event cannot be restricted. But one of its reasons is machine-graded: a hook decides a finding is theoretical when it can find no path to the defect, and a gate excludes those from the "all criticals resolved" count. Nothing stopped the agent from typing that reason itself, and the row it wrote was byte-identical to the hook's.
+Consider deferrals. Say you have a protocol that investigates findings. Sometimes you can't close findings out and have to defer them, so you can't restrict the event: agents have to be able to write it. It gets recorded in the ledger where you can audit it later to see if the agent's decision was justified.
 
-`restricted` cannot fix this, and not only because the agent needs the event. A restricted event may not be a transition emit — an emit appends straight to the ledger and would walk past the proof — so the moment a transition emits an event, `restricted` is off the table for it entirely.
+On the other hand, sometimes the reason you defer a finding can be independently verified. Maybe it's about a file that doesn't exist. A script can prove that. Deferrals provided by _those_ callers are ones you might query for and use in gates and their condition logic for moving from state to state.
 
-Mark the field instead:
+To support this, every ledger entry records which write path appended it, the same way it records `ts` and `seq`:
 
-```toml
-[events.finding_deferred]
-description = "A finding was set aside rather than fixed"
-attestation = "agent"
-fields = [
-    { name = "id", type = "string" },
-    { name = "reason", type = "string", pattern = "^(low_priority|medium_budget|cant_reproduce|theoretical)$" },
-    { name = "recorded_by", type = "string", stamped = true },
-]
+```bash
+$ sahjhan query "SELECT seq, type, recorded_by FROM events ORDER BY seq"
+recorded_by                  seq  type
+---------------------------  ---  ----------------
+engine:init                  0    genesis
+agent:cli                    1    finding_deferred
+engine:transition:defer_low  2    state_transition
+engine:emit:defer_low        3    finding_deferred
 ```
 
-`recorded_by` is now the engine's to write. Every existing writer keeps working, and each gets a different value:
+There is nothing to declare and nothing to turn on. Like `seq`, `ts`, `hash`, `prev`, `sahjhan query` exposes it as a column.
+
+These are the values, one per way of reaching a ledger:
 
 | value | who wrote it |
 | --- | --- |
-| `agent:cli` | `sahjhan event` — anything that can run the binary, including a hook that shells out to it |
-| `agent:hook-eval` | a hook rule's `auto_record`, appended by `sahjhan hook eval` — which the agent can also run |
+| `agent:cli` | a standard `sahjhan event`, so anything that can run the binary, including a hook that shells out to it |
+| `agent:hook-eval` | a hook rule's `auto_record`, appended by `sahjhan hook eval`, which the agent can also run |
 | `authed:cli` | `sahjhan authed-event` with a verified HMAC proof |
-| `engine:emit:<command>` | a transition's `emits`; the only way to write it is to take that transition, gates and all |
+| `engine:transition:<command>` | found on the `state_transition` and `gate_attestation` entries that a transition writes about itself |
+| `engine:emit:<command>` | a transition's `emits` output, which is only written when that transition happens, gates and all |
+| `engine:init` | the genesis entry at the start of the ledger |
 | `hook:<script path>` | the daemon's `record_event`, from a peer whose script `trusted-callers.toml` lists and whose contents hashed clean |
-| `daemon:unverified` | the same op with no `trusted-callers.toml` at all — auth was never configured, so the daemon can name no one and says so |
+| `daemon:unverified` | what you see if you don't set up `trusted-callers.toml` |
+| `import:<source>` | `sahjhan ledger import`, which validates nothing |
 
-The `agent:` prefix is doing real work: it is the engine declining to claim more than it knows. A gate that wants provenance to mean something excludes those rather than enumerating them.
+Filter out events recorded by `agent:` from your gates, and you can have a lot more confidence you're making decisions on data rather than vibes.
 
-The value is an ordinary column, so the gate is ordinary SQL:
+The deferral logic from above could look something like this:
 
 ```sql
 SELECT count(*) = 0 as result FROM events d
@@ -181,17 +185,30 @@ WHERE d.type = 'finding_deferred' AND d.reason = 'theoretical'
   AND d.recorded_by = 'hook:enforcement/hooks/theoretical_courier.py'
 ```
 
-A caller that supplies the field is refused, not quietly corrected:
+The agent can record `finding_deferred` all day, but it can't successfully forge `recorded_by`, because even when it tries in the ledger text, sahjhan fills the column with what it knows is true:
 
 ```bash
 $ sahjhan event finding_deferred --field id=BH-001 --field reason=theoretical \
       --field recorded_by=hook:enforcement/hooks/theoretical_courier.py
-error: field 'recorded_by' of event 'finding_deferred' is stamped — the engine records who wrote the event, so it cannot be supplied by the caller
+recorded: finding_deferred # with a faked recorded_by field
+
+$ sahjhan log tail 1 # which shows in the ledger text
+[2026-09-06T19:03:03.172Z] seq=1 type=finding_deferred hash=bf80a44427b1 {id=BH-001, reason=theoretical, recorded_by=hook:enforcement/hooks/theoretical_courier.py}
+
+$ sahjhan query "SELECT recorded_by FROM events WHERE type='finding_deferred'"
+recorded_by
+-----------
+agent:cli # but not in SQL queries
 ```
 
-Exit 4, and nothing is appended. Overwriting it silently would be worse than useless: a config that *forgot* to mark the field stamped and one whose stamp is being forged would produce identical rows, and the gate reading them could not tell which it had. The same rule holds for config: a transition emit or a hook `auto_record` whose `fields` name a stamped field is a validation error, and since that is the validation `init` and `reseal` both run, such a config cannot be sealed. `pattern`, `values` and `optional` on a stamped field are errors too — all three police what a caller may write, and no caller writes this one.
+The column a gate reads says `agent:cli` regardless, because sahjhan writes it.
 
-Three things to know before you rely on it. `hook:<path>` is only as good as the manifest: a path `trusted-callers.toml` does not list can never be stamped, so the gate is a wall — [lint L8](lint.md#provenance-filters) checks exactly this, in both directions. A stamped field records the write path, not a person; `agent:cli` from a hook that shells out to the CLI is indistinguishable from `agent:cli` from the agent, which is why the hardened path is the socket. And "the engine writes it" covers the paths that *append* to a ledger, not `sahjhan ledger import`, which builds a new ledger out of external JSONL and validates none of it — an imported row carries whatever it carried. That ledger also arrives without config seals, so importing one is already a decision you make deliberately.
+`recorded_by` is a reserved name, so a config cannot muddy this by declaring a field of its own with that name. `sahjhan validate` refuses it, along with the entry's other columns (`seq`, `ts`, `type`, `hash`, `prev`, `schema`, `engine`, `protocol`). The column is also covered by the entry hash, so editing one in place afterwards breaks the chain like editing anything else does.
+
+Notes:
+
+1. `hook:<path>` is only as good as the manifest. a path `trusted-callers.toml` does not list can never be recorded. [lint L8](lint.md#provenance-filters) checks for this.
+2. `recorded_by` is a path, not an identity. `agent:cli` from a hook that shells out to the CLI is indistinguishable from `agent:cli` from the agent, which is why the hardened path is talking to the daemon over the socket.
 
 ## The daemon
 
@@ -401,7 +418,7 @@ This means the ledger has two tiers of evidence, machine-attested (the gate ran,
 | Delete the ledger | Hash chain for deletion. Reset is a real command, but it needs an HMAC proof the agent can't forge. |
 | Fabricate history entries | Every entry is hash-linked. Fabricate one, the chain breaks. |
 | `sahjhan event quiz_passed --field pass=true` | Restricted. Needs HMAC proof the agent can't forge. |
-| `sahjhan event finding_deferred --field recorded_by=hook:…` | Stamped field. Refused, not overwritten — exit 4, nothing appended. |
+| `sahjhan event finding_deferred --field recorded_by=hook:…` | That's just a field. The entry's own `recorded_by` still says `agent:cli`. |
 | Read the session key to forge proofs | No key on disk. It's in the daemon's memory. `ptrace` blocked. |
 | Write a script that reads the key indirectly | There's nothing to read. The key never touches the filesystem. |
 | Call `sahjhan sign` directly from Bash | With caller auth configured, the CLI can never authenticate, whatever spawned it. Rejected. |

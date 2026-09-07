@@ -220,13 +220,19 @@ The same SQL works as a gate condition, which is how you write budgets:
 { type = "query", sql = "SELECT count(*) < 15 as result FROM events WHERE type='finding'", expect = "true" }
 ```
 
-A field can also be marked `stamped`, which makes it the engine's to write rather than the caller's:
+`fields` are what *you* supply. Without you declaring anything, every ledger entry records which write path appended it:
 
-```toml
-{ name = "recorded_by", type = "string", stamped = true }
+```bash
+$ sahjhan query "SELECT seq, type, recorded_by FROM events ORDER BY seq"
+recorded_by                  seq  type
+---------------------------  ---  ----------------
+engine:init                  0    genesis
+agent:cli                    1    finding_deferred
+engine:transition:defer_low  2    state_transition
+engine:emit:defer_low        3    finding_deferred
 ```
 
-The event stays writable by everything that could write it before, and the ledger now records *which* of them wrote each row — `agent:cli`, `engine:emit:defer_low`, `hook:hooks/courier.py`. A caller that supplies the field is refused rather than corrected. It's an ordinary column, so a gate can ask a question the agent can't answer for itself: not "was this deferred" but "was it deferred by the hook." See [hardening.md](docs/hardening.md#stamped-fields-per-field-provenance).
+`recorded_by` is a SQL column, so a gate can ask a question the agent can't be trusted to answer itself: not "was this deferred?" but "was it deferred by the hook?" See [hardening.md](docs/hardening.md#provenance-who-recorded-an-entry).
 
 ### branching
 
@@ -348,7 +354,7 @@ The agent can read that entry, query it, and see the condition it satisfies. It 
 
 If you want to trust everyone, simply omit the `trusted-callers.toml` altogether. If you don't want to trust anyone, include it with an empty `[callers]` table to deny-all. Be aware that a trusted script is trusted for _everything_, not per-operation. However, you can use `vault.toml` to control which states a vault key is reachable in. Those, as well as `record_event` (which collapses sign-then-submit into one authenticated call), are in [docs/hardening.md](docs/hardening.md).
 
-`trusted-callers.toml` does double duty. Because the daemon knows which listed script is on the socket, an event that script records through it is stamped `hook:<that path>` — so a gate can require the courier's provenance, and lint will tell you if you filter on a script the manifest doesn't list.
+`trusted-callers.toml` does double duty. Because the daemon knows which listed script is on the socket, an event that script records through it lands with `recorded_by = hook:<that path>`. This way a gate can require the courier hook script, not an agent, to be the event's source, and lint will tell you if you filter on a script the manifest doesn't list.
 
 Caller authentication has its limits. A same-user process can ultimately defeat anything. The real boundary is the OS sandbox: if you set `require_sandbox` under `[daemon]`, the sahjhan daemon refuses every privileged operation unless the Claude Code sandbox is verifiably confining the agent. The details are in [docs/hardening.md](docs/hardening.md).
 
@@ -361,7 +367,7 @@ Each of these safeguards exists because an agent got past the one above it. The 
 | the ledger | hash-chained JSONL. Edit a line and the chain breaks on the next command |
 | config | eight TOML files SHA-256 sealed into the genesis entry; changing one needs a `reseal` and an HMAC proof |
 | restricted events | the agent can't record them at all — `authed-event` with a proof only the daemon can mint |
-| stamped fields | on an event the agent *can* record, the engine writes who wrote it; supplying the value is refused |
+| provenance | every entry records the write path that appended it, hashed with the rest |
 | the session key | 32 bytes in daemon memory, never on disk; `mlock`, `ptrace` denied, preload env refused |
 | daemon callers | authenticated by kernel socket credentials against a hashed script manifest |
 | gate results | command and snapshot gates record exit code, wall time, and a SHA-256 of stdout the agent never touches |
@@ -395,7 +401,7 @@ Most agent work doesn't need any of this. A rule in `CLAUDE.md`, a checklist, a 
 | [protocols.md](docs/protocols.md) | writing a protocol: a worked TDD example, states, sets, events, renders, emits, template variables |
 | [gates.md](docs/gates.md) | every gate type and its parameters, composites, template resolution, `gate check` |
 | [lint.md](docs/lint.md) | the eight static checks, named queries, boundaries, producers, attestation levels, provenance filters |
-| [hardening.md](docs/hardening.md) | restricted events, stamped fields, HMAC, the daemon and vault, caller auth, config sealing, gate attestation |
+| [hardening.md](docs/hardening.md) | restricted events, entry provenance, HMAC, the daemon and vault, caller auth, config sealing, gate attestation |
 | [hooks.md](docs/hooks.md) | Claude Code integration, runtime hooks, write-gated paths, monitors |
 | [ledgers.md](docs/ledgers.md) | multiple ledgers, templates, the active-ledger marker, SQL over many runs |
 | [cli.md](docs/cli.md) | full command reference, exit codes, the `--json` envelope |

@@ -375,6 +375,17 @@ message = "pre-tool warning fired"
 [hooks.check]
 type = "event_count_since_last_transition"
 threshold = 0
+
+[[hooks]]
+event = "PreToolUse"
+tools = ["Grep"]
+action = "block"
+message = "the caller's tree has no marker"
+
+[hooks.gate]
+type = "command_succeeds"
+cmd = "test -f caller-marker"
+anchor = "caller"
 "#;
 
 fn sahjhan_in(dir: &std::path::Path, args: &[&str]) {
@@ -449,19 +460,28 @@ fn run_wrapper(
     script: &str,
     event: serde_json::Value,
 ) -> (i32, String, serde_json::Value) {
-    run_wrapper_with_bin(dir, script, event, env!("CARGO_BIN_EXE_sahjhan"))
+    run_wrapper_with_env(dir, script, event, &[])
 }
 
-fn run_wrapper_with_bin(
+/// `run_wrapper`, with `env` set over the defaults: SAHJHAN_BIN is the binary
+/// under test, and CLAUDE_PROJECT_DIR is unset — a test run from inside a
+/// Claude Code session would otherwise hand the wrapper that session's project.
+fn run_wrapper_with_env(
     dir: &std::path::Path,
     script: &str,
     event: serde_json::Value,
-    sahjhan_bin: &str,
+    env: &[(&str, &str)],
 ) -> (i32, String, serde_json::Value) {
     use std::io::Write;
-    let mut child = std::process::Command::new("python3")
+    let mut command = std::process::Command::new("python3");
+    command
         .arg(dir.join("hooks").join(script))
-        .env("SAHJHAN_BIN", sahjhan_bin)
+        .env("SAHJHAN_BIN", env!("CARGO_BIN_EXE_sahjhan"))
+        .env_remove("CLAUDE_PROJECT_DIR");
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    let mut child = command
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -671,11 +691,11 @@ fn generated_hooks_say_why_when_sahjhan_cannot_run() {
     let dir = project_with_generated_hooks();
     let cwd = dir.path().to_str().unwrap();
     let missing = dir.path().join("no-such-sahjhan");
-    let (code, stderr, reply) = run_wrapper_with_bin(
+    let (code, stderr, reply) = run_wrapper_with_env(
         dir.path(),
         "pre_tool_hook.py",
         serde_json::json!({"tool_name": "Edit", "tool_input": {"file_path": "src/main.rs"}, "cwd": cwd}),
-        missing.to_str().unwrap(),
+        &[("SAHJHAN_BIN", missing.to_str().unwrap())],
     );
     let notice = unevaluated_notice("pre_tool_hook.py", code, &stderr, &reply);
     assert!(
@@ -696,4 +716,86 @@ fn generated_bootstrap_blocks_a_write_to_the_enforcement_dir() {
     );
     assert_eq!((code, stderr.as_str()), (0, ""), "{}", reply);
     assert_eq!(reply["decision"], "block", "{}", reply);
+}
+
+#[test]
+fn generated_hooks_find_the_config_after_claude_cds() {
+    // After `cd src`, Claude Code sends the hook `cwd: <project>/src`, and the
+    // config is not under it. CLAUDE_PROJECT_DIR still names the project, so
+    // each wrapper finds the config there and every rule is evaluated — each
+    // is driven to its block.
+    let dir = project_with_generated_hooks();
+    let project = dir.path().to_str().unwrap();
+    let src = dir.path().join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    let cwd = src.to_str().unwrap();
+    for (script, event, reason) in [
+        (
+            "pre_tool_hook.py",
+            serde_json::json!({"tool_name": "Edit", "tool_input": {"file_path": "main.rs"}, "cwd": cwd}),
+            "without a check_done event",
+        ),
+        (
+            "post_tool_hook.py",
+            serde_json::json!({"tool_name": "Bash", "tool_input": {"command": "ls"}, "cwd": cwd}),
+            "post-tool rule fired",
+        ),
+        (
+            "stop_hook.py",
+            serde_json::json!({"last_assistant_message": "task complete", "cwd": cwd}),
+            "Cannot claim completion",
+        ),
+    ] {
+        let (code, stderr, reply) = run_wrapper_with_env(
+            dir.path(),
+            script,
+            event,
+            &[("CLAUDE_PROJECT_DIR", project)],
+        );
+        assert_eq!((code, stderr.as_str()), (0, ""), "{}: {}", script, reply);
+        assert_eq!(reply["decision"], "block", "{}: {}", script, reply);
+        assert!(
+            reply["reason"].as_str().unwrap().contains(reason),
+            "{}: {}",
+            script,
+            reply
+        );
+    }
+}
+
+#[test]
+fn generated_hooks_keep_a_caller_anchored_gate_in_the_callers_tree() {
+    // The config comes from the project; the gate's command does not. sahjhan
+    // still runs in the event's `cwd`, so `anchor = "caller"` (#46) reads the
+    // actor's own directory — here `wt/`, standing in for its worktree.
+    let dir = project_with_generated_hooks();
+    let project = dir.path().to_str().unwrap();
+    let wt = dir.path().join("wt");
+    std::fs::create_dir_all(&wt).unwrap();
+    let grep =
+        serde_json::json!({"tool_name": "Grep", "tool_input": {}, "cwd": wt.to_str().unwrap()});
+    let eval = || {
+        run_wrapper_with_env(
+            dir.path(),
+            "pre_tool_hook.py",
+            grep.clone(),
+            &[("CLAUDE_PROJECT_DIR", project)],
+        )
+    };
+
+    // A marker at the project root is not the caller's.
+    std::fs::write(dir.path().join("caller-marker"), "").unwrap();
+    let (code, stderr, reply) = eval();
+    assert_eq!((code, stderr.as_str()), (0, ""), "{}", reply);
+    assert_eq!(reply["decision"], "block", "{}", reply);
+    assert_eq!(
+        reply["reason"], "the caller's tree has no marker",
+        "{}",
+        reply
+    );
+
+    std::fs::write(wt.join("caller-marker"), "").unwrap();
+    let (code, stderr, reply) = eval();
+    assert_eq!((code, stderr.as_str()), (0, ""), "{}", reply);
+    assert_eq!(reply, serde_json::json!({}));
 }

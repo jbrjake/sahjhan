@@ -52,6 +52,14 @@ def sahjhan_binary():
 
 CONFIG_DIR = "{config_dir}"
 
+def config_dir(event):
+    # CONFIG_DIR is a path under the project root. The hook's cwd, and the
+    # event's, follow Claude's tools wherever they cd; CLAUDE_PROJECT_DIR
+    # stays where the session started. sahjhan itself still runs in the
+    # event's cwd, so a caller-anchored gate reads the actor's own tree.
+    root = os.environ.get("CLAUDE_PROJECT_DIR") or event.get("cwd", os.getcwd())
+    return os.path.join(root, CONFIG_DIR)
+
 def main():
     try:
         event = json.loads(sys.stdin.read())
@@ -64,7 +72,7 @@ def main():
     tool_input = event.get("tool_input", {})
     file_path = tool_input.get("file_path", tool_input.get("command", ""))
 
-    cmd = [sahjhan_binary(), "--config-dir", CONFIG_DIR, "--json",
+    cmd = [sahjhan_binary(), "--config-dir", config_dir(event), "--json",
            "hook", "eval", "--event", "PreToolUse", "--tool", tool_name]
     if file_path:
         cmd.extend(["--file", file_path])
@@ -125,6 +133,14 @@ def sahjhan_binary():
 
 CONFIG_DIR = "{config_dir}"
 
+def config_dir(event):
+    # CONFIG_DIR is a path under the project root. The hook's cwd, and the
+    # event's, follow Claude's tools wherever they cd; CLAUDE_PROJECT_DIR
+    # stays where the session started. sahjhan itself still runs in the
+    # event's cwd, so a caller-anchored gate reads the actor's own tree.
+    root = os.environ.get("CLAUDE_PROJECT_DIR") or event.get("cwd", os.getcwd())
+    return os.path.join(root, CONFIG_DIR)
+
 def main():
     try:
         event = json.loads(sys.stdin.read())
@@ -137,7 +153,7 @@ def main():
     tool_input = event.get("tool_input", {})
     file_path = tool_input.get("file_path", tool_input.get("command", ""))
 
-    cmd = [sahjhan_binary(), "--config-dir", CONFIG_DIR, "--json",
+    cmd = [sahjhan_binary(), "--config-dir", config_dir(event), "--json",
            "hook", "eval", "--event", "PostToolUse", "--tool", tool_name]
     if file_path:
         cmd.extend(["--file", file_path])
@@ -198,6 +214,14 @@ def sahjhan_binary():
 
 CONFIG_DIR = "{config_dir}"
 
+def config_dir(event):
+    # CONFIG_DIR is a path under the project root. The hook's cwd, and the
+    # event's, follow Claude's tools wherever they cd; CLAUDE_PROJECT_DIR
+    # stays where the session started. sahjhan itself still runs in the
+    # event's cwd, so a caller-anchored gate reads the actor's own tree.
+    root = os.environ.get("CLAUDE_PROJECT_DIR") or event.get("cwd", os.getcwd())
+    return os.path.join(root, CONFIG_DIR)
+
 def main():
     try:
         event = json.loads(sys.stdin.read())
@@ -212,7 +236,7 @@ def main():
     # session_crons, session_id, stop_hook_active, transcript_path).
     stop_message = event.get("last_assistant_message", "")
 
-    cmd = [sahjhan_binary(), "--config-dir", CONFIG_DIR, "--json",
+    cmd = [sahjhan_binary(), "--config-dir", config_dir(event), "--json",
            "hook", "eval", "--event", "Stop"]
     if stop_message:
         cmd.extend(["--output-text", stop_message])

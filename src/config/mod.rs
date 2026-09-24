@@ -13,6 +13,7 @@
 // - [resolve-since-anchor]  ProtocolConfig::resolve_since_anchor() — `since` form → baseline event type, or why not
 // - SinceAnchorError        — a non-string value, an unrecognized form, or a prefixed form naming an undeclared event type
 // - initial_state()         — find the state with initial = true
+// - [config-seals]          CONFIG_SEALS                     — the eight sealed config files, (seal key, file name)
 // - [compute-config-seals]  compute_config_seals()           — SHA-256 hashes of all eight sealed config files
 
 pub mod events;
@@ -1375,6 +1376,20 @@ fn check_emit_anchor(emit: &EmitConfig, location: &str, errors: &mut Vec<String>
     }
 }
 
+/// The eight sealed config files, as `(seal key, file name)`. One list, so what
+/// the seal covers and what a generated bootstrap hook protects cannot drift.
+// [config-seals]
+pub const CONFIG_SEALS: [(&str, &str); 8] = [
+    ("config_seal_protocol", "protocol.toml"),
+    ("config_seal_states", "states.toml"),
+    ("config_seal_transitions", "transitions.toml"),
+    ("config_seal_events", "events.toml"),
+    ("config_seal_renders", "renders.toml"),
+    ("config_seal_hooks", "hooks.toml"),
+    ("config_seal_trusted_callers", "trusted-callers.toml"),
+    ("config_seal_vault", "vault.toml"),
+];
+
 /// Compute SHA-256 hashes of all eight sealed config files.
 ///
 /// Missing optional files (events.toml, renders.toml, hooks.toml, trusted-callers.toml)
@@ -1391,19 +1406,8 @@ fn check_emit_anchor(emit: &EmitConfig, location: &str, errors: &mut Vec<String>
 pub fn compute_config_seals(dir: &Path) -> BTreeMap<String, String> {
     use sha2::{Digest, Sha256};
 
-    let files = [
-        ("config_seal_protocol", "protocol.toml"),
-        ("config_seal_states", "states.toml"),
-        ("config_seal_transitions", "transitions.toml"),
-        ("config_seal_events", "events.toml"),
-        ("config_seal_renders", "renders.toml"),
-        ("config_seal_hooks", "hooks.toml"),
-        ("config_seal_trusted_callers", "trusted-callers.toml"),
-        ("config_seal_vault", "vault.toml"),
-    ];
-
     let mut seals = BTreeMap::new();
-    for (key, filename) in &files {
+    for (key, filename) in &CONFIG_SEALS {
         let path = dir.join(filename);
         let bytes = std::fs::read(&path).unwrap_or_default();
         let hash = hex::encode(Sha256::digest(&bytes));

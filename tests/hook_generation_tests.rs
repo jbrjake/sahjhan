@@ -44,7 +44,7 @@ fn make_config(managed: Vec<&str>) -> ProtocolConfig {
 fn hook_generation_produces_valid_python() {
     let gen = HookGenerator::new().unwrap();
     let config = make_config(vec!["output"]);
-    let hooks = gen.generate(&config, "cc", None).unwrap();
+    let hooks = gen.generate(&config, "enforcement", "cc", None).unwrap();
 
     for hook in &hooks {
         assert!(
@@ -64,7 +64,7 @@ fn hook_generation_produces_valid_python() {
 fn hook_generation_includes_bootstrap() {
     let gen = HookGenerator::new().unwrap();
     let config = make_config(vec!["output"]);
-    let hooks = gen.generate(&config, "cc", None).unwrap();
+    let hooks = gen.generate(&config, "enforcement", "cc", None).unwrap();
 
     let bootstrap = hooks
         .iter()
@@ -72,17 +72,16 @@ fn hook_generation_includes_bootstrap() {
         .expect("bootstrap hook must be included");
 
     assert_eq!(bootstrap.hook_type, "PreToolUse");
-    assert!(bootstrap.content.contains("PROTECTED"));
-    assert!(bootstrap.content.contains("enforcement/"));
-    assert!(bootstrap.content.contains("bin/sahjhan"));
-    assert!(bootstrap.content.contains("_sahjhan_bootstrap.py"));
+    assert!(bootstrap.content.contains("CONFIG_DIR = \"enforcement\""));
+    assert!(bootstrap.content.contains("sahjhan_binary()"));
+    assert!(bootstrap.content.contains("\"_sahjhan_bootstrap.py\"]"));
 }
 
 #[test]
 fn hook_generation_references_config_dir() {
     let gen = HookGenerator::new().unwrap();
     let config = make_config(vec!["output"]);
-    let hooks = gen.generate(&config, "cc", None).unwrap();
+    let hooks = gen.generate(&config, "enforcement", "cc", None).unwrap();
 
     let pre_tool = hooks
         .iter()
@@ -120,7 +119,9 @@ fn hook_generation_writes_files_to_output_dir() {
     let dir = tempfile::tempdir().unwrap();
     let gen = HookGenerator::new().unwrap();
     let config = make_config(vec!["output"]);
-    let hooks = gen.generate(&config, "cc", Some(dir.path())).unwrap();
+    let hooks = gen
+        .generate(&config, "enforcement", "cc", Some(dir.path()))
+        .unwrap();
 
     assert_eq!(hooks.len(), 4);
 
@@ -140,7 +141,7 @@ fn hook_generation_writes_files_to_output_dir() {
 fn hook_generation_rejects_unknown_harness() {
     let gen = HookGenerator::new().unwrap();
     let config = make_config(vec!["output"]);
-    let result = gen.generate(&config, "vscode", None);
+    let result = gen.generate(&config, "enforcement", "vscode", None);
     assert!(result.is_err());
 }
 
@@ -148,7 +149,7 @@ fn hook_generation_rejects_unknown_harness() {
 fn hook_types_are_correct() {
     let gen = HookGenerator::new().unwrap();
     let config = make_config(vec!["output"]);
-    let hooks = gen.generate(&config, "cc", None).unwrap();
+    let hooks = gen.generate(&config, "enforcement", "cc", None).unwrap();
 
     let pre = hooks
         .iter()
@@ -176,7 +177,7 @@ fn hook_types_are_correct() {
 fn suggested_hooks_json_format() {
     let gen = HookGenerator::new().unwrap();
     let config = make_config(vec!["output"]);
-    let hooks = gen.generate(&config, "cc", None).unwrap();
+    let hooks = gen.generate(&config, "enforcement", "cc", None).unwrap();
 
     // The shape Claude Code registers hooks from: each event a list of
     // matcher groups, each group a list of command handlers. Bare command
@@ -223,7 +224,7 @@ fn suggested_hooks_json_keeps_an_absolute_hooks_dir() {
     // from wherever Claude's tools have `cd`'d to.
     let gen = HookGenerator::new().unwrap();
     let config = make_config(vec!["output"]);
-    let hooks = gen.generate(&config, "cc", None).unwrap();
+    let hooks = gen.generate(&config, "enforcement", "cc", None).unwrap();
 
     let json = HookGenerator::suggested_hooks_json(&hooks, "/opt/proj/.hooks");
     let config: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -237,7 +238,7 @@ fn suggested_hooks_json_keeps_an_absolute_hooks_dir() {
 fn thin_wrappers_delegate_to_hook_eval() {
     let gen = HookGenerator::new().unwrap();
     let config = make_config(vec!["output"]);
-    let hooks = gen.generate(&config, "cc", None).unwrap();
+    let hooks = gen.generate(&config, "enforcement", "cc", None).unwrap();
 
     // pre_tool_hook, post_tool_hook, stop_hook should all delegate to sahjhan hook eval
     for hook in &hooks {
@@ -266,7 +267,7 @@ fn thin_wrappers_delegate_to_hook_eval() {
 fn pre_tool_hook_passes_event_and_tool() {
     let gen = HookGenerator::new().unwrap();
     let config = make_config(vec!["output"]);
-    let hooks = gen.generate(&config, "cc", None).unwrap();
+    let hooks = gen.generate(&config, "enforcement", "cc", None).unwrap();
 
     let pre = hooks
         .iter()
@@ -281,7 +282,7 @@ fn pre_tool_hook_passes_event_and_tool() {
 fn post_tool_hook_passes_event_and_tool() {
     let gen = HookGenerator::new().unwrap();
     let config = make_config(vec!["output"]);
-    let hooks = gen.generate(&config, "cc", None).unwrap();
+    let hooks = gen.generate(&config, "enforcement", "cc", None).unwrap();
 
     let post = hooks
         .iter()
@@ -296,7 +297,7 @@ fn post_tool_hook_passes_event_and_tool() {
 fn stop_hook_passes_output_text() {
     let gen = HookGenerator::new().unwrap();
     let config = make_config(vec!["output"]);
-    let hooks = gen.generate(&config, "cc", None).unwrap();
+    let hooks = gen.generate(&config, "enforcement", "cc", None).unwrap();
 
     let stop = hooks.iter().find(|h| h.filename == "stop_hook.py").unwrap();
     assert!(stop.content.contains("--event"));
@@ -308,7 +309,7 @@ fn stop_hook_passes_output_text() {
 fn four_hooks_generated() {
     let gen = HookGenerator::new().unwrap();
     let config = make_config(vec!["output"]);
-    let hooks = gen.generate(&config, "cc", None).unwrap();
+    let hooks = gen.generate(&config, "enforcement", "cc", None).unwrap();
 
     assert_eq!(hooks.len(), 4);
 
@@ -323,7 +324,7 @@ fn four_hooks_generated() {
 fn wrappers_fail_open_on_error() {
     let gen = HookGenerator::new().unwrap();
     let config = make_config(vec!["output"]);
-    let hooks = gen.generate(&config, "cc", None).unwrap();
+    let hooks = gen.generate(&config, "enforcement", "cc", None).unwrap();
 
     // All thin wrappers should have fail-open exception handling
     for hook in &hooks {
@@ -388,7 +389,8 @@ cmd = "test -f caller-marker"
 anchor = "caller"
 "#;
 
-fn sahjhan_in(dir: &std::path::Path, args: &[&str]) {
+/// Run sahjhan in `dir`, fail unless it succeeds, and return its stdout.
+fn sahjhan_in(dir: &std::path::Path, args: &[&str]) -> String {
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_sahjhan"))
         .args(args)
         .current_dir(dir)
@@ -400,13 +402,22 @@ fn sahjhan_in(dir: &std::path::Path, args: &[&str]) {
         args,
         String::from_utf8_lossy(&output.stderr)
     );
+    String::from_utf8_lossy(&output.stdout).to_string()
 }
 
 /// A minimal project in the `working` state, with its hooks generated into
 /// `<dir>/hooks` — `enforcement/` is the config dir the wrappers name.
 fn project_with_generated_hooks() -> tempfile::TempDir {
+    let dir = project_in_working_state("enforcement");
+    sahjhan_in(dir.path(), &["hook", "generate", "--output-dir", "hooks"]);
+    dir
+}
+
+/// A minimal project in the `working` state, its config at `<dir>/<config>`.
+/// No hooks generated yet.
+fn project_in_working_state(config: &str) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
-    let config_dir = dir.path().join("enforcement");
+    let config_dir = dir.path().join(config);
     std::fs::create_dir_all(&config_dir).unwrap();
     for file in &[
         "protocol.toml",
@@ -426,9 +437,8 @@ fn project_with_generated_hooks() -> tempfile::TempDir {
     text.push_str(EXTRA_RULES);
     std::fs::write(&hooks_toml, text).unwrap();
 
-    sahjhan_in(dir.path(), &["init"]);
-    sahjhan_in(dir.path(), &["transition", "begin"]);
-    sahjhan_in(dir.path(), &["hook", "generate", "--output-dir", "hooks"]);
+    sahjhan_in(dir.path(), &["--config-dir", config, "init"]);
+    sahjhan_in(dir.path(), &["--config-dir", config, "transition", "begin"]);
     dir
 }
 
@@ -797,5 +807,147 @@ fn generated_hooks_keep_a_caller_anchored_gate_in_the_callers_tree() {
     std::fs::write(wt.join("caller-marker"), "").unwrap();
     let (code, stderr, reply) = eval();
     assert_eq!((code, stderr.as_str()), (0, ""), "{}", reply);
+    assert_eq!(reply, serde_json::json!({}));
+}
+
+#[test]
+fn generated_hooks_use_the_config_dir_they_were_generated_for() {
+    // A config not named `enforcement/`, and `hook generate` run from `src/`
+    // with both paths typed from there. The scripts join each onto the project
+    // root, so each must be written against it: `protocol`, and `hooks`.
+    let dir = project_in_working_state("protocol");
+    let project = dir.path().to_str().unwrap();
+    let src = dir.path().join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    let printed = sahjhan_in(
+        &src,
+        &[
+            "--config-dir",
+            "../protocol",
+            "hook",
+            "generate",
+            "--output-dir",
+            "../hooks",
+        ],
+    );
+    assert!(
+        printed.contains("\"python3 \\\"${CLAUDE_PROJECT_DIR}/hooks/pre_tool_hook.py\\\"\""),
+        "{}",
+        printed
+    );
+
+    for (script, event, reason) in [
+        (
+            "pre_tool_hook.py",
+            serde_json::json!({"tool_name": "Edit", "tool_input": {"file_path": "src/main.rs"}, "cwd": project}),
+            "without a check_done event",
+        ),
+        (
+            "post_tool_hook.py",
+            serde_json::json!({"tool_name": "Bash", "tool_input": {"command": "ls"}, "cwd": project}),
+            "post-tool rule fired",
+        ),
+        (
+            "stop_hook.py",
+            serde_json::json!({"last_assistant_message": "task complete", "cwd": project}),
+            "Cannot claim completion",
+        ),
+    ] {
+        let text = std::fs::read_to_string(dir.path().join("hooks").join(script)).unwrap();
+        assert!(text.contains("CONFIG_DIR = \"protocol\""), "{}", script);
+        let (code, stderr, reply) = run_wrapper_with_env(
+            dir.path(),
+            script,
+            event,
+            &[("CLAUDE_PROJECT_DIR", project)],
+        );
+        assert_eq!((code, stderr.as_str()), (0, ""), "{}: {}", script, reply);
+        assert_eq!(reply["decision"], "block", "{}: {}", script, reply);
+        assert!(
+            reply["reason"].as_str().unwrap().contains(reason),
+            "{}: {}",
+            script,
+            reply
+        );
+    }
+}
+
+/// Run the generated bootstrap on an `Edit` of `file_path`, as Claude Code
+/// would with its tools in `cwd` and the session started at the project.
+fn bootstrap_on_edit(
+    dir: &std::path::Path,
+    cwd: &std::path::Path,
+    file_path: &str,
+) -> serde_json::Value {
+    let (code, stderr, reply) = run_wrapper_with_env(
+        dir,
+        "_sahjhan_bootstrap.py",
+        serde_json::json!({"tool_name": "Edit", "tool_input": {"file_path": file_path}, "cwd": cwd.to_str().unwrap()}),
+        &[("CLAUDE_PROJECT_DIR", dir.to_str().unwrap())],
+    );
+    assert_eq!((code, stderr.as_str()), (0, ""), "{}: {}", file_path, reply);
+    reply
+}
+
+#[test]
+fn generated_bootstrap_protects_the_config_after_claude_cds() {
+    // After `cd src` the event's cwd is `src/`. The config is still at the
+    // project root, and an edit that reaches it — relative or absolute — is
+    // refused.
+    let dir = project_with_generated_hooks();
+    let src = dir.path().join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    let absolute = dir.path().join("enforcement/protocol.toml");
+    for file_path in ["../enforcement/protocol.toml", absolute.to_str().unwrap()] {
+        let reply = bootstrap_on_edit(dir.path(), &src, file_path);
+        assert_eq!(reply["decision"], "block", "{}: {}", file_path, reply);
+    }
+}
+
+#[test]
+fn generated_bootstrap_protects_the_scripts_and_the_binary_they_run() {
+    // The scripts are wherever they were generated, not in Claude's cwd; the
+    // binary is the one the wrappers run (SAHJHAN_BIN, set by the harness).
+    let dir = project_with_generated_hooks();
+    for file_path in [
+        "hooks/pre_tool_hook.py",
+        "hooks/_sahjhan_bootstrap.py",
+        env!("CARGO_BIN_EXE_sahjhan"),
+    ] {
+        let reply = bootstrap_on_edit(dir.path(), dir.path(), file_path);
+        assert_eq!(reply["decision"], "block", "{}: {}", file_path, reply);
+    }
+}
+
+#[test]
+fn generated_bootstrap_compares_whole_path_components() {
+    // `enforcement-old/` shares a string prefix with `enforcement`, and is not
+    // under it.
+    let dir = project_with_generated_hooks();
+    for file_path in ["enforcement-old/notes.md", "hooks-old/x.py", "src/main.rs"] {
+        let reply = bootstrap_on_edit(dir.path(), dir.path(), file_path);
+        assert_eq!(reply, serde_json::json!({}), "{}", file_path);
+    }
+}
+
+#[test]
+fn generated_bootstrap_protects_a_config_at_the_project_root_file_by_file() {
+    // Protecting the directory would refuse every edit in the project, so a
+    // root config is protected as its sealed files.
+    let dir = project_in_working_state(".");
+    sahjhan_in(
+        dir.path(),
+        &[
+            "--config-dir",
+            ".",
+            "hook",
+            "generate",
+            "--output-dir",
+            "hooks",
+        ],
+    );
+    let reply = bootstrap_on_edit(dir.path(), dir.path(), "protocol.toml");
+    assert_eq!(reply["decision"], "block", "{}", reply);
+    let reply = bootstrap_on_edit(dir.path(), dir.path(), "src/main.rs");
     assert_eq!(reply, serde_json::json!({}));
 }

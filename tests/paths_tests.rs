@@ -11,7 +11,9 @@
 
 use std::path::{Path, PathBuf};
 
-use sahjhan::paths::{data_dir_from, is_managed, manifest_key, path_is_under, project_root_from};
+use sahjhan::paths::{
+    data_dir_from, is_managed, manifest_key, path_is_under, project_relative, project_root_from,
+};
 use tempfile::tempdir;
 
 /// Build `<tmp>/docs/holtz/.sahjhan` and hand back the root.
@@ -296,6 +298,51 @@ fn test_manifest_key_returns_path_as_written_when_outside_root() {
     // Not silently accepted downstream — Manifest::track refuses it (E13).
     let key = manifest_key(Path::new("/elsewhere/STATUS.md"), Path::new("/project"));
     assert_eq!(key, "/elsewhere/STATUS.md");
+}
+
+// ---------------------------------------------------------------------------
+// project_relative
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_project_relative_spells_a_typed_path_against_the_root() {
+    let root = Path::new("/project");
+    let rel = |typed: &str, cwd: &str| project_relative(Path::new(typed), Path::new(cwd), root);
+
+    assert_eq!(rel("enforcement", "/project"), PathBuf::from("enforcement"));
+    // Typed from a subdirectory, the way `hook generate` sees it after a `cd`.
+    assert_eq!(
+        rel("../enforcement", "/project/src"),
+        PathBuf::from("enforcement")
+    );
+    assert_eq!(
+        rel("./.claude/hooks", "/project"),
+        PathBuf::from(".claude/hooks")
+    );
+    assert_eq!(
+        rel("/project/protocol", "/anywhere"),
+        PathBuf::from("protocol")
+    );
+}
+
+#[test]
+fn test_project_relative_is_dot_for_the_root_itself() {
+    let got = project_relative(
+        Path::new(".."),
+        Path::new("/project/src"),
+        Path::new("/project"),
+    );
+    assert_eq!(got, PathBuf::from("."));
+}
+
+#[test]
+fn test_project_relative_keeps_a_path_outside_the_root_absolute() {
+    let root = Path::new("/project");
+    let got = project_relative(Path::new("../shared/cfg"), Path::new("/project"), root);
+    assert_eq!(got, PathBuf::from("/shared/cfg"));
+    // A sibling that shares a string prefix is not under the root.
+    let got = project_relative(Path::new("/project-old/cfg"), Path::new("/project"), root);
+    assert_eq!(got, PathBuf::from("/project-old/cfg"));
 }
 
 // ---------------------------------------------------------------------------

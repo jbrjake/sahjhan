@@ -7,7 +7,7 @@
 // - [cmd-hook-eval]     cmd_hook_eval()     — evaluate hook rules against current state
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::commands::{
     load_config, open_targeted_ledger, resolve_config_dir, resolve_project_root, LedgerTargeting,
@@ -48,8 +48,24 @@ pub fn cmd_hook_generate(
         }
     };
 
+    // The wrappers join the config dir, and the suggested settings join the
+    // hooks dir, onto the project root; both were typed relative to wherever
+    // this ran. Spell each against the root, or absolute if it lies outside.
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let root = resolve_project_root(&config.paths.data_dir);
+    let anchored = |typed: &str| {
+        crate::paths::project_relative(Path::new(typed), &cwd, &root)
+            .to_string_lossy()
+            .replace('\\', "/")
+    };
+
     let out_path = output_dir.as_ref().map(PathBuf::from);
-    let hooks = match generator.generate(&config, harness_name, out_path.as_deref()) {
+    let hooks = match generator.generate(
+        &config,
+        &anchored(config_dir),
+        harness_name,
+        out_path.as_deref(),
+    ) {
         Ok(h) => h,
         Err(e) => {
             eprintln!("Hook generation failed: {}", e);
@@ -76,7 +92,7 @@ pub fn cmd_hook_generate(
     println!("\n# Suggested hooks configuration for .claude/settings.json:");
     println!(
         "{}",
-        crate::hooks::HookGenerator::suggested_hooks_json(&hooks, hooks_dir)
+        crate::hooks::HookGenerator::suggested_hooks_json(&hooks, &anchored(hooks_dir))
     );
 
     EXIT_SUCCESS

@@ -28,10 +28,11 @@
 // - [git-common-dir]   main_worktree_of()     — `gitdir:` → `commondir` → main worktree
 // - [data-dir]         data_dir_from()        — project_root_from() joined with data_dir
 // - [manifest-key]     manifest_key()         — project-root-relative key for a file
+// - [project-relative] project_relative()     — a typed path, spelled against the project root
 // - [path-under]       path_is_under()        — component-wise containment test
 // - [is-managed]       is_managed()           — path under any of managed_paths
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 // [project-root]
 /// Resolve the project root — the anchor every system-owned path hangs off.
@@ -176,6 +177,45 @@ pub fn data_dir_from(data_dir: &str, cwd: &Path) -> PathBuf {
 pub fn manifest_key(path: &Path, project_root: &Path) -> String {
     let rel = path.strip_prefix(project_root).unwrap_or(path);
     rel.to_string_lossy().replace('\\', "/")
+}
+
+// [project-relative]
+/// Spell a path the user typed — relative to `cwd`, or absolute — for a reader
+/// that joins it onto the project root: relative to `project_root` when it lies
+/// under it, absolute when it does not, and `.` when it *is* the root.
+///
+/// This is where the two halves of the module rule meet. `hook generate` takes
+/// `--config-dir` and `--output-dir` as typed, from wherever it was run, and
+/// writes them into scripts that resolve them against the project. Written
+/// through verbatim, `--config-dir ../enforcement` typed in `src/` names
+/// `<root>/../enforcement` to the script.
+///
+/// Lexical: `.` and `..` are applied without the filesystem, since an output
+/// dir need not exist yet. `cwd` is what `current_dir()` returns and the
+/// walk-up finds `project_root` among its ancestors, so the two share a
+/// spelling.
+pub fn project_relative(path: &Path, cwd: &Path, project_root: &Path) -> PathBuf {
+    let absolute = lexical(&cwd.join(path));
+    match absolute.strip_prefix(lexical(project_root)) {
+        Ok(rel) if rel.as_os_str().is_empty() => PathBuf::from("."),
+        Ok(rel) => rel.to_path_buf(),
+        Err(_) => absolute,
+    }
+}
+
+/// `path` with `.` dropped and `..` applied, component by component.
+fn lexical(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
 }
 
 // [path-under]

@@ -8,13 +8,14 @@
 
 use std::path::Path;
 
-use crate::config::ProtocolConfig;
+use crate::config::{ProtocolConfig, CONFIG_SEALS};
 
 // ---------------------------------------------------------------------------
 // Embedded templates — thin wrappers that delegate to `sahjhan hook eval`.
 //
-// Each template is the Python it emits, verbatim. The one substitution is
-// `{config_dir}`, by `.replace()` — not `format!`, which is what `{{` / `}}`
+// Each template is the Python it emits, verbatim. The substitutions are
+// `{config_dir}`, and in the bootstrap `{sealed}` and `{scripts}`, each a
+// Python literal, by `.replace()` — not `format!`, which is what `{{` / `}}`
 // would be escaping for. Written doubled here they reach the script doubled,
 // and `{{}}` is a set holding a dict: a TypeError on the first line that uses one.
 //
@@ -50,10 +51,10 @@ def sahjhan_binary():
            os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     return os.path.join(root, "bin", f"sahjhan-{triple}")
 
-CONFIG_DIR = "{config_dir}"
+CONFIG_DIR = {config_dir}
 
 def config_dir(event):
-    # CONFIG_DIR is a path under the project root. The hook's cwd, and the
+    # CONFIG_DIR is relative to the project root, or absolute. The hook's cwd, and the
     # event's, follow Claude's tools wherever they cd; CLAUDE_PROJECT_DIR
     # stays where the session started. sahjhan itself still runs in the
     # event's cwd, so a caller-anchored gate reads the actor's own tree.
@@ -131,10 +132,10 @@ def sahjhan_binary():
            os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     return os.path.join(root, "bin", f"sahjhan-{triple}")
 
-CONFIG_DIR = "{config_dir}"
+CONFIG_DIR = {config_dir}
 
 def config_dir(event):
-    # CONFIG_DIR is a path under the project root. The hook's cwd, and the
+    # CONFIG_DIR is relative to the project root, or absolute. The hook's cwd, and the
     # event's, follow Claude's tools wherever they cd; CLAUDE_PROJECT_DIR
     # stays where the session started. sahjhan itself still runs in the
     # event's cwd, so a caller-anchored gate reads the actor's own tree.
@@ -212,10 +213,10 @@ def sahjhan_binary():
            os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     return os.path.join(root, "bin", f"sahjhan-{triple}")
 
-CONFIG_DIR = "{config_dir}"
+CONFIG_DIR = {config_dir}
 
 def config_dir(event):
-    # CONFIG_DIR is a path under the project root. The hook's cwd, and the
+    # CONFIG_DIR is relative to the project root, or absolute. The hook's cwd, and the
     # event's, follow Claude's tools wherever they cd; CLAUDE_PROJECT_DIR
     # stays where the session started. sahjhan itself still runs in the
     # event's cwd, so a caller-anchored gate reads the actor's own tree.
@@ -276,30 +277,80 @@ if __name__ == "__main__":
 "##;
 
 const BOOTSTRAP_HOOK: &str = r##"# _sahjhan_bootstrap.py — DO NOT MODIFY
-# This hook protects Sahjhan's enforcement infrastructure.
+# This hook protects Sahjhan's enforcement infrastructure: the protocol config,
+# these hook scripts, and the binary they run.
 # It is intentionally minimal and self-referential.
-import os, sys, json
+import os, sys, json, platform
 
-PROTECTED = ["enforcement/", "bin/sahjhan", "_sahjhan_bootstrap.py"]
+CONFIG_DIR = {config_dir}
+SEALED = {sealed}
+SCRIPTS = {scripts}
 
-event = json.loads(sys.stdin.read())
-tool_name = event.get("tool_name", "")
-if tool_name not in ("Write", "Edit"):
-    print(json.dumps({}))
-    sys.exit(0)
+def sahjhan_binary():
+    env = os.environ.get("SAHJHAN_BIN")
+    if env:
+        return env
+    arch = platform.machine()
+    system = platform.system().lower()
+    if arch == "arm64":
+        arch = "aarch64"
+    if system == "darwin":
+        triple = f"{arch}-apple-darwin"
+    else:
+        triple = f"{arch}-unknown-linux-gnu"
+    root = os.environ.get("CLAUDE_PLUGIN_ROOT",
+           os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return os.path.join(root, "bin", f"sahjhan-{triple}")
 
-path = event.get("tool_input", {}).get("file_path", "")
-cwd = event.get("cwd", os.getcwd())
-resolved = os.path.realpath(os.path.join(cwd, path)) if path else ""
+def protected(event):
+    # Anchored where the wrappers look, never on Claude's cwd, which follows
+    # its cds: the config on the project root, the scripts beside this one.
+    root = os.path.realpath(
+        os.environ.get("CLAUDE_PROJECT_DIR") or event.get("cwd", os.getcwd()))
+    config = os.path.realpath(os.path.join(root, CONFIG_DIR))
+    # A config dir that is the project root is protected file by file; the
+    # directory itself would refuse every edit in the project.
+    if config == root:
+        paths = [os.path.join(config, f) for f in SEALED]
+    else:
+        paths = [config]
+    here = os.path.dirname(os.path.realpath(__file__))
+    paths += [os.path.join(here, f) for f in SCRIPTS]
+    paths.append(os.path.realpath(sahjhan_binary()))
+    return paths
 
-for p in PROTECTED:
-    full = os.path.realpath(os.path.join(cwd, p))
-    if resolved.startswith(full) or resolved == full:
+def under(path, top):
+    # Whole components: enforcement-old/x is not under enforcement.
+    try:
+        return os.path.commonpath([path, top]) == top
+    except ValueError:
+        return False
+
+def main():
+    try:
+        event = json.loads(sys.stdin.read())
+    except Exception as e:
+        print(json.dumps({"systemMessage":
+            f"sahjhan bootstrap hook could not read the hook event: {e}"}))
+        return
+
+    if event.get("tool_name", "") not in ("Write", "Edit"):
+        print(json.dumps({}))
+        return
+
+    path = event.get("tool_input", {}).get("file_path", "")
+    cwd = event.get("cwd", os.getcwd())
+    resolved = os.path.realpath(os.path.join(cwd, path)) if path else ""
+
+    if resolved and any(under(resolved, p) for p in protected(event)):
         print(json.dumps({"decision": "block",
             "reason": f"BLOCKED: {path} is protected enforcement infrastructure."}))
-        sys.exit(0)
+        return
 
-print(json.dumps({}))
+    print(json.dumps({}))
+
+if __name__ == "__main__":
+    main()
 "##;
 
 // ---------------------------------------------------------------------------
@@ -324,6 +375,11 @@ impl HookGenerator {
 
     /// Generate hook scripts from the protocol configuration.
     ///
+    /// `config_dir` is the protocol config directory as the scripts read it:
+    /// joined onto the project root, so relative to it or absolute — see
+    /// `paths::project_relative`. The wrappers pass it to `hook eval`, and
+    /// the bootstrap protects it.
+    ///
     /// `harness` should be `"cc"` for Claude Code (currently the only
     /// supported harness).
     ///
@@ -333,6 +389,7 @@ impl HookGenerator {
     pub fn generate(
         &self,
         _config: &ProtocolConfig,
+        config_dir: &str,
         harness: &str,
         output_dir: Option<&Path>,
     ) -> Result<Vec<GeneratedHook>, String> {
@@ -343,11 +400,14 @@ impl HookGenerator {
             ));
         }
 
-        let config_dir_value = "enforcement";
+        // Python string literals, written as JSON: every JSON string escape is
+        // also a Python one, so a path with a quote or backslash stays a path.
+        let literal = |value: &serde_json::Value| value.to_string();
+        let config_dir_value = literal(&serde_json::json!(config_dir));
         let mut hooks = Vec::new();
 
         // --- Pre-tool hook (PreToolUse) — thin wrapper ---
-        let pre_tool = PRE_TOOL_HOOK_TEMPLATE.replace("{config_dir}", config_dir_value);
+        let pre_tool = PRE_TOOL_HOOK_TEMPLATE.replace("{config_dir}", &config_dir_value);
         hooks.push(GeneratedHook {
             filename: "pre_tool_hook.py".to_string(),
             content: pre_tool,
@@ -355,7 +415,7 @@ impl HookGenerator {
         });
 
         // --- Post-tool hook (PostToolUse) — thin wrapper ---
-        let post_tool = POST_TOOL_HOOK_TEMPLATE.replace("{config_dir}", config_dir_value);
+        let post_tool = POST_TOOL_HOOK_TEMPLATE.replace("{config_dir}", &config_dir_value);
         hooks.push(GeneratedHook {
             filename: "post_tool_hook.py".to_string(),
             content: post_tool,
@@ -363,7 +423,7 @@ impl HookGenerator {
         });
 
         // --- Stop hook (Stop) — thin wrapper ---
-        let stop = STOP_HOOK_TEMPLATE.replace("{config_dir}", config_dir_value);
+        let stop = STOP_HOOK_TEMPLATE.replace("{config_dir}", &config_dir_value);
         hooks.push(GeneratedHook {
             filename: "stop_hook.py".to_string(),
             content: stop,
@@ -371,9 +431,21 @@ impl HookGenerator {
         });
 
         // --- Bootstrap hook (PreToolUse) — self-contained ---
+        // It protects every script generated here, itself included.
+        let bootstrap_filename = "_sahjhan_bootstrap.py";
+        let scripts: Vec<&str> = hooks
+            .iter()
+            .map(|h| h.filename.as_str())
+            .chain(std::iter::once(bootstrap_filename))
+            .collect();
+        let sealed: Vec<&str> = CONFIG_SEALS.iter().map(|(_, file)| *file).collect();
+        let bootstrap = BOOTSTRAP_HOOK
+            .replace("{config_dir}", &config_dir_value)
+            .replace("{sealed}", &literal(&serde_json::json!(sealed)))
+            .replace("{scripts}", &literal(&serde_json::json!(scripts)));
         hooks.push(GeneratedHook {
-            filename: "_sahjhan_bootstrap.py".to_string(),
-            content: BOOTSTRAP_HOOK.to_string(),
+            filename: bootstrap_filename.to_string(),
+            content: bootstrap,
             hook_type: "PreToolUse".to_string(),
         });
 
@@ -482,7 +554,7 @@ mod tests {
     fn test_generate_produces_valid_python() {
         let gen = HookGenerator::new().unwrap();
         let config = test_config();
-        let hooks = gen.generate(&config, "cc", None).unwrap();
+        let hooks = gen.generate(&config, "enforcement", "cc", None).unwrap();
 
         // All hooks should contain json.loads and sys.stdin (valid Python hook pattern)
         for hook in &hooks {
@@ -503,7 +575,7 @@ mod tests {
     fn test_config_dir_in_pre_tool_hook() {
         let gen = HookGenerator::new().unwrap();
         let config = test_config();
-        let hooks = gen.generate(&config, "cc", None).unwrap();
+        let hooks = gen.generate(&config, "enforcement", "cc", None).unwrap();
 
         let pre_tool = hooks
             .iter()
@@ -519,7 +591,7 @@ mod tests {
     fn test_config_dir_in_post_tool_hook() {
         let gen = HookGenerator::new().unwrap();
         let config = test_config();
-        let hooks = gen.generate(&config, "cc", None).unwrap();
+        let hooks = gen.generate(&config, "enforcement", "cc", None).unwrap();
 
         let post_tool = hooks
             .iter()
@@ -535,22 +607,27 @@ mod tests {
     fn test_bootstrap_included() {
         let gen = HookGenerator::new().unwrap();
         let config = test_config();
-        let hooks = gen.generate(&config, "cc", None).unwrap();
+        let hooks = gen.generate(&config, "enforcement", "cc", None).unwrap();
 
         let bootstrap = hooks.iter().find(|h| h.filename == "_sahjhan_bootstrap.py");
         assert!(bootstrap.is_some(), "Bootstrap hook should be included");
 
         let bs = bootstrap.unwrap();
         assert_eq!(bs.hook_type, "PreToolUse");
-        assert!(bs.content.contains("PROTECTED"));
-        assert!(bs.content.contains("enforcement/"));
+        assert!(bs.content.contains("CONFIG_DIR = \"enforcement\""));
+        assert!(bs.content.contains(
+            "SCRIPTS = [\"pre_tool_hook.py\",\"post_tool_hook.py\",\"stop_hook.py\",\"_sahjhan_bootstrap.py\"]"
+        ));
+        for (_, file) in CONFIG_SEALS {
+            assert!(bs.content.contains(&format!("\"{}\"", file)), "{}", file);
+        }
     }
 
     #[test]
     fn test_hook_types_correct() {
         let gen = HookGenerator::new().unwrap();
         let config = test_config();
-        let hooks = gen.generate(&config, "cc", None).unwrap();
+        let hooks = gen.generate(&config, "enforcement", "cc", None).unwrap();
 
         let pre_tool = hooks
             .iter()
@@ -578,7 +655,7 @@ mod tests {
     fn test_unknown_harness_rejected() {
         let gen = HookGenerator::new().unwrap();
         let config = test_config();
-        let result = gen.generate(&config, "unknown", None);
+        let result = gen.generate(&config, "enforcement", "unknown", None);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Unknown harness"));
     }
@@ -588,7 +665,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let gen = HookGenerator::new().unwrap();
         let config = test_config();
-        let hooks = gen.generate(&config, "cc", Some(dir.path())).unwrap();
+        let hooks = gen
+            .generate(&config, "enforcement", "cc", Some(dir.path()))
+            .unwrap();
 
         assert_eq!(hooks.len(), 4);
         for hook in &hooks {
@@ -603,7 +682,7 @@ mod tests {
     fn test_suggested_hooks_json() {
         let gen = HookGenerator::new().unwrap();
         let config = test_config();
-        let hooks = gen.generate(&config, "cc", None).unwrap();
+        let hooks = gen.generate(&config, "enforcement", "cc", None).unwrap();
 
         let json = HookGenerator::suggested_hooks_json(&hooks, ".hooks");
         assert!(json.contains("PreToolUse"));
@@ -619,7 +698,7 @@ mod tests {
     fn test_four_hooks_generated() {
         let gen = HookGenerator::new().unwrap();
         let config = test_config();
-        let hooks = gen.generate(&config, "cc", None).unwrap();
+        let hooks = gen.generate(&config, "enforcement", "cc", None).unwrap();
 
         assert_eq!(hooks.len(), 4);
 
@@ -634,7 +713,7 @@ mod tests {
     fn test_thin_wrappers_delegate_to_hook_eval() {
         let gen = HookGenerator::new().unwrap();
         let config = test_config();
-        let hooks = gen.generate(&config, "cc", None).unwrap();
+        let hooks = gen.generate(&config, "enforcement", "cc", None).unwrap();
 
         for hook in &hooks {
             if hook.filename == "_sahjhan_bootstrap.py" {

@@ -478,12 +478,20 @@ fn generated_post_tool_hook_relays_a_block() {
 
 #[test]
 fn generated_stop_hook_relays_a_block() {
+    // The event is shaped like Claude Code's Stop input, which carries the
+    // final response as `last_assistant_message` — the field the wrapper has
+    // to read for an `output_contains_any` rule to see any text at all.
     let dir = project_with_generated_hooks();
     let cwd = dir.path().to_str().unwrap();
     let (code, stderr, reply) = run_wrapper(
         dir.path(),
         "stop_hook.py",
-        serde_json::json!({"stop_hook_output": "task complete", "cwd": cwd}),
+        serde_json::json!({
+            "hook_event_name": "Stop",
+            "stop_hook_active": false,
+            "last_assistant_message": "Task complete: everything is done.",
+            "cwd": cwd,
+        }),
     );
     assert_eq!((code, stderr.as_str()), (0, ""), "{}", reply);
     assert_eq!(reply["decision"], "block", "{}", reply);
@@ -533,7 +541,7 @@ fn generated_hooks_say_when_sahjhan_did_not_evaluate() {
         ),
         (
             "stop_hook.py",
-            serde_json::json!({"stop_hook_output": "task complete", "cwd": cwd}),
+            serde_json::json!({"last_assistant_message": "task complete", "cwd": cwd}),
         ),
     ] {
         let (code, stderr, reply) = run_wrapper(dir.path(), script, event);

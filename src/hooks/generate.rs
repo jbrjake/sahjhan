@@ -206,7 +206,11 @@ def main():
             f"sahjhan hook could not read the hook event: {e}"}))
         return
 
-    stop_message = event.get("stop_hook_output", event.get("stop_message", ""))
+    # Claude's final response. Claude Code's Stop input carries it here and
+    # nowhere else (its keys, captured from 2.1.281: background_tasks, cwd,
+    # hook_event_name, last_assistant_message, permission_mode, prompt_id,
+    # session_crons, session_id, stop_hook_active, transcript_path).
+    stop_message = event.get("last_assistant_message", "")
 
     cmd = [sahjhan_binary(), "--config-dir", CONFIG_DIR, "--json",
            "hook", "eval", "--event", "Stop"]

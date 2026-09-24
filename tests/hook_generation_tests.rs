@@ -290,10 +290,11 @@ fn wrappers_fail_open_on_error() {
             "{} should catch exceptions for fail-open behavior",
             hook.filename
         );
-        // The except block should output allow
+        // Claude Code rejects a top-level `"decision": "allow"` as invalid
+        // hook output; a wrapper allows with `{}` or a `systemMessage`.
         assert!(
-            hook.content.contains("\"decision\": \"allow\""),
-            "{} should default to allow on error",
+            !hook.content.contains("\"decision\": \"allow\""),
+            "{} must not print the allow Claude Code rejects",
             hook.filename
         );
     }
@@ -304,17 +305,27 @@ fn wrappers_fail_open_on_error() {
 //
 // Everything above reads the generated text. These execute it: python3 runs
 // each wrapper the way Claude Code would, and the wrapper runs the sahjhan
-// under test through SAHJHAN_BIN. An `allow` proves nothing here — every
-// wrapper also prints one from its `except` — so each wrapper is driven to a
-// *block* that only a real round trip through `hook eval` can produce.
+// under test through SAHJHAN_BIN. Each wrapper is driven to a *block*, which
+// only a real round trip through `hook eval` can produce, and every reply is
+// held to the shapes Claude Code acts on.
 // ---------------------------------------------------------------------------
 
-const POST_TOOL_RULE: &str = r#"
+const EXTRA_RULES: &str = r#"
 [[hooks]]
 event = "PostToolUse"
 tools = ["Bash"]
 action = "block"
 message = "post-tool rule fired"
+
+[hooks.check]
+type = "event_count_since_last_transition"
+threshold = 0
+
+[[hooks]]
+event = "PreToolUse"
+tools = ["Bash"]
+action = "warn"
+message = "pre-tool warning fired"
 
 [hooks.check]
 type = "event_count_since_last_transition"
@@ -356,7 +367,7 @@ fn project_with_generated_hooks() -> tempfile::TempDir {
     }
     let hooks_toml = config_dir.join("hooks.toml");
     let mut text = std::fs::read_to_string(&hooks_toml).unwrap();
-    text.push_str(POST_TOOL_RULE);
+    text.push_str(EXTRA_RULES);
     std::fs::write(&hooks_toml, text).unwrap();
 
     sahjhan_in(dir.path(), &["init"]);
@@ -365,17 +376,47 @@ fn project_with_generated_hooks() -> tempfile::TempDir {
     dir
 }
 
+/// Fail unless `reply` is one of the three shapes Claude Code acts on as
+/// intended — see the header of `src/hooks/generate.rs`. Any other shape is a
+/// hook error on every call, or text nobody is shown.
+fn assert_claude_code_shape(script: &str, reply: &serde_json::Value) {
+    let obj = reply
+        .as_object()
+        .unwrap_or_else(|| panic!("{} printed a non-object: {}", script, reply));
+    let keys: Vec<&str> = obj.keys().map(|k| k.as_str()).collect();
+    let acted_on = match keys.as_slice() {
+        [] => true,
+        ["systemMessage"] => obj["systemMessage"].is_string(),
+        ["decision", "reason"] => obj["decision"] == "block" && obj["reason"].is_string(),
+        _ => false,
+    };
+    assert!(
+        acted_on,
+        "{} printed a shape Claude Code does not act on: {}",
+        script, reply
+    );
+}
+
 /// Run one generated wrapper on a hook event: its exit status, stderr, and
-/// the JSON it printed.
+/// the JSON it printed, which must be a shape Claude Code acts on.
 fn run_wrapper(
     dir: &std::path::Path,
     script: &str,
     event: serde_json::Value,
 ) -> (i32, String, serde_json::Value) {
+    run_wrapper_with_bin(dir, script, event, env!("CARGO_BIN_EXE_sahjhan"))
+}
+
+fn run_wrapper_with_bin(
+    dir: &std::path::Path,
+    script: &str,
+    event: serde_json::Value,
+    sahjhan_bin: &str,
+) -> (i32, String, serde_json::Value) {
     use std::io::Write;
     let mut child = std::process::Command::new("python3")
         .arg(dir.join("hooks").join(script))
-        .env("SAHJHAN_BIN", env!("CARGO_BIN_EXE_sahjhan"))
+        .env("SAHJHAN_BIN", sahjhan_bin)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -396,6 +437,7 @@ fn run_wrapper(
             script, e, stdout, stderr
         )
     });
+    assert_claude_code_shape(script, &reply);
     (output.status.code().unwrap(), stderr, reply)
 }
 
@@ -525,4 +567,80 @@ fn generated_hook_names_a_config_edited_after_its_seal() {
         "{}",
         notice
     );
+}
+
+#[test]
+fn generated_hooks_allow_with_an_empty_object() {
+    // `{}` is how a hook lets a call through. `{"decision": "allow"}` looks
+    // the same and is not: Claude Code rejects it as invalid hook output and
+    // records a hook error on every call it lets through.
+    let dir = project_with_generated_hooks();
+    let cwd = dir.path().to_str().unwrap();
+    let read = serde_json::json!({"tool_name": "Read", "tool_input": {"file_path": "README.md"}, "cwd": cwd});
+    for (script, event) in [
+        ("pre_tool_hook.py", read.clone()),
+        ("post_tool_hook.py", read.clone()),
+        ("_sahjhan_bootstrap.py", read),
+        (
+            "stop_hook.py",
+            serde_json::json!({"last_assistant_message": "hello", "cwd": cwd}),
+        ),
+    ] {
+        let (code, stderr, reply) = run_wrapper(dir.path(), script, event);
+        assert_eq!((code, stderr.as_str()), (0, ""), "{}: {}", script, reply);
+        assert_eq!(reply, serde_json::json!({}), "{}", script);
+    }
+}
+
+#[test]
+fn generated_pre_tool_hook_relays_a_warning_as_a_system_message() {
+    // A warning is shown to the user through `systemMessage`. A top-level
+    // `message` passes Claude Code's schema and is shown to no one.
+    let dir = project_with_generated_hooks();
+    let cwd = dir.path().to_str().unwrap();
+    let (code, stderr, reply) = run_wrapper(
+        dir.path(),
+        "pre_tool_hook.py",
+        serde_json::json!({"tool_name": "Bash", "tool_input": {"command": "ls"}, "cwd": cwd}),
+    );
+    assert_eq!((code, stderr.as_str()), (0, ""), "{}", reply);
+    assert_eq!(
+        reply,
+        serde_json::json!({"systemMessage": "pre-tool warning fired"})
+    );
+}
+
+#[test]
+fn generated_hooks_say_why_when_sahjhan_cannot_run() {
+    // No binary at SAHJHAN_BIN: the wrapper's `except`. It still lets the call
+    // through, and says why rather than printing an allow nobody can tell
+    // from a rule that ran.
+    let dir = project_with_generated_hooks();
+    let cwd = dir.path().to_str().unwrap();
+    let missing = dir.path().join("no-such-sahjhan");
+    let (code, stderr, reply) = run_wrapper_with_bin(
+        dir.path(),
+        "pre_tool_hook.py",
+        serde_json::json!({"tool_name": "Edit", "tool_input": {"file_path": "src/main.rs"}, "cwd": cwd}),
+        missing.to_str().unwrap(),
+    );
+    let notice = unevaluated_notice("pre_tool_hook.py", code, &stderr, &reply);
+    assert!(
+        notice.contains("did not evaluate") && notice.contains("FileNotFoundError"),
+        "{}",
+        notice
+    );
+}
+
+#[test]
+fn generated_bootstrap_blocks_a_write_to_the_enforcement_dir() {
+    let dir = project_with_generated_hooks();
+    let cwd = dir.path().to_str().unwrap();
+    let (code, stderr, reply) = run_wrapper(
+        dir.path(),
+        "_sahjhan_bootstrap.py",
+        serde_json::json!({"tool_name": "Write", "tool_input": {"file_path": "enforcement/protocol.toml"}, "cwd": cwd}),
+    );
+    assert_eq!((code, stderr.as_str()), (0, ""), "{}", reply);
+    assert_eq!(reply["decision"], "block", "{}", reply);
 }

@@ -17,6 +17,17 @@ use crate::config::ProtocolConfig;
 // `{config_dir}`, by `.replace()` — not `format!`, which is what `{{` / `}}`
 // would be escaping for. Written doubled here they reach the script doubled,
 // and `{{}}` is a set holding a dict: a TypeError on the first line that uses one.
+//
+// Every script prints exactly one of three shapes, each checked against Claude
+// Code 2.1.281 by running these scripts as its hooks:
+//   `{}`                                    — let the call through
+//   `{"systemMessage": …}`                  — let it through; the text is shown
+//   `{"decision": "block", "reason": …}`    — block; the reason reaches Claude
+// Do not assume any other shape works. `"decision": "allow"` fails Claude
+// Code's hook-output schema, which it records as a hook error on every call;
+// a top-level `message` passes the schema and is shown to no one. The block
+// form is deprecated for PreToolUse but still honored there, and it is the
+// current form for PostToolUse and Stop — leave it.
 // ---------------------------------------------------------------------------
 
 const PRE_TOOL_HOOK_TEMPLATE: &str = r##"# Generated hook: pre_tool_hook.py
@@ -44,8 +55,9 @@ CONFIG_DIR = "{config_dir}"
 def main():
     try:
         event = json.loads(sys.stdin.read())
-    except Exception:
-        print(json.dumps({"decision": "allow"}))
+    except Exception as e:
+        print(json.dumps({"systemMessage":
+            f"sahjhan hook could not read the hook event: {e}"}))
         return
 
     tool_name = event.get("tool_name", "")
@@ -78,11 +90,14 @@ def main():
             print(json.dumps({"decision": "block", "reason": reason}))
         elif messages:
             combined = "\n".join(m["message"] for m in messages)
-            print(json.dumps({"decision": "allow", "message": combined}))
+            print(json.dumps({"systemMessage": combined}))
         else:
-            print(json.dumps({"decision": "allow"}))
-    except Exception:
-        print(json.dumps({"decision": "allow"}))
+            print(json.dumps({}))
+    except Exception as e:
+        # sahjhan missing, timed out, or not answering in JSON: no rule ran.
+        print(json.dumps({"systemMessage":
+            f"sahjhan did not evaluate the protocol's hooks "
+            f"({type(e).__name__}): {e}"}))
 
 if __name__ == "__main__":
     main()
@@ -113,8 +128,9 @@ CONFIG_DIR = "{config_dir}"
 def main():
     try:
         event = json.loads(sys.stdin.read())
-    except Exception:
-        print(json.dumps({"decision": "allow"}))
+    except Exception as e:
+        print(json.dumps({"systemMessage":
+            f"sahjhan hook could not read the hook event: {e}"}))
         return
 
     tool_name = event.get("tool_name", "")
@@ -147,11 +163,14 @@ def main():
             print(json.dumps({"decision": "block", "reason": reason}))
         elif messages:
             combined = "\n".join(m["message"] for m in messages)
-            print(json.dumps({"decision": "allow", "message": combined}))
+            print(json.dumps({"systemMessage": combined}))
         else:
-            print(json.dumps({"decision": "allow"}))
-    except Exception:
-        print(json.dumps({"decision": "allow"}))
+            print(json.dumps({}))
+    except Exception as e:
+        # sahjhan missing, timed out, or not answering in JSON: no rule ran.
+        print(json.dumps({"systemMessage":
+            f"sahjhan did not evaluate the protocol's hooks "
+            f"({type(e).__name__}): {e}"}))
 
 if __name__ == "__main__":
     main()
@@ -182,8 +201,9 @@ CONFIG_DIR = "{config_dir}"
 def main():
     try:
         event = json.loads(sys.stdin.read())
-    except Exception:
-        print(json.dumps({"decision": "allow"}))
+    except Exception as e:
+        print(json.dumps({"systemMessage":
+            f"sahjhan hook could not read the hook event: {e}"}))
         return
 
     stop_message = event.get("stop_hook_output", event.get("stop_message", ""))
@@ -214,11 +234,14 @@ def main():
             print(json.dumps({"decision": "block", "reason": reason}))
         elif messages:
             combined = "\n".join(m["message"] for m in messages)
-            print(json.dumps({"decision": "allow", "message": combined}))
+            print(json.dumps({"systemMessage": combined}))
         else:
-            print(json.dumps({"decision": "allow"}))
-    except Exception:
-        print(json.dumps({"decision": "allow"}))
+            print(json.dumps({}))
+    except Exception as e:
+        # sahjhan missing, timed out, or not answering in JSON: no rule ran.
+        print(json.dumps({"systemMessage":
+            f"sahjhan did not evaluate the protocol's hooks "
+            f"({type(e).__name__}): {e}"}))
 
 if __name__ == "__main__":
     main()
@@ -234,7 +257,7 @@ PROTECTED = ["enforcement/", "bin/sahjhan", "_sahjhan_bootstrap.py"]
 event = json.loads(sys.stdin.read())
 tool_name = event.get("tool_name", "")
 if tool_name not in ("Write", "Edit"):
-    print(json.dumps({"decision": "allow"}))
+    print(json.dumps({}))
     sys.exit(0)
 
 path = event.get("tool_input", {}).get("file_path", "")
@@ -248,7 +271,7 @@ for p in PROTECTED:
             "reason": f"BLOCKED: {path} is protected enforcement infrastructure."}))
         sys.exit(0)
 
-print(json.dumps({"decision": "allow"}))
+print(json.dumps({}))
 "##;
 
 // ---------------------------------------------------------------------------

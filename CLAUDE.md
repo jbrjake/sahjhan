@@ -343,7 +343,7 @@ current directory. Reach for this module before writing
 
 | Concept | File | Anchor/Item | Purpose |
 |---------|------|-------------|---------|
-| Hook generator | `hooks/generate.rs` | `HookGenerator` | Produces Python hook scripts; each template is the emitted Python verbatim, only `{config_dir}` substituted. A wrapper relays a block, and on an unevaluated reply (`ok: false`) lets the call through with a `systemMessage` naming the error (#51) |
+| Hook generator | `hooks/generate.rs` | `HookGenerator` | Produces Python hook scripts; each template is the emitted Python verbatim, only `{config_dir}` substituted. Every script prints one of the three shapes Claude Code acts on, checked by running them as its hooks: `{}` to allow, `{"systemMessage": …}` to allow and tell the user (a warning, or an unevaluated `ok: false` reply naming the error — #51), `{"decision": "block", "reason": …}` to block. `"decision": "allow"` is invalid hook output to Claude Code, and a top-level `message` is shown to no one — see the file header before changing any of it |
 | Generated hook | `hooks/generate.rs` | `GeneratedHook` | Hook type + content |
 | Hook eval request | `hooks/eval.rs` | `HookEvalRequest` | Incoming evaluation request (event, tool, file, output_text) |
 | Hook eval result | `hooks/eval.rs` | `HookEvalResult` | Aggregate result (decision, messages, auto_records, monitor_warnings) |
@@ -955,7 +955,7 @@ field Claude Code shows the user — with no `decision` beside it.
 | `tests/registry_tests.rs` | Multi-ledger registry CRUD |
 | `tests/checkpoint_tests.rs` | Ledger checkpointing |
 | `tests/import_tests.rs` | JSONL import |
-| `tests/hook_generation_tests.rs` | Hook script generation; the generated wrappers **run** — python3 executes each against the built binary via `SAHJHAN_BIN`, driven to a block only a real `hook eval` round trip produces, since every wrapper's `except` prints an allow of its own; against an unparseable config (all three) and a config edited after its seal, a `systemMessage` carrying the engine's code and no `decision` (#51) |
+| `tests/hook_generation_tests.rs` | Hook script generation; the generated wrappers **run** — python3 executes each against the built binary via `SAHJHAN_BIN`, driven to a block only a real `hook eval` round trip produces, with every reply held to the three shapes Claude Code acts on; an allow is exactly `{}` (all four scripts), a warning a `systemMessage`, a missing binary a `systemMessage` naming the error; against an unparseable config (all three) and a config edited after its seal, a `systemMessage` carrying the engine's code and no `decision` (#51) |
 | `tests/template_security_tests.rs` | Shell escaping, injection prevention |
 | `tests/template_tests.rs` | Template-based ledger creation via cmd_ledger_create |
 | `tests/auth_tests.rs` | Session key generation, restricted events, HMAC auth |

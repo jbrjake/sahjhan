@@ -71,9 +71,9 @@ pub fn cmd_hook_generate(
         }
     }
 
-    // Print suggested hooks.json configuration
+    // Print the suggested settings.json hooks block
     let hooks_dir = output_dir.as_deref().unwrap_or(".hooks");
-    println!("\n# Suggested hooks.json configuration:");
+    println!("\n# Suggested hooks configuration for .claude/settings.json:");
     println!(
         "{}",
         crate::hooks::HookGenerator::suggested_hooks_json(&hooks, hooks_dir)

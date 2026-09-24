@@ -368,40 +368,45 @@ impl HookGenerator {
         Ok(hooks)
     }
 
-    /// Return the suggested hooks.json configuration for Claude Code.
+    /// Return the suggested Claude Code hooks configuration: the `hooks`
+    /// block of a project's `.claude/settings.json`.
+    ///
+    /// Two things about it were checked by loading it into Claude Code 2.1.281,
+    /// because getting either wrong fails without a word:
+    ///
+    /// - Each event holds matcher groups, each group a `hooks` list of
+    ///   `{"type": "command", "command": …}`. Bare command strings in place of
+    ///   the groups load without error and register no hooks at all. Stop takes
+    ///   no matcher, so its group has none.
+    /// - A relative `hooks_dir` is anchored on `${CLAUDE_PROJECT_DIR}`. A hook
+    ///   runs in the directory Claude's tools are in, so after one `cd` a
+    ///   relative script path is not found; python3 then exits 2, which Claude
+    ///   Code takes as a block, and every later tool call is refused.
     pub fn suggested_hooks_json(hooks: &[GeneratedHook], hooks_dir: &str) -> String {
-        let mut pre_hooks = Vec::new();
-        let mut post_hooks = Vec::new();
-        let mut stop_hooks = Vec::new();
-
-        for hook in hooks {
-            let entry = format!("\"python3 {}/{}\"", hooks_dir, hook.filename);
-            match hook.hook_type.as_str() {
-                "PreToolUse" => pre_hooks.push(entry),
-                "PostToolUse" => post_hooks.push(entry),
-                "Stop" => stop_hooks.push(entry),
-                _ => {}
+        let command = |filename: &str| {
+            let script = Path::new(hooks_dir).join(filename);
+            if script.is_absolute() {
+                format!("python3 \"{}\"", script.display())
+            } else {
+                format!("python3 \"${{CLAUDE_PROJECT_DIR}}/{}\"", script.display())
             }
-        }
+        };
+        let handlers = |event: &str| -> Vec<serde_json::Value> {
+            hooks
+                .iter()
+                .filter(|h| h.hook_type == event)
+                .map(|h| serde_json::json!({"type": "command", "command": command(&h.filename)}))
+                .collect()
+        };
 
-        format!(
-            r#"{{
-  "hooks": {{
-    "PreToolUse": [
-      {}
-    ],
-    "PostToolUse": [
-      {}
-    ],
-    "Stop": [
-      {}
-    ]
-  }}
-}}"#,
-            pre_hooks.join(",\n      "),
-            post_hooks.join(",\n      "),
-            stop_hooks.join(",\n      "),
-        )
+        let config = serde_json::json!({
+            "hooks": {
+                "PreToolUse": [{"matcher": "*", "hooks": handlers("PreToolUse")}],
+                "PostToolUse": [{"matcher": "*", "hooks": handlers("PostToolUse")}],
+                "Stop": [{"hooks": handlers("Stop")}],
+            }
+        });
+        serde_json::to_string_pretty(&config).unwrap_or_default()
     }
 }
 

@@ -178,14 +178,59 @@ fn suggested_hooks_json_format() {
     let config = make_config(vec!["output"]);
     let hooks = gen.generate(&config, "cc", None).unwrap();
 
+    // The shape Claude Code registers hooks from: each event a list of
+    // matcher groups, each group a list of command handlers. Bare command
+    // strings load without error and register nothing.
     let json = HookGenerator::suggested_hooks_json(&hooks, ".hooks");
-    assert!(json.contains("\"PreToolUse\""));
-    assert!(json.contains("\"PostToolUse\""));
-    assert!(json.contains("\"Stop\""));
-    assert!(json.contains("pre_tool_hook.py"));
-    assert!(json.contains("post_tool_hook.py"));
-    assert!(json.contains("stop_hook.py"));
-    assert!(json.contains("_sahjhan_bootstrap.py"));
+    let config: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let commands = |event: &str| -> Vec<String> {
+        let groups = config["hooks"][event].as_array().unwrap();
+        assert_eq!(groups.len(), 1, "{}: {}", event, json);
+        groups[0]["hooks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|h| {
+                assert_eq!(h["type"], "command", "{}", json);
+                h["command"].as_str().unwrap().to_string()
+            })
+            .collect()
+    };
+    let project = |file: &str| format!("python3 \"${{CLAUDE_PROJECT_DIR}}/.hooks/{}\"", file);
+
+    assert_eq!(config["hooks"]["PreToolUse"][0]["matcher"], "*");
+    assert_eq!(
+        commands("PreToolUse"),
+        [
+            project("pre_tool_hook.py"),
+            project("_sahjhan_bootstrap.py")
+        ]
+    );
+    assert_eq!(config["hooks"]["PostToolUse"][0]["matcher"], "*");
+    assert_eq!(commands("PostToolUse"), [project("post_tool_hook.py")]);
+    // Stop takes no matcher.
+    assert!(
+        config["hooks"]["Stop"][0].get("matcher").is_none(),
+        "{}",
+        json
+    );
+    assert_eq!(commands("Stop"), [project("stop_hook.py")]);
+}
+
+#[test]
+fn suggested_hooks_json_keeps_an_absolute_hooks_dir() {
+    // Only a relative dir needs anchoring; an absolute one already resolves
+    // from wherever Claude's tools have `cd`'d to.
+    let gen = HookGenerator::new().unwrap();
+    let config = make_config(vec!["output"]);
+    let hooks = gen.generate(&config, "cc", None).unwrap();
+
+    let json = HookGenerator::suggested_hooks_json(&hooks, "/opt/proj/.hooks");
+    let config: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(
+        config["hooks"]["Stop"][0]["hooks"][0]["command"],
+        "python3 \"/opt/proj/.hooks/stop_hook.py\""
+    );
 }
 
 #[test]

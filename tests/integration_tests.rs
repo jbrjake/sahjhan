@@ -722,7 +722,9 @@ fn test_hook_generate() {
         .stdout(predicate::str::contains("post_tool_hook.py"))
         .stdout(predicate::str::contains("stop_hook.py"))
         .stdout(predicate::str::contains("_sahjhan_bootstrap.py"))
-        .stdout(predicate::str::contains("hooks.json"));
+        .stdout(predicate::str::contains(
+            "Suggested hooks configuration for .claude/settings.json",
+        ));
 }
 
 #[test]

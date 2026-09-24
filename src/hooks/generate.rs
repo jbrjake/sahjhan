@@ -61,6 +61,14 @@ def main():
         result = subprocess.run(cmd, capture_output=True, text=True,
                                 cwd=event.get("cwd", os.getcwd()), timeout=30)
         output = json.loads(result.stdout)
+        if not output.get("ok", True):
+            # No rule ran, so there is no decision to relay. Let the call
+            # through, and tell the user it went unchecked.
+            error = output.get("error", {})
+            print(json.dumps({"systemMessage":
+                f"sahjhan did not evaluate the protocol's hooks "
+                f"({error.get('code', 'error')}): {error.get('message', '')}"}))
+            return
         data = output.get("data", {})
         decision = data.get("decision", "allow")
         messages = data.get("messages", [])
@@ -122,6 +130,14 @@ def main():
         result = subprocess.run(cmd, capture_output=True, text=True,
                                 cwd=event.get("cwd", os.getcwd()), timeout=30)
         output = json.loads(result.stdout)
+        if not output.get("ok", True):
+            # No rule ran, so there is no decision to relay. Let the call
+            # through, and tell the user it went unchecked.
+            error = output.get("error", {})
+            print(json.dumps({"systemMessage":
+                f"sahjhan did not evaluate the protocol's hooks "
+                f"({error.get('code', 'error')}): {error.get('message', '')}"}))
+            return
         data = output.get("data", {})
         decision = data.get("decision", "allow")
         messages = data.get("messages", [])
@@ -181,6 +197,14 @@ def main():
         result = subprocess.run(cmd, capture_output=True, text=True,
                                 cwd=event.get("cwd", os.getcwd()), timeout=30)
         output = json.loads(result.stdout)
+        if not output.get("ok", True):
+            # No rule ran, so there is no decision to relay. Let the call
+            # through, and tell the user it went unchecked.
+            error = output.get("error", {})
+            print(json.dumps({"systemMessage":
+                f"sahjhan did not evaluate the protocol's hooks "
+                f"({error.get('code', 'error')}): {error.get('message', '')}"}))
+            return
         data = output.get("data", {})
         decision = data.get("decision", "allow")
         messages = data.get("messages", [])

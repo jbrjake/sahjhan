@@ -454,3 +454,75 @@ fn generated_stop_hook_relays_a_block() {
         reply
     );
 }
+
+/// The `systemMessage` a wrapper prints when `hook eval` did not evaluate —
+/// asserting on the way that it carries no `decision`, which is how a hook
+/// lets a call through without claiming any rule allowed it (#51).
+fn unevaluated_notice(script: &str, code: i32, stderr: &str, reply: &serde_json::Value) -> String {
+    assert_eq!((code, stderr), (0, ""), "{}: {}", script, reply);
+    assert!(reply.get("decision").is_none(), "{}: {}", script, reply);
+    reply["systemMessage"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{} said nothing: {}", script, reply))
+        .to_string()
+}
+
+#[test]
+fn generated_hooks_say_when_sahjhan_did_not_evaluate() {
+    // An unevaluated reply has no decision to relay. Each wrapper lets the
+    // call through, as it does on any failure, and tells the user it went
+    // unchecked — with the engine's own code, so a broken config and a
+    // tampered one read differently.
+    let dir = project_with_generated_hooks();
+    std::fs::write(
+        dir.path().join("enforcement/protocol.toml"),
+        "garbage = [\n",
+    )
+    .unwrap();
+    let cwd = dir.path().to_str().unwrap();
+    for (script, event) in [
+        (
+            "pre_tool_hook.py",
+            serde_json::json!({"tool_name": "Edit", "tool_input": {"file_path": "src/main.rs"}, "cwd": cwd}),
+        ),
+        (
+            "post_tool_hook.py",
+            serde_json::json!({"tool_name": "Bash", "tool_input": {"command": "ls"}, "cwd": cwd}),
+        ),
+        (
+            "stop_hook.py",
+            serde_json::json!({"stop_hook_output": "task complete", "cwd": cwd}),
+        ),
+    ] {
+        let (code, stderr, reply) = run_wrapper(dir.path(), script, event);
+        let notice = unevaluated_notice(script, code, &stderr, &reply);
+        assert!(
+            notice.contains("did not evaluate") && notice.contains("(config_error)"),
+            "{}: {}",
+            script,
+            notice
+        );
+    }
+}
+
+#[test]
+fn generated_hook_names_a_config_edited_after_its_seal() {
+    let dir = project_with_generated_hooks();
+    let states = dir.path().join("enforcement/states.toml");
+    let mut text = std::fs::read_to_string(&states).unwrap();
+    text.push_str("\n# edited after init\n");
+    std::fs::write(&states, text).unwrap();
+
+    let cwd = dir.path().to_str().unwrap();
+    let (code, stderr, reply) = run_wrapper(
+        dir.path(),
+        "pre_tool_hook.py",
+        serde_json::json!({"tool_name": "Edit", "tool_input": {"file_path": "src/main.rs"}, "cwd": cwd}),
+    );
+    let notice = unevaluated_notice("pre_tool_hook.py", code, &stderr, &reply);
+    assert!(
+        notice.contains("(integrity_error)") && notice.contains("states.toml"),
+        "{}",
+        notice
+    );
+}

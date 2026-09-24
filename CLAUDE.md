@@ -343,7 +343,7 @@ current directory. Reach for this module before writing
 
 | Concept | File | Anchor/Item | Purpose |
 |---------|------|-------------|---------|
-| Hook generator | `hooks/generate.rs` | `HookGenerator` | Produces Python hook scripts |
+| Hook generator | `hooks/generate.rs` | `HookGenerator` | Produces Python hook scripts; each template is the emitted Python verbatim, only `{config_dir}` substituted. A wrapper relays a block, and on an unevaluated reply (`ok: false`) lets the call through with a `systemMessage` naming the error (#51) |
 | Generated hook | `hooks/generate.rs` | `GeneratedHook` | Hook type + content |
 | Hook eval request | `hooks/eval.rs` | `HookEvalRequest` | Incoming evaluation request (event, tool, file, output_text) |
 | Hook eval result | `hooks/eval.rs` | `HookEvalResult` | Aggregate result (decision, messages, auto_records, monitor_warnings) |
@@ -933,6 +933,9 @@ switch off every gate and every `auto_record` without a trace. The reply is
 the same failure `status` gives for the condition, code and exit status
 included. What an unevaluated hook should *mean* — block, warn, allow — is the
 caller's to decide, because only the caller knows what it is protecting.
+The generated wrappers (`hooks/generate.rs`) are one such caller: they let the
+call through, as on any failure, and name the error in `systemMessage` — the
+field Claude Code shows the user — with no `decision` beside it.
 
 ---
 
@@ -952,7 +955,7 @@ caller's to decide, because only the caller knows what it is protecting.
 | `tests/registry_tests.rs` | Multi-ledger registry CRUD |
 | `tests/checkpoint_tests.rs` | Ledger checkpointing |
 | `tests/import_tests.rs` | JSONL import |
-| `tests/hook_generation_tests.rs` | Hook script generation; the generated wrappers **run** — python3 executes each against the built binary via `SAHJHAN_BIN`, driven to a block only a real `hook eval` round trip produces, since every wrapper's `except` prints an allow of its own |
+| `tests/hook_generation_tests.rs` | Hook script generation; the generated wrappers **run** — python3 executes each against the built binary via `SAHJHAN_BIN`, driven to a block only a real `hook eval` round trip produces, since every wrapper's `except` prints an allow of its own; against an unparseable config (all three) and a config edited after its seal, a `systemMessage` carrying the engine's code and no `decision` (#51) |
 | `tests/template_security_tests.rs` | Shell escaping, injection prevention |
 | `tests/template_tests.rs` | Template-based ledger creation via cmd_ledger_create |
 | `tests/auth_tests.rs` | Session key generation, restricted events, HMAC auth |

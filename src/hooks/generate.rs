@@ -92,14 +92,16 @@ def main():
             return
         data = output.get("data", {})
         decision = data.get("decision", "allow")
-        messages = data.get("messages", [])
+        messages = [m["message"] for m in data.get("messages", [])]
+        # A monitor that fires makes the decision "warn" with no rule message
+        # of its own; its text is here, and it is shown like a rule's warning.
+        warnings = [w["message"] for w in data.get("monitor_warnings", [])]
 
         if decision == "block":
-            reason = messages[0]["message"] if messages else "Blocked by protocol"
+            reason = messages[0] if messages else "Blocked by protocol"
             print(json.dumps({"decision": "block", "reason": reason}))
-        elif messages:
-            combined = "\n".join(m["message"] for m in messages)
-            print(json.dumps({"systemMessage": combined}))
+        elif messages or warnings:
+            print(json.dumps({"systemMessage": "\n".join(messages + warnings)}))
         else:
             print(json.dumps({}))
     except Exception as e:
@@ -173,14 +175,16 @@ def main():
             return
         data = output.get("data", {})
         decision = data.get("decision", "allow")
-        messages = data.get("messages", [])
+        messages = [m["message"] for m in data.get("messages", [])]
+        # A monitor that fires makes the decision "warn" with no rule message
+        # of its own; its text is here, and it is shown like a rule's warning.
+        warnings = [w["message"] for w in data.get("monitor_warnings", [])]
 
         if decision == "block":
-            reason = messages[0]["message"] if messages else "Blocked by protocol"
+            reason = messages[0] if messages else "Blocked by protocol"
             print(json.dumps({"decision": "block", "reason": reason}))
-        elif messages:
-            combined = "\n".join(m["message"] for m in messages)
-            print(json.dumps({"systemMessage": combined}))
+        elif messages or warnings:
+            print(json.dumps({"systemMessage": "\n".join(messages + warnings)}))
         else:
             print(json.dumps({}))
     except Exception as e:
@@ -256,14 +260,16 @@ def main():
             return
         data = output.get("data", {})
         decision = data.get("decision", "allow")
-        messages = data.get("messages", [])
+        messages = [m["message"] for m in data.get("messages", [])]
+        # A monitor that fires makes the decision "warn" with no rule message
+        # of its own; its text is here, and it is shown like a rule's warning.
+        warnings = [w["message"] for w in data.get("monitor_warnings", [])]
 
         if decision == "block":
-            reason = messages[0]["message"] if messages else "Blocked by protocol"
+            reason = messages[0] if messages else "Blocked by protocol"
             print(json.dumps({"decision": "block", "reason": reason}))
-        elif messages:
-            combined = "\n".join(m["message"] for m in messages)
-            print(json.dumps({"systemMessage": combined}))
+        elif messages or warnings:
+            print(json.dumps({"systemMessage": "\n".join(messages + warnings)}))
         else:
             print(json.dumps({}))
     except Exception as e:

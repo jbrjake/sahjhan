@@ -387,6 +387,16 @@ message = "the caller's tree has no marker"
 type = "command_succeeds"
 cmd = "test -f caller-marker"
 anchor = "caller"
+
+[[monitors]]
+name = "check_done_seen"
+action = "warn"
+message = "{count} check_done since the last transition"
+
+[monitors.trigger]
+type = "event_count_since_last_transition"
+event_types = ["check_done"]
+threshold = 1
 "#;
 
 /// Run sahjhan in `dir`, fail unless it succeeds, and return its stdout.
@@ -691,6 +701,39 @@ fn generated_pre_tool_hook_relays_a_warning_as_a_system_message() {
         reply,
         serde_json::json!({"systemMessage": "pre-tool warning fired"})
     );
+}
+
+#[test]
+fn generated_hooks_relay_a_monitor_warning() {
+    // A monitor that fires makes `hook eval` answer "warn" with no rule
+    // message; its text is in `monitor_warnings`. Every wrapper shows it the
+    // way it shows a rule's warning.
+    let dir = project_with_generated_hooks();
+    sahjhan_in(dir.path(), &["event", "check_done"]);
+    let cwd = dir.path().to_str().unwrap();
+    for (script, event) in [
+        (
+            "pre_tool_hook.py",
+            serde_json::json!({"tool_name": "Read", "tool_input": {"file_path": "README.md"}, "cwd": cwd}),
+        ),
+        (
+            "post_tool_hook.py",
+            serde_json::json!({"tool_name": "Read", "tool_input": {"file_path": "README.md"}, "cwd": cwd}),
+        ),
+        (
+            "stop_hook.py",
+            serde_json::json!({"last_assistant_message": "still working", "cwd": cwd}),
+        ),
+    ] {
+        let (code, stderr, reply) = run_wrapper(dir.path(), script, event);
+        assert_eq!((code, stderr.as_str()), (0, ""), "{}: {}", script, reply);
+        assert_eq!(
+            reply,
+            serde_json::json!({"systemMessage": "1 check_done since the last transition"}),
+            "{}",
+            script
+        );
+    }
 }
 
 #[test]

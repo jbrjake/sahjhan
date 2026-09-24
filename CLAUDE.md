@@ -952,7 +952,7 @@ caller's to decide, because only the caller knows what it is protecting.
 | `tests/registry_tests.rs` | Multi-ledger registry CRUD |
 | `tests/checkpoint_tests.rs` | Ledger checkpointing |
 | `tests/import_tests.rs` | JSONL import |
-| `tests/hook_generation_tests.rs` | Hook script generation |
+| `tests/hook_generation_tests.rs` | Hook script generation; the generated wrappers **run** — python3 executes each against the built binary via `SAHJHAN_BIN`, driven to a block only a real `hook eval` round trip produces, since every wrapper's `except` prints an allow of its own |
 | `tests/template_security_tests.rs` | Shell escaping, injection prevention |
 | `tests/template_tests.rs` | Template-based ledger creation via cmd_ledger_create |
 | `tests/auth_tests.rs` | Session key generation, restricted events, HMAC auth |

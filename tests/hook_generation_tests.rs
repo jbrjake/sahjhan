@@ -298,3 +298,159 @@ fn wrappers_fail_open_on_error() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// The wrappers, run
+//
+// Everything above reads the generated text. These execute it: python3 runs
+// each wrapper the way Claude Code would, and the wrapper runs the sahjhan
+// under test through SAHJHAN_BIN. An `allow` proves nothing here — every
+// wrapper also prints one from its `except` — so each wrapper is driven to a
+// *block* that only a real round trip through `hook eval` can produce.
+// ---------------------------------------------------------------------------
+
+const POST_TOOL_RULE: &str = r#"
+[[hooks]]
+event = "PostToolUse"
+tools = ["Bash"]
+action = "block"
+message = "post-tool rule fired"
+
+[hooks.check]
+type = "event_count_since_last_transition"
+threshold = 0
+"#;
+
+fn sahjhan_in(dir: &std::path::Path, args: &[&str]) {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_sahjhan"))
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "sahjhan {:?} failed: {}",
+        args,
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// A minimal project in the `working` state, with its hooks generated into
+/// `<dir>/hooks` — `enforcement/` is the config dir the wrappers name.
+fn project_with_generated_hooks() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let config_dir = dir.path().join("enforcement");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    for file in &[
+        "protocol.toml",
+        "states.toml",
+        "transitions.toml",
+        "events.toml",
+        "hooks.toml",
+    ] {
+        std::fs::copy(
+            std::path::Path::new("examples/minimal").join(file),
+            config_dir.join(file),
+        )
+        .unwrap();
+    }
+    let hooks_toml = config_dir.join("hooks.toml");
+    let mut text = std::fs::read_to_string(&hooks_toml).unwrap();
+    text.push_str(POST_TOOL_RULE);
+    std::fs::write(&hooks_toml, text).unwrap();
+
+    sahjhan_in(dir.path(), &["init"]);
+    sahjhan_in(dir.path(), &["transition", "begin"]);
+    sahjhan_in(dir.path(), &["hook", "generate", "--output-dir", "hooks"]);
+    dir
+}
+
+/// Run one generated wrapper on a hook event: its exit status, stderr, and
+/// the JSON it printed.
+fn run_wrapper(
+    dir: &std::path::Path,
+    script: &str,
+    event: serde_json::Value,
+) -> (i32, String, serde_json::Value) {
+    use std::io::Write;
+    let mut child = std::process::Command::new("python3")
+        .arg(dir.join("hooks").join(script))
+        .env("SAHJHAN_BIN", env!("CARGO_BIN_EXE_sahjhan"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("python3 is required to run the generated hooks");
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(event.to_string().as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let reply = serde_json::from_str(&stdout).unwrap_or_else(|e| {
+        panic!(
+            "{} printed no JSON ({}): stdout {:?}, stderr {}",
+            script, e, stdout, stderr
+        )
+    });
+    (output.status.code().unwrap(), stderr, reply)
+}
+
+#[test]
+fn generated_pre_tool_hook_relays_a_block() {
+    let dir = project_with_generated_hooks();
+    let cwd = dir.path().to_str().unwrap();
+    let (code, stderr, reply) = run_wrapper(
+        dir.path(),
+        "pre_tool_hook.py",
+        serde_json::json!({"tool_name": "Edit", "tool_input": {"file_path": "src/main.rs"}, "cwd": cwd}),
+    );
+    assert_eq!((code, stderr.as_str()), (0, ""), "{}", reply);
+    assert_eq!(reply["decision"], "block", "{}", reply);
+    assert!(
+        reply["reason"]
+            .as_str()
+            .unwrap()
+            .contains("without a check_done event"),
+        "{}",
+        reply
+    );
+}
+
+#[test]
+fn generated_post_tool_hook_relays_a_block() {
+    let dir = project_with_generated_hooks();
+    let cwd = dir.path().to_str().unwrap();
+    let (code, stderr, reply) = run_wrapper(
+        dir.path(),
+        "post_tool_hook.py",
+        serde_json::json!({"tool_name": "Bash", "tool_input": {"command": "ls"}, "cwd": cwd}),
+    );
+    assert_eq!((code, stderr.as_str()), (0, ""), "{}", reply);
+    assert_eq!(reply["decision"], "block", "{}", reply);
+    assert_eq!(reply["reason"], "post-tool rule fired", "{}", reply);
+}
+
+#[test]
+fn generated_stop_hook_relays_a_block() {
+    let dir = project_with_generated_hooks();
+    let cwd = dir.path().to_str().unwrap();
+    let (code, stderr, reply) = run_wrapper(
+        dir.path(),
+        "stop_hook.py",
+        serde_json::json!({"stop_hook_output": "task complete", "cwd": cwd}),
+    );
+    assert_eq!((code, stderr.as_str()), (0, ""), "{}", reply);
+    assert_eq!(reply["decision"], "block", "{}", reply);
+    assert!(
+        reply["reason"]
+            .as_str()
+            .unwrap()
+            .contains("Cannot claim completion"),
+        "{}",
+        reply
+    );
+}

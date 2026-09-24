@@ -13,8 +13,10 @@ use crate::config::ProtocolConfig;
 // ---------------------------------------------------------------------------
 // Embedded templates — thin wrappers that delegate to `sahjhan hook eval`.
 //
-// Python braces `{` / `}` are escaped as `{{` / `}}` in Rust raw strings.
-// Template variables like `{config_dir}` use single braces (Rust .replace()).
+// Each template is the Python it emits, verbatim. The one substitution is
+// `{config_dir}`, by `.replace()` — not `format!`, which is what `{{` / `}}`
+// would be escaping for. Written doubled here they reach the script doubled,
+// and `{{}}` is a set holding a dict: a TypeError on the first line that uses one.
 // ---------------------------------------------------------------------------
 
 const PRE_TOOL_HOOK_TEMPLATE: &str = r##"# Generated hook: pre_tool_hook.py
@@ -30,12 +32,12 @@ def sahjhan_binary():
     if arch == "arm64":
         arch = "aarch64"
     if system == "darwin":
-        triple = f"{{arch}}-apple-darwin"
+        triple = f"{arch}-apple-darwin"
     else:
-        triple = f"{{arch}}-unknown-linux-gnu"
+        triple = f"{arch}-unknown-linux-gnu"
     root = os.environ.get("CLAUDE_PLUGIN_ROOT",
            os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    return os.path.join(root, "bin", f"sahjhan-{{triple}}")
+    return os.path.join(root, "bin", f"sahjhan-{triple}")
 
 CONFIG_DIR = "{config_dir}"
 
@@ -43,11 +45,11 @@ def main():
     try:
         event = json.loads(sys.stdin.read())
     except Exception:
-        print(json.dumps({{"decision": "allow"}}))
+        print(json.dumps({"decision": "allow"}))
         return
 
     tool_name = event.get("tool_name", "")
-    tool_input = event.get("tool_input", {{}})
+    tool_input = event.get("tool_input", {})
     file_path = tool_input.get("file_path", tool_input.get("command", ""))
 
     cmd = [sahjhan_binary(), "--config-dir", CONFIG_DIR, "--json",
@@ -59,20 +61,20 @@ def main():
         result = subprocess.run(cmd, capture_output=True, text=True,
                                 cwd=event.get("cwd", os.getcwd()), timeout=30)
         output = json.loads(result.stdout)
-        data = output.get("data", {{}})
+        data = output.get("data", {})
         decision = data.get("decision", "allow")
         messages = data.get("messages", [])
 
         if decision == "block":
             reason = messages[0]["message"] if messages else "Blocked by protocol"
-            print(json.dumps({{"decision": "block", "reason": reason}}))
+            print(json.dumps({"decision": "block", "reason": reason}))
         elif messages:
             combined = "\n".join(m["message"] for m in messages)
-            print(json.dumps({{"decision": "allow", "message": combined}}))
+            print(json.dumps({"decision": "allow", "message": combined}))
         else:
-            print(json.dumps({{"decision": "allow"}}))
+            print(json.dumps({"decision": "allow"}))
     except Exception:
-        print(json.dumps({{"decision": "allow"}}))
+        print(json.dumps({"decision": "allow"}))
 
 if __name__ == "__main__":
     main()
@@ -91,12 +93,12 @@ def sahjhan_binary():
     if arch == "arm64":
         arch = "aarch64"
     if system == "darwin":
-        triple = f"{{arch}}-apple-darwin"
+        triple = f"{arch}-apple-darwin"
     else:
-        triple = f"{{arch}}-unknown-linux-gnu"
+        triple = f"{arch}-unknown-linux-gnu"
     root = os.environ.get("CLAUDE_PLUGIN_ROOT",
            os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    return os.path.join(root, "bin", f"sahjhan-{{triple}}")
+    return os.path.join(root, "bin", f"sahjhan-{triple}")
 
 CONFIG_DIR = "{config_dir}"
 
@@ -104,11 +106,11 @@ def main():
     try:
         event = json.loads(sys.stdin.read())
     except Exception:
-        print(json.dumps({{"decision": "allow"}}))
+        print(json.dumps({"decision": "allow"}))
         return
 
     tool_name = event.get("tool_name", "")
-    tool_input = event.get("tool_input", {{}})
+    tool_input = event.get("tool_input", {})
     file_path = tool_input.get("file_path", tool_input.get("command", ""))
 
     cmd = [sahjhan_binary(), "--config-dir", CONFIG_DIR, "--json",
@@ -120,20 +122,20 @@ def main():
         result = subprocess.run(cmd, capture_output=True, text=True,
                                 cwd=event.get("cwd", os.getcwd()), timeout=30)
         output = json.loads(result.stdout)
-        data = output.get("data", {{}})
+        data = output.get("data", {})
         decision = data.get("decision", "allow")
         messages = data.get("messages", [])
 
         if decision == "block":
             reason = messages[0]["message"] if messages else "Blocked by protocol"
-            print(json.dumps({{"decision": "block", "reason": reason}}))
+            print(json.dumps({"decision": "block", "reason": reason}))
         elif messages:
             combined = "\n".join(m["message"] for m in messages)
-            print(json.dumps({{"decision": "allow", "message": combined}}))
+            print(json.dumps({"decision": "allow", "message": combined}))
         else:
-            print(json.dumps({{"decision": "allow"}}))
+            print(json.dumps({"decision": "allow"}))
     except Exception:
-        print(json.dumps({{"decision": "allow"}}))
+        print(json.dumps({"decision": "allow"}))
 
 if __name__ == "__main__":
     main()
@@ -152,12 +154,12 @@ def sahjhan_binary():
     if arch == "arm64":
         arch = "aarch64"
     if system == "darwin":
-        triple = f"{{arch}}-apple-darwin"
+        triple = f"{arch}-apple-darwin"
     else:
-        triple = f"{{arch}}-unknown-linux-gnu"
+        triple = f"{arch}-unknown-linux-gnu"
     root = os.environ.get("CLAUDE_PLUGIN_ROOT",
            os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    return os.path.join(root, "bin", f"sahjhan-{{triple}}")
+    return os.path.join(root, "bin", f"sahjhan-{triple}")
 
 CONFIG_DIR = "{config_dir}"
 
@@ -165,7 +167,7 @@ def main():
     try:
         event = json.loads(sys.stdin.read())
     except Exception:
-        print(json.dumps({{"decision": "allow"}}))
+        print(json.dumps({"decision": "allow"}))
         return
 
     stop_message = event.get("stop_hook_output", event.get("stop_message", ""))
@@ -179,20 +181,20 @@ def main():
         result = subprocess.run(cmd, capture_output=True, text=True,
                                 cwd=event.get("cwd", os.getcwd()), timeout=30)
         output = json.loads(result.stdout)
-        data = output.get("data", {{}})
+        data = output.get("data", {})
         decision = data.get("decision", "allow")
         messages = data.get("messages", [])
 
         if decision == "block":
             reason = messages[0]["message"] if messages else "Blocked by protocol"
-            print(json.dumps({{"decision": "block", "reason": reason}}))
+            print(json.dumps({"decision": "block", "reason": reason}))
         elif messages:
             combined = "\n".join(m["message"] for m in messages)
-            print(json.dumps({{"decision": "allow", "message": combined}}))
+            print(json.dumps({"decision": "allow", "message": combined}))
         else:
-            print(json.dumps({{"decision": "allow"}}))
+            print(json.dumps({"decision": "allow"}))
     except Exception:
-        print(json.dumps({{"decision": "allow"}}))
+        print(json.dumps({"decision": "allow"}))
 
 if __name__ == "__main__":
     main()

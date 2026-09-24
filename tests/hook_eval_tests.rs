@@ -2,6 +2,7 @@
 //
 // Integration tests for the hook evaluation engine and CLI `hook eval` command.
 
+use sahjhan::cli::commands::{EXIT_CONFIG_ERROR, EXIT_INTEGRITY_ERROR, EXIT_SUCCESS};
 use sahjhan::config::hooks::{
     AutoRecordConfig, HookCheck, HookConfig, HookEvent, HookFilter, MonitorConfig, MonitorTrigger,
 };
@@ -755,6 +756,147 @@ fn test_hook_eval_cli_no_hooks_allows() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let result: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(result["data"]["decision"], "allow");
+}
+
+// ---------------------------------------------------------------------------
+// CLI: a hook that could not be evaluated (#51)
+// ---------------------------------------------------------------------------
+
+/// Copy the minimal example into `<dir>/enforcement` and return that path.
+fn minimal_config_dir(dir: &Path) -> std::path::PathBuf {
+    let config_dir = dir.join("enforcement");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    for file in &[
+        "protocol.toml",
+        "states.toml",
+        "transitions.toml",
+        "events.toml",
+    ] {
+        std::fs::copy(
+            Path::new("examples/minimal").join(file),
+            config_dir.join(file),
+        )
+        .unwrap();
+    }
+    config_dir
+}
+
+fn sahjhan_in(dir: &Path, args: &[&str]) -> std::process::Output {
+    std::process::Command::new(env!("CARGO_BIN_EXE_sahjhan"))
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap()
+}
+
+fn init_project(dir: &Path, config_dir: &Path) {
+    let output = sahjhan_in(dir, &["--config-dir", config_dir.to_str().unwrap(), "init"]);
+    assert!(
+        output.status.success(),
+        "init failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// `hook eval` for a PreToolUse Edit: the exit status and the parsed reply.
+fn hook_eval_edit(dir: &Path, config_dir: &Path, flags: &[&str]) -> (i32, serde_json::Value) {
+    let mut args = vec!["--config-dir", config_dir.to_str().unwrap(), "--json"];
+    args.extend_from_slice(flags);
+    args.extend_from_slice(&["hook", "eval", "--event", "PreToolUse", "--tool", "Edit"]);
+    let output = sahjhan_in(dir, &args);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let reply = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("reply is not JSON ({}): {:?}", e, stdout));
+    (output.status.code().unwrap(), reply)
+}
+
+/// What every unevaluated reply shares: a failure with a code, and no
+/// `data` — so no `decision` a consumer could read as the rules' answer.
+fn assert_unevaluated(reply: &serde_json::Value, code: &str) {
+    assert_eq!(reply["ok"], false, "{}", reply);
+    assert_eq!(reply["command"], "hook_eval", "{}", reply);
+    assert_eq!(reply["error"]["code"], code, "{}", reply);
+    assert!(
+        reply.get("data").is_none(),
+        "an unevaluated reply must carry no decision: {}",
+        reply
+    );
+}
+
+#[test]
+fn test_hook_eval_cli_config_that_does_not_parse_is_not_an_allow() {
+    // The issue's reproduction: the same call, once against a project whose
+    // rules run and match nothing, once against a protocol.toml that does not
+    // parse. A consumer has to be able to tell the two apart.
+    let dir = tempdir().unwrap();
+    let config_dir = minimal_config_dir(dir.path());
+    init_project(dir.path(), &config_dir);
+
+    let (code, genuine) = hook_eval_edit(dir.path(), &config_dir, &[]);
+    assert_eq!(code, EXIT_SUCCESS);
+    assert_eq!(genuine["ok"], true, "{}", genuine);
+    assert_eq!(genuine["data"]["decision"], "allow", "{}", genuine);
+
+    std::fs::write(config_dir.join("protocol.toml"), "garbage = [\n").unwrap();
+    let (code, broken) = hook_eval_edit(dir.path(), &config_dir, &[]);
+    assert_unevaluated(&broken, "config_error");
+    assert_eq!(code, EXIT_CONFIG_ERROR);
+}
+
+#[test]
+fn test_hook_eval_cli_missing_config_dir_is_not_an_allow() {
+    let dir = tempdir().unwrap();
+    let (code, reply) = hook_eval_edit(dir.path(), &dir.path().join("does-not-exist"), &[]);
+    assert_unevaluated(&reply, "config_error");
+    assert_eq!(code, EXIT_CONFIG_ERROR);
+}
+
+#[test]
+fn test_hook_eval_cli_ledger_that_does_not_open_is_not_an_allow() {
+    // A config that loads, in a project nobody has run `init` in.
+    let dir = tempdir().unwrap();
+    let config_dir = minimal_config_dir(dir.path());
+
+    let (code, reply) = hook_eval_edit(dir.path(), &config_dir, &[]);
+    assert_unevaluated(&reply, "integrity_error");
+    assert_eq!(code, EXIT_INTEGRITY_ERROR);
+}
+
+#[test]
+fn test_hook_eval_cli_config_edited_after_its_seal_is_not_an_allow() {
+    // Nothing here looks broken: the config still parses and validates. But a
+    // sealed file no longer matches the ledger's seal, and that is the edit
+    // most worth catching — one that would otherwise switch off every hook.
+    let dir = tempdir().unwrap();
+    let config_dir = minimal_config_dir(dir.path());
+    init_project(dir.path(), &config_dir);
+
+    let states = config_dir.join("states.toml");
+    let mut text = std::fs::read_to_string(&states).unwrap();
+    text.push_str("\n# edited after init\n");
+    std::fs::write(&states, text).unwrap();
+
+    let (code, reply) = hook_eval_edit(dir.path(), &config_dir, &[]);
+    assert_unevaluated(&reply, "integrity_error");
+    assert_eq!(code, EXIT_INTEGRITY_ERROR);
+    let message = reply["error"]["message"].as_str().unwrap();
+    assert!(
+        message.contains("config integrity violation") && message.contains("states.toml"),
+        "{}",
+        message
+    );
+}
+
+#[test]
+fn test_hook_eval_cli_unregistered_ledger_name_is_not_an_allow() {
+    // The ledger arm's other code: resolution fails before anything is opened.
+    let dir = tempdir().unwrap();
+    let config_dir = minimal_config_dir(dir.path());
+    init_project(dir.path(), &config_dir);
+
+    let (code, reply) = hook_eval_edit(dir.path(), &config_dir, &["--ledger", "nope"]);
+    assert_unevaluated(&reply, "config_error");
+    assert_eq!(code, EXIT_CONFIG_ERROR);
 }
 
 // ---------------------------------------------------------------------------

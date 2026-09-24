@@ -429,7 +429,7 @@ current directory. Reach for this module before writing
 | Render | `cli/render.rs` | `[cmd-render]`, `[cmd-render-dump-context]` | Template rendering |
 | Manifest | `cli/manifest_cmd.rs` | `[cmd-manifest-verify]`, `[cmd-manifest-list]` | File integrity |
 | Authed event | `cli/authed_event.rs` | `[cmd-authed-event]` | HMAC-verified restricted event recording (proof verified via daemon) |
-| Hooks | `cli/hooks_cmd.rs` | `[cmd-hook-generate]`, `[cmd-hook-eval]` | Hook script generation + runtime evaluation |
+| Hooks | `cli/hooks_cmd.rs` | `[cmd-hook-generate]`, `[cmd-hook-eval]` | Hook script generation + runtime evaluation; a config or ledger that fails to load is `ok: false`, never a decision (#51) |
 | Mermaid | `cli/mermaid.rs` | `[cmd-mermaid]` | Diagram generation command (stateDiagram-v2 or ASCII) |
 | Reseal | `cli/authed_event.rs` | `[cmd-reseal]` | HMAC-authenticated config reseal (proof verified via daemon) |
 | Verify proof | `cli/verify_cmd.rs` | `[cmd-verify]` | Verify HMAC-SHA256 proof via daemon socket |
@@ -906,8 +906,9 @@ How `sahjhan hook eval --event PreToolUse --tool Edit --file src/main.rs` execut
 ```
 main.rs [cli-main]
   → cli/hooks_cmd.rs [cmd-hook-eval]
-    → cli/commands.rs [load-config]              ← on failure, return allow
-    → cli/commands.rs [open-targeted]            ← on failure, return allow
+    → cli/commands.rs [load-config]              ← on failure: ok:false config_error, no decision (#51)
+    → cli/commands.rs [open-targeted]            ← on failure: ok:false integrity_error (unopenable
+                                                   ledger, config off its seal) or config_error (#51)
     → parse event string → HookEvent enum
     → hooks/eval.rs evaluate_hooks()
       → hooks/eval.rs derive_current_state()     ← last state_transition "to" field
@@ -923,6 +924,15 @@ main.rs [cli-main]
     → decision: block > warn > allow
     → CommandResult with exit_code 1 (block) or 0 (allow/warn)
 ```
+
+**Why a load failure carries no decision (#51).** A reply with a `decision`
+says the rules ran. When the config or ledger does not load, none did, and an
+`allow` there is byte-identical to rules that ran and matched nothing — so a
+malformed `protocol.toml`, or a sealed file edited so it still parses, would
+switch off every gate and every `auto_record` without a trace. The reply is
+the same failure `status` gives for the condition, code and exit status
+included. What an unevaluated hook should *mean* — block, warn, allow — is the
+caller's to decide, because only the caller knows what it is protecting.
 
 ---
 
@@ -952,7 +962,7 @@ main.rs [cli-main]
 | `tests/json_output_tests.rs` | JSON envelope serialization, per-command data structs, CLI --json integration |
 | `tests/horizons1_tests.rs` | HORIZONS-1 mission protocol: status, transitions, gates, sets with --json |
 | `tests/lint_tests.rs` | Static analysis (incl. `examples/lint-demo` lints clean): L1 producer closure (restricted/require_producers/emits/auto_record/polarity), L2 producer windows vs reachability, L3 boundary route-arounds, L4 dead ends, L5 dead vocabulary, L6 predicate drift + similarity scoring, L7 attestation lattice, L8 provenance filters — a `hook:` path the manifest does not list, the same path once it does, the `engine:emits:` misspelling from #50's own prose, `engine:transition:` accepted, `import:` never judged, a provenance-shaped value on an ordinary field ignored, the `agent:cli` warning and the negations that must not trigger it, inline gate predicates as well as named queries — check selection, CLI exit codes + JSON |
-| `tests/hook_eval_tests.rs` | Hook evaluation engine: gate/check/filter/state/monitor/write-gated/managed-path/CLI eval |
+| `tests/hook_eval_tests.rs` | Hook evaluation engine: gate/check/filter/state/monitor/write-gated/managed-path/CLI eval; a hook that could not be evaluated (#51) — a config that does not parse, a missing config dir, an uninitialised ledger, a config edited after its seal, an unregistered `--ledger` — answering `ok: false` with its code and no `data` |
 | `tests/concurrent_append_tests.rs` | Concurrent ledger append stress tests (issue #21 TOCTOU race) |
 | `tests/daemon_platform_tests.rs` | Platform API smoke tests: preload env, exe path, cmdline, parent PID, mlock |
 | `tests/daemon_protocol_tests.rs` | Wire protocol types: Request deserialization (all ops + unknowns, incl. `enforcement_merge` and the optional `expect_version` absent and present), Response serialization (all constructors incl. idle fields, and `version` present only when attached) |

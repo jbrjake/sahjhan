@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 use super::commands::{
     load_config, open_targeted_ledger, resolve_config_dir, resolve_project_root, LedgerTargeting,
-    EXIT_CONFIG_ERROR, EXIT_GATE_FAILED, EXIT_SUCCESS,
+    EXIT_CONFIG_ERROR, EXIT_GATE_FAILED, EXIT_INTEGRITY_ERROR, EXIT_SUCCESS,
 };
 use super::output::{
     CommandOutput, CommandResult, HookAutoRecord, HookEvalData, HookEvalMessage, HookMonitorWarning,
@@ -89,9 +89,16 @@ pub fn cmd_hook_generate(
 // [cmd-hook-eval]
 /// Evaluate hook rules against current protocol state.
 ///
-/// This is a machine interface — output is always JSON.
+/// This is a machine interface — a reply that carries a decision is JSON
+/// with or without `--json`.
 /// Returns exit code 1 for "block", 0 for "allow" or "warn".
-/// On config/ledger errors, returns "allow" (don't block agent on broken config).
+///
+/// A config or ledger that fails to load is a failure, never a decision:
+/// `ok: false` with the code and exit status `status` reports for the same
+/// condition. No rule ran, and an `allow` here would be byte-identical to
+/// rules that ran and matched nothing. Whether an unevaluated hook should
+/// block, warn or let the call through depends on what the caller is
+/// protecting, which only the caller knows (#51).
 pub fn cmd_hook_eval(
     config_dir: &str,
     event: &str,
@@ -103,36 +110,33 @@ pub fn cmd_hook_eval(
 ) -> Box<dyn CommandOutput> {
     let config_path = resolve_config_dir(config_dir);
 
-    // Load config — on failure, return allow
     let config = match load_config(&config_path) {
         Ok(c) => c,
-        Err(_) => {
-            return Box::new(CommandResult::ok_with_exit_code(
+        Err((code, msg)) => {
+            return Box::new(CommandResult::<HookEvalData>::err(
                 "hook_eval",
-                HookEvalData {
-                    decision: "allow".to_string(),
-                    messages: vec![],
-                    auto_records: vec![],
-                    monitor_warnings: vec![],
-                },
-                EXIT_SUCCESS,
+                code,
+                "config_error",
+                msg,
             ));
         }
     };
 
-    // Open ledger — on failure, return allow
+    // Includes a config that loads but no longer matches its seal — an edit
+    // that still parses must not switch the hooks off either.
     let mut ledger = match open_targeted_ledger(&config, targeting, &config_path) {
         Ok((l, _mode)) => l,
-        Err(_) => {
-            return Box::new(CommandResult::ok_with_exit_code(
+        Err((code, msg)) => {
+            let error_code = if code == EXIT_INTEGRITY_ERROR {
+                "integrity_error"
+            } else {
+                "config_error"
+            };
+            return Box::new(CommandResult::<HookEvalData>::err(
                 "hook_eval",
-                HookEvalData {
-                    decision: "allow".to_string(),
-                    messages: vec![],
-                    auto_records: vec![],
-                    monitor_warnings: vec![],
-                },
-                EXIT_SUCCESS,
+                code,
+                error_code,
+                msg,
             ));
         }
     };

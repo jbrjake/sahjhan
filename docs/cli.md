@@ -92,7 +92,7 @@ sahjhan hook generate [--harness cc] [--output-dir <d>]   Generate integration h
 sahjhan hook eval --event <E> [--tool <T>] [--file <F>] [--output-text <text>]
 ```
 
-`hook eval` always emits JSON. See [hooks.md](hooks.md).
+`hook eval` emits JSON when possible. A config or ledger that fails to load errors. See [hooks.md](hooks.md).
 
 ## exit codes
 

@@ -43,6 +43,16 @@ Exit code 1 on block, 0 on allow or warn. The decision is the strongest of the m
 
 Evaluation order inside `hook eval`: derive the current state from the ledger, check managed paths, check write-gated paths, run the `hooks.toml` rules, then evaluate monitors.
 
+If the config doesn't load or the ledger doesn't open, no rule runs, so there's no decision to report. `hook eval` fails the way `status` does, with the same code and exit status, and the reply has no `decision` in it. That includes a sealed file edited after `init`, even one that still parses:
+
+```bash
+$ echo '# edited' >> enforcement/states.toml
+$ sahjhan --json hook eval --event PreToolUse --tool Edit --file src/main.rs
+{"command":"hook_eval","error":{"code":"integrity_error","message":"config integrity violation:\n  - states.toml (expected: f51f63fb0fbf..., found: d814618523d0...)\n\nRun 'sahjhan reseal' with a valid session key to update the seal,\nor 'sahjhan init' to start a new ledger."},"ok":false,"schema_version":1}
+```
+
+That's exit 2. A config that won't parse is `config_error`, exit 3. What either should mean for the tool call is up to the caller, since only the caller knows what's at stake. The generated wrappers let the call through and say why in `systemMessage`, which Claude Code shows the user.
+
 ## three kinds of hook
 
 Every hook matches on `event` (`PreToolUse`, `PostToolUse`, `Stop`) and may narrow further by `tools`, `states`, `states_not`, and a path `filter`.
@@ -175,7 +185,7 @@ Checked during `hook eval` for Edit and Write. In `finalized` the write goes thr
 
 ## monitors
 
-Monitors catch drift. They don't block, they warn in every `hook eval` response under `monitor_warnings` until something changes. The generated Claude Code wrappers only forward `messages`, so today a monitor warning reaches whoever reads the JSON, _not_ the agent.
+Monitors catch drift. They don't block, they warn in every `hook eval` response under `monitor_warnings` until something changes. The generated Claude Code wrappers only forward `messages`, so today a monitor warning reaches whoever reads the JSON, _not_ the agent. Even a forwarded warning goes to the user, as a `systemMessage`. Only a block's reason reaches the agent.
 
 ```toml
 [[monitors]]

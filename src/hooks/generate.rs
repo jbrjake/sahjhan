@@ -19,10 +19,17 @@ use crate::config::{ProtocolConfig, CONFIG_SEALS};
 // would be escaping for. Written doubled here they reach the script doubled,
 // and `{{}}` is a set holding a dict: a TypeError on the first line that uses one.
 //
-// Every script prints exactly one of three shapes, each checked against Claude
-// Code 2.1.281 by running these scripts as its hooks:
+// Every script prints exactly one of these shapes, each checked against Claude
+// Code (2.1.281, and 2.1.282 for the warning) by running it as a hook:
 //   `{}`                                    — let the call through
 //   `{"systemMessage": …}`                  — let it through; the text is shown
+//                                             to the user and never reaches Claude
+//   `{"systemMessage": T, "hookSpecificOutput":
+//      {"hookEventName": E, "additionalContext": T}}`
+//                                           — a warning: let it through, show T
+//                                             to the user, and T reaches Claude.
+//                                             At Stop it keeps Claude going, so
+//                                             it is sent once per stop
 //   `{"decision": "block", "reason": …}`    — block; the reason reaches Claude
 // Do not assume any other shape works. `"decision": "allow"` fails Claude
 // Code's hook-output schema, which it records as a hook error on every call;
@@ -34,6 +41,8 @@ use crate::config::{ProtocolConfig, CONFIG_SEALS};
 const PRE_TOOL_HOOK_TEMPLATE: &str = r##"# Generated hook: pre_tool_hook.py
 # PreToolUse hook — delegates to sahjhan hook eval
 import os, sys, json, subprocess, platform
+
+HOOK_EVENT = "PreToolUse"
 
 def sahjhan_binary():
     env = os.environ.get("SAHJHAN_BIN")
@@ -61,6 +70,17 @@ def config_dir(event):
     root = os.environ.get("CLAUDE_PROJECT_DIR") or event.get("cwd", os.getcwd())
     return os.path.join(root, CONFIG_DIR)
 
+def warning(event, text):
+    # A warning is for the user and for Claude. systemMessage is shown to the
+    # user and never reaches Claude; additionalContext reaches Claude. At Stop,
+    # additionalContext keeps Claude going, so it is sent once per stop, not
+    # again while Claude is already continuing for a stop hook.
+    out = {"systemMessage": text}
+    if not event.get("stop_hook_active"):
+        out["hookSpecificOutput"] = {"hookEventName": HOOK_EVENT,
+                                     "additionalContext": text}
+    return out
+
 def main():
     try:
         event = json.loads(sys.stdin.read())
@@ -74,7 +94,7 @@ def main():
     file_path = tool_input.get("file_path", tool_input.get("command", ""))
 
     cmd = [sahjhan_binary(), "--config-dir", config_dir(event), "--json",
-           "hook", "eval", "--event", "PreToolUse", "--tool", tool_name]
+           "hook", "eval", "--event", HOOK_EVENT, "--tool", tool_name]
     if file_path:
         cmd.extend(["--file", file_path])
 
@@ -101,7 +121,7 @@ def main():
             reason = messages[0] if messages else "Blocked by protocol"
             print(json.dumps({"decision": "block", "reason": reason}))
         elif messages or warnings:
-            print(json.dumps({"systemMessage": "\n".join(messages + warnings)}))
+            print(json.dumps(warning(event, "\n".join(messages + warnings))))
         else:
             print(json.dumps({}))
     except Exception as e:
@@ -118,6 +138,8 @@ const POST_TOOL_HOOK_TEMPLATE: &str = r##"# Generated hook: post_tool_hook.py
 # PostToolUse hook — delegates to sahjhan hook eval
 import os, sys, json, subprocess, platform
 
+HOOK_EVENT = "PostToolUse"
+
 def sahjhan_binary():
     env = os.environ.get("SAHJHAN_BIN")
     if env:
@@ -144,6 +166,17 @@ def config_dir(event):
     root = os.environ.get("CLAUDE_PROJECT_DIR") or event.get("cwd", os.getcwd())
     return os.path.join(root, CONFIG_DIR)
 
+def warning(event, text):
+    # A warning is for the user and for Claude. systemMessage is shown to the
+    # user and never reaches Claude; additionalContext reaches Claude. At Stop,
+    # additionalContext keeps Claude going, so it is sent once per stop, not
+    # again while Claude is already continuing for a stop hook.
+    out = {"systemMessage": text}
+    if not event.get("stop_hook_active"):
+        out["hookSpecificOutput"] = {"hookEventName": HOOK_EVENT,
+                                     "additionalContext": text}
+    return out
+
 def main():
     try:
         event = json.loads(sys.stdin.read())
@@ -157,7 +190,7 @@ def main():
     file_path = tool_input.get("file_path", tool_input.get("command", ""))
 
     cmd = [sahjhan_binary(), "--config-dir", config_dir(event), "--json",
-           "hook", "eval", "--event", "PostToolUse", "--tool", tool_name]
+           "hook", "eval", "--event", HOOK_EVENT, "--tool", tool_name]
     if file_path:
         cmd.extend(["--file", file_path])
 
@@ -184,7 +217,7 @@ def main():
             reason = messages[0] if messages else "Blocked by protocol"
             print(json.dumps({"decision": "block", "reason": reason}))
         elif messages or warnings:
-            print(json.dumps({"systemMessage": "\n".join(messages + warnings)}))
+            print(json.dumps(warning(event, "\n".join(messages + warnings))))
         else:
             print(json.dumps({}))
     except Exception as e:
@@ -200,6 +233,8 @@ if __name__ == "__main__":
 const STOP_HOOK_TEMPLATE: &str = r##"# Generated hook: stop_hook.py
 # Stop hook — delegates to sahjhan hook eval
 import os, sys, json, subprocess, platform
+
+HOOK_EVENT = "Stop"
 
 def sahjhan_binary():
     env = os.environ.get("SAHJHAN_BIN")
@@ -227,6 +262,17 @@ def config_dir(event):
     root = os.environ.get("CLAUDE_PROJECT_DIR") or event.get("cwd", os.getcwd())
     return os.path.join(root, CONFIG_DIR)
 
+def warning(event, text):
+    # A warning is for the user and for Claude. systemMessage is shown to the
+    # user and never reaches Claude; additionalContext reaches Claude. At Stop,
+    # additionalContext keeps Claude going, so it is sent once per stop, not
+    # again while Claude is already continuing for a stop hook.
+    out = {"systemMessage": text}
+    if not event.get("stop_hook_active"):
+        out["hookSpecificOutput"] = {"hookEventName": HOOK_EVENT,
+                                     "additionalContext": text}
+    return out
+
 def main():
     try:
         event = json.loads(sys.stdin.read())
@@ -242,7 +288,7 @@ def main():
     stop_message = event.get("last_assistant_message", "")
 
     cmd = [sahjhan_binary(), "--config-dir", config_dir(event), "--json",
-           "hook", "eval", "--event", "Stop"]
+           "hook", "eval", "--event", HOOK_EVENT]
     if stop_message:
         cmd.extend(["--output-text", stop_message])
 
@@ -269,7 +315,7 @@ def main():
             reason = messages[0] if messages else "Blocked by protocol"
             print(json.dumps({"decision": "block", "reason": reason}))
         elif messages or warnings:
-            print(json.dumps({"systemMessage": "\n".join(messages + warnings)}))
+            print(json.dumps(warning(event, "\n".join(messages + warnings))))
         else:
             print(json.dumps({}))
     except Exception as e:

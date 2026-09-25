@@ -452,9 +452,9 @@ fn project_in_working_state(config: &str) -> tempfile::TempDir {
     dir
 }
 
-/// Fail unless `reply` is one of the three shapes Claude Code acts on as
-/// intended — see the header of `src/hooks/generate.rs`. Any other shape is a
-/// hook error on every call, or text nobody is shown.
+/// Fail unless `reply` is one of the shapes Claude Code acts on as intended —
+/// see the header of `src/hooks/generate.rs`. Any other shape is a hook error
+/// on every call, or text nobody is shown.
 fn assert_claude_code_shape(script: &str, reply: &serde_json::Value) {
     let obj = reply
         .as_object()
@@ -463,6 +463,15 @@ fn assert_claude_code_shape(script: &str, reply: &serde_json::Value) {
     let acted_on = match keys.as_slice() {
         [] => true,
         ["systemMessage"] => obj["systemMessage"].is_string(),
+        // A warning: the user's notice and Claude's context carry the same
+        // text, under the event the script is registered for.
+        ["hookSpecificOutput", "systemMessage"] => {
+            let specific = &obj["hookSpecificOutput"];
+            obj["systemMessage"].is_string()
+                && specific.as_object().map(|o| o.len()) == Some(2)
+                && specific["additionalContext"] == obj["systemMessage"]
+                && specific["hookEventName"] == hook_event_of(script)
+        }
         ["decision", "reason"] => obj["decision"] == "block" && obj["reason"].is_string(),
         _ => false,
     };
@@ -471,6 +480,24 @@ fn assert_claude_code_shape(script: &str, reply: &serde_json::Value) {
         "{} printed a shape Claude Code does not act on: {}",
         script, reply
     );
+}
+
+/// The Claude Code event a generated script is registered for.
+fn hook_event_of(script: &str) -> &'static str {
+    match script {
+        "post_tool_hook.py" => "PostToolUse",
+        "stop_hook.py" => "Stop",
+        _ => "PreToolUse",
+    }
+}
+
+/// A warning as a wrapper prints it: shown to the user, and the same text in
+/// Claude's context.
+fn warning_reply(script: &str, text: &str) -> serde_json::Value {
+    serde_json::json!({
+        "systemMessage": text,
+        "hookSpecificOutput": {"hookEventName": hook_event_of(script), "additionalContext": text},
+    })
 }
 
 /// Run one generated wrapper on a hook event: its exit status, stderr, and
@@ -686,9 +713,10 @@ fn generated_hooks_allow_with_an_empty_object() {
 }
 
 #[test]
-fn generated_pre_tool_hook_relays_a_warning_as_a_system_message() {
-    // A warning is shown to the user through `systemMessage`. A top-level
-    // `message` passes Claude Code's schema and is shown to no one.
+fn generated_pre_tool_hook_relays_a_warning_to_the_user_and_to_claude() {
+    // A warning is shown to the user through `systemMessage`, which never
+    // reaches Claude, and reaches Claude through `additionalContext`. A
+    // top-level `message` passes Claude Code's schema and is shown to no one.
     let dir = project_with_generated_hooks();
     let cwd = dir.path().to_str().unwrap();
     let (code, stderr, reply) = run_wrapper(
@@ -699,7 +727,7 @@ fn generated_pre_tool_hook_relays_a_warning_as_a_system_message() {
     assert_eq!((code, stderr.as_str()), (0, ""), "{}", reply);
     assert_eq!(
         reply,
-        serde_json::json!({"systemMessage": "pre-tool warning fired"})
+        warning_reply("pre_tool_hook.py", "pre-tool warning fired")
     );
 }
 
@@ -729,10 +757,34 @@ fn generated_hooks_relay_a_monitor_warning() {
         assert_eq!((code, stderr.as_str()), (0, ""), "{}: {}", script, reply);
         assert_eq!(
             reply,
-            serde_json::json!({"systemMessage": "1 check_done since the last transition"}),
+            warning_reply(script, "1 check_done since the last transition"),
             "{}",
             script
         );
+    }
+}
+
+#[test]
+fn generated_stop_hook_sends_a_warning_to_claude_once_per_stop() {
+    // At Stop, `additionalContext` keeps Claude going. A warning is sent to
+    // Claude on the first stop; when Claude stops again while continuing for
+    // a stop hook (`stop_hook_active`), it is shown to the user only, so a
+    // monitor that stays over its threshold cannot hold Claude in a loop.
+    let dir = project_with_generated_hooks();
+    sahjhan_in(dir.path(), &["event", "check_done"]);
+    let cwd = dir.path().to_str().unwrap();
+    let text = "1 check_done since the last transition";
+    for (active, expected) in [
+        (false, warning_reply("stop_hook.py", text)),
+        (true, serde_json::json!({"systemMessage": text})),
+    ] {
+        let (code, stderr, reply) = run_wrapper(
+            dir.path(),
+            "stop_hook.py",
+            serde_json::json!({"last_assistant_message": "still working", "stop_hook_active": active, "cwd": cwd}),
+        );
+        assert_eq!((code, stderr.as_str()), (0, ""), "{}", reply);
+        assert_eq!(reply, expected, "stop_hook_active {}", active);
     }
 }
 

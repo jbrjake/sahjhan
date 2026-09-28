@@ -1,0 +1,19 @@
+{
+  "enabledPlugins": {
+    "meshwork@jbrjake": true
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/docs/meshwork/meshwork prime 2>/dev/null || true",
+            "timeout": 30,
+            "statusMessage": "meshwork prime"
+          }
+        ]
+      }
+    ]
+  }
+}

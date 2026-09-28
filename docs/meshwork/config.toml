@@ -1,0 +1,10 @@
+# meshwork store config (hand-editable).
+# alias prefixes every task ID — pick it before the first `add`;
+# IDs embed it forever.
+alias = "sj"
+format = 2
+default_author = "Jon Rubin"
+
+# Cosmetic names for category depths — uncomment to taste:
+# [hierarchy]
+# levels = ["saga", "epic", "sprint", "story"]

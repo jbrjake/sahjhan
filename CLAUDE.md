@@ -50,6 +50,12 @@ conversation and then lost with the session.
 
 ---
 
+## Worklist
+
+The worklist is meshwork (ritual: the `meshwork@jbrjake` skill), through the committed `docs/meshwork/meshwork` shim pinned by `.meshwork-version`. Tasks are markdown files under `docs/meshwork/`, one per task. `meshwork prime` at session start is the handoff.
+
+---
+
 ## Quick Reference
 
 ```

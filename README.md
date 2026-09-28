@@ -350,7 +350,7 @@ $ sahjhan log tail 1
 [2026-08-19T21:04:43.102Z] seq=1 type=quiz_passed hash=e579285ae4ca {pass=true, score=5/5}
 ```
 
-The agent can read that entry, query it, and see the condition it satisfies. It can't produce the entry itself. It can't call `sign` (the CLI is never a trusted caller, whatever spawned it). It can't modify `quiz.py` (the hash stops matching). It can't drop a new script into the config dir (the bootstrap hook blocks writes there). And it can't add itself to the manifest, because `trusted-callers.toml` is one of the sealed files, and editing it takes a `reseal`...which takes the key it doesn't have.
+The agent can read that entry, query it, and see the condition it satisfies. It can't produce the entry itself. It can't call `sign` (the CLI is never a trusted caller, whatever spawned it). It can't modify `quiz.py` (the hash stops matching). It can't drop a new script into the config dir: the bootstrap hook blocks Write and Edit calls there, and a script that gets there through Bash still isn't trusted because it's not in the manifest. And it can't add itself to the manifest, because `trusted-callers.toml` is one of the sealed files, and editing it takes a `reseal`...which takes the key it doesn't have.
 
 If you want to trust everyone, simply omit the `trusted-callers.toml` altogether. If you don't want to trust anyone, include it with an empty `[callers]` table to deny-all. Be aware that a trusted script is trusted for _everything_, not per-operation. However, you can use `vault.toml` to control which states a vault key is reachable in. Those, as well as `record_event` (which collapses sign-then-submit into one authenticated call), are in [docs/hardening.md](docs/hardening.md).
 

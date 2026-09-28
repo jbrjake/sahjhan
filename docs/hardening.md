@@ -244,7 +244,7 @@ Keys are relative to `--config-dir`, and both the path and the SHA-256 hash must
 
 Trusted scripts have to live inside the config dir, and they have to be invoked by absolute path, because the daemon resolves a relative cmdline path against its own working directory, not the caller's.
 
-The agent can't get a proof through the CLI because `sahjhan sign`'s socket peer is the CLI binary, which can never satisfy the manifest, whatever spawned it. It can't write a script into the trusted path because the bootstrap hook blocks writes to `enforcement/`. It can't modify a trusted script to do something else because the hash won't match. And it can't copy a trusted script somewhere and run it from there because the paths won't match.
+The agent can't get a proof through the CLI because `sahjhan sign`'s socket peer is the CLI binary, which can never satisfy the manifest, whatever spawned it. It can't add a trusted script, because the bootstrap hook blocks Write and Edit calls into the config dir, and a script that gets there another way, such as through Bash, isn't in the sealed manifest. It can't modify a trusted script to do something else because the hash won't match. And it can't copy a trusted script somewhere and run it from there because the paths won't match.
 
 If you don't provide the file, the daemon serves every caller. Providing the file with an empty `[callers]` table denies everyone.
 

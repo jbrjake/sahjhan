@@ -185,7 +185,7 @@ Checked during `hook eval` for Edit and Write. In `finalized` the write goes thr
 
 ## monitors
 
-Monitors catch drift. They don't block, they warn in every `hook eval` response under `monitor_warnings` until something changes. The generated Claude Code wrappers only forward `messages`, so today a monitor warning reaches whoever reads the JSON, _not_ the agent. Even a forwarded warning goes to the user, as a `systemMessage`. Only a block's reason reaches the agent.
+Monitors catch drift. They don't block, they warn in every `hook eval` response under `monitor_warnings` until something changes. The generated Claude Code wrappers forward a monitor warning the same way as a rule's warning: the user sees it as a notice (`systemMessage`), and the agent gets it as context (`additionalContext`). At `Stop`, where that context keeps the agent going, the agent gets a warning once per stop.
 
 ```toml
 [[monitors]]

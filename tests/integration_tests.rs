@@ -471,6 +471,78 @@ fn test_init_prevents_double_init() {
 }
 
 #[test]
+fn test_init_refused_by_e12_writes_nothing_and_retries() {
+    // A refused init that leaves a genesis behind wedges the retry: the
+    // leftover ledger makes `init` say "already initialized", and it sealed
+    // the config as it was, so every other command reports tampering.
+    let dir = tempdir().unwrap();
+    copy_minimal_config(dir.path());
+    let protocol = dir.path().join("enforcement/protocol.toml");
+    let shipped = std::fs::read_to_string(&protocol).unwrap();
+    std::fs::write(
+        &protocol,
+        shipped.replace("managed = [\"output\"]", "managed = []"),
+    )
+    .unwrap();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "init"])
+        .current_dir(dir.path())
+        .assert()
+        .code(3) // EXIT_CONFIG_ERROR
+        .stderr(predicate::str::contains("E12"));
+    assert!(
+        !dir.path().join("output/.sahjhan").exists(),
+        "a refused init must not create the data dir"
+    );
+
+    std::fs::write(&protocol, shipped).unwrap();
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "init"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "status"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_init_failing_after_genesis_takes_back_what_it_wrote() {
+    // The manifest is init's last write; a directory in its place fails it
+    // after the genesis and the registry have landed. Both must go, and what
+    // was already there must stay.
+    let dir = tempdir().unwrap();
+    copy_minimal_config(dir.path());
+    let data_dir = dir.path().join("output/.sahjhan");
+    std::fs::create_dir_all(data_dir.join("manifest.json")).unwrap();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "init"])
+        .current_dir(dir.path())
+        .assert()
+        .code(2) // EXIT_INTEGRITY_ERROR
+        .stderr(predicate::str::contains("Cannot save manifest"));
+    assert!(!data_dir.join("ledger.jsonl").exists());
+    assert!(!data_dir.join("ledgers.toml").exists());
+    assert!(data_dir.join("manifest.json").is_dir());
+
+    std::fs::remove_dir(data_dir.join("manifest.json")).unwrap();
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "init"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+}
+
+#[test]
 fn test_transition_blocked_by_gate() {
     let dir = setup_initialized_dir();
 

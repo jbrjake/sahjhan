@@ -67,14 +67,19 @@ pub fn cmd_init(config_dir: &str) -> i32 {
         }
     };
 
+    // Every refusal that needs no write comes before the first write. The
+    // genesis seals the config as it is now, so a genesis left behind by a
+    // refused init makes the retry "already initialized" and every other
+    // command read the corrected config as tampering.
+    let mut manifest = match Manifest::init(&config.paths.data_dir, config.paths.managed.clone()) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("{}", e);
+            return EXIT_CONFIG_ERROR;
+        }
+    };
+
     let data_dir = resolve_data_dir(&config.paths.data_dir);
-
-    // Create data_dir
-    if let Err(e) = std::fs::create_dir_all(&data_dir) {
-        eprintln!("error: cannot create data directory: {}", e);
-        return EXIT_CONFIG_ERROR;
-    }
-
     let lp = ledger_path(&data_dir);
     if lp.exists() {
         eprintln!(
@@ -84,72 +89,26 @@ pub fn cmd_init(config_dir: &str) -> i32 {
         return EXIT_USAGE_ERROR;
     }
 
-    // Compute config integrity seals
-    let config_seals = crate::config::compute_config_seals(&config_path);
-
-    // Initialize ledger with genesis block (including config seals)
-    let _ledger = match crate::ledger::chain::Ledger::init_with_seals(
-        &lp,
-        &config.protocol.name,
-        &config.protocol.version,
-        config_seals,
-    ) {
-        Ok(l) => l,
-        Err(e) => {
-            eprintln!("error: cannot initialize ledger: {}", e);
-            return EXIT_INTEGRITY_ERROR;
-        }
-    };
-
-    // Create ledgers.toml registry with a "default" entry pointing to the new ledger
-    {
-        let reg_path = data_dir.join("ledgers.toml");
-        // Relative path from data_dir to ledger (just the filename)
-        let ledger_rel_to_data = lp
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "ledger.jsonl".to_string());
-        let mut registry = match crate::ledger::registry::LedgerRegistry::new(&reg_path) {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("error: cannot create ledger registry: {}", e);
-                return EXIT_INTEGRITY_ERROR;
-            }
-        };
-        if let Err(e) = registry.create(
-            "default",
-            &ledger_rel_to_data,
-            crate::ledger::registry::LedgerMode::Stateful,
-        ) {
-            // If the registry already has a "default" entry, skip — idempotent.
-            if !e.contains("already exists") {
-                eprintln!("error: cannot register default ledger: {}", e);
-                return EXIT_INTEGRITY_ERROR;
-            }
-        }
-    }
-
-    // Initialize manifest
-    let mut manifest = match Manifest::init(&config.paths.data_dir, config.paths.managed.clone()) {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!("{}", e);
-            return EXIT_CONFIG_ERROR;
-        }
-    };
-
-    // Track the ledger file in the manifest, keyed against the project root
-    // rather than the cwd `init` happened to run from (holtz #85).
-    let root = resolve_project_root(&config.paths.data_dir);
-    let ledger_rel = crate::paths::manifest_key(&lp, &root);
-    if let Err(e) = manifest.track(&ledger_rel, &lp, "genesis", 0) {
-        eprintln!("error: cannot track ledger in manifest: {}", e);
-        return EXIT_INTEGRITY_ERROR;
-    }
-
-    // Save manifest
-    if let Err((code, msg)) = save_manifest(&mut manifest, &data_dir) {
+    // A write that fails once the first has landed takes back the files, and
+    // the data dir, that this init created, and nothing that was already
+    // there. The retry then finds no ledger and starts over.
+    let reg_path = data_dir.join("ledgers.toml");
+    let mp = manifest_path(&data_dir);
+    let data_dir_existed = data_dir.exists();
+    let registry_existed = reg_path.exists();
+    let manifest_existed = mp.exists();
+    if let Err((code, msg)) = write_run(&config, &config_path, &data_dir, &lp, &mut manifest) {
         eprintln!("{}", msg);
+        let _ = std::fs::remove_file(&lp);
+        if !registry_existed {
+            let _ = std::fs::remove_file(&reg_path);
+        }
+        if !manifest_existed {
+            let _ = std::fs::remove_file(&mp);
+        }
+        if !data_dir_existed {
+            let _ = std::fs::remove_dir(&data_dir);
+        }
         return code;
     }
 
@@ -159,6 +118,81 @@ pub fn cmd_init(config_dir: &str) -> i32 {
 
     println!("initialized. good luck.");
     EXIT_SUCCESS
+}
+
+/// The writes `init` makes: the data dir, the sealed genesis, the registry's
+/// "default" entry, and the manifest tracking the ledger. The first `Err`
+/// stops the rest; undoing what landed is the caller's.
+fn write_run(
+    config: &ProtocolConfig,
+    config_path: &std::path::Path,
+    data_dir: &std::path::Path,
+    lp: &std::path::Path,
+    manifest: &mut Manifest,
+) -> Result<(), (i32, String)> {
+    std::fs::create_dir_all(data_dir).map_err(|e| {
+        (
+            EXIT_CONFIG_ERROR,
+            format!("error: cannot create data directory: {}", e),
+        )
+    })?;
+
+    // Compute config integrity seals
+    let config_seals = crate::config::compute_config_seals(config_path);
+
+    // Initialize ledger with genesis block (including config seals)
+    crate::ledger::chain::Ledger::init_with_seals(
+        lp,
+        &config.protocol.name,
+        &config.protocol.version,
+        config_seals,
+    )
+    .map_err(|e| {
+        (
+            EXIT_INTEGRITY_ERROR,
+            format!("error: cannot initialize ledger: {}", e),
+        )
+    })?;
+
+    // Create ledgers.toml registry with a "default" entry pointing to the new ledger
+    let reg_path = data_dir.join("ledgers.toml");
+    // Relative path from data_dir to ledger (just the filename)
+    let ledger_rel_to_data = lp
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "ledger.jsonl".to_string());
+    let mut registry = crate::ledger::registry::LedgerRegistry::new(&reg_path).map_err(|e| {
+        (
+            EXIT_INTEGRITY_ERROR,
+            format!("error: cannot create ledger registry: {}", e),
+        )
+    })?;
+    if let Err(e) = registry.create(
+        "default",
+        &ledger_rel_to_data,
+        crate::ledger::registry::LedgerMode::Stateful,
+    ) {
+        // If the registry already has a "default" entry, skip — idempotent.
+        if !e.contains("already exists") {
+            return Err((
+                EXIT_INTEGRITY_ERROR,
+                format!("error: cannot register default ledger: {}", e),
+            ));
+        }
+    }
+
+    // Track the ledger file in the manifest, keyed against the project root
+    // rather than the cwd `init` happened to run from (holtz #85).
+    let root = resolve_project_root(&config.paths.data_dir);
+    let ledger_rel = crate::paths::manifest_key(lp, &root);
+    manifest.track(&ledger_rel, lp, "genesis", 0).map_err(|e| {
+        (
+            EXIT_INTEGRITY_ERROR,
+            format!("error: cannot track ledger in manifest: {}", e),
+        )
+    })?;
+
+    save_manifest(manifest, data_dir)
 }
 
 // ---------------------------------------------------------------------------

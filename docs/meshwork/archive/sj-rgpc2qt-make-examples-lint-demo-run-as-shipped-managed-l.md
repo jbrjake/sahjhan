@@ -10,7 +10,7 @@ docs:
   - docs/lint.md
   - jbrubin-net#docs/superpowers/specs/2026-09-24-project-sites-design.md#12-evidence
 verify: "all(exists examples/lint-demo/protocol.toml, contains examples/lint-demo/protocol.toml /managed = \\[\"output\"\\]/, lacks examples/lint-demo/protocol.toml event_type, run cargo test target=lint_tests test_lint_demo_example_inits_and_merges)"
-status: open
+status: done
 created: 2026-09-29T02:01Z
 ---
 The example passes all eight lint checks and cannot run. `sahjhan init` on it exits 3 with
@@ -39,3 +39,8 @@ event_type`, and the close comment names the commit.
 
 ## log
 - 2026-09-29T02:01Z created
+- 2026-09-30T15:11Z open→doing — claimed by claude (e16f684c-ee66-4925-aac7-b58aedbf0707)
+- 2026-09-30T15:14Z doing→done — verify exit 0 @ 18f26cc+5
+
+## comments
+- 2026-09-30T15:14Z [claude (e16f684c-ee66-4925-aac7-b58aedbf0707)] Fixed in 18f26cc (fix(examples): lint-demo runs as shipped -- managed output, and type not event_type). Not yet in a release: the latest tag is v0.28.x and cutting the release is the owner's. Once it is cut, a follow-up comment here names the tag, which is what jbrubin-net's tape pins. The new test test_lint_demo_example_inits_and_merges was watched failing twice on the unfixed example: first on init (E12, exit 3), then, with only managed fixed, on merge (Schema error: No field named event_type, exit 1). It passes with both fixes, as do all 73 lint_tests. docs/lint.md already spells fix_budget with type, so no prose changed. Found while reproducing: a failed init leaves a sealed genesis behind that wedges the retry. Filed as its own task, see relates.

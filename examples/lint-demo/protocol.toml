@@ -8,7 +8,7 @@ version = "1.0.0"
 description = "Fix loop with a context-reset boundary — a worked example for sahjhan lint"
 
 [paths]
-managed = []
+managed = ["output"]
 data_dir = "output/.sahjhan"
 render_dir = "output"
 
@@ -18,7 +18,7 @@ render_dir = "output"
 # (lint L6 reports the copies that do).
 
 [queries.fix_budget]
-sql    = "SELECT count(*) < 3 as result FROM events WHERE event_type = 'fix_commit'"
+sql    = "SELECT count(*) < 3 as result FROM events WHERE type = 'fix_commit'"
 intent = "three fixes is the budget for one merge"
 
 # A provenance filter (lint L8). `recorded_by` is an entry column the engine

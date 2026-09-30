@@ -1835,6 +1835,37 @@ fn test_lint_demo_example_rerouted_pause_opens_a_bypass() {
     );
 }
 
+#[test]
+fn test_lint_demo_example_inits_and_merges() {
+    // Lint reads the graph and never runs a gate's SQL or the init checks, so
+    // an example can pass all eight checks and still refuse to start. Run it:
+    // init, one fix, and the merge that the fix_budget query gates.
+    let dir = std::path::Path::new("examples/lint-demo");
+    let tmp = TempDir::new().unwrap();
+    let config_dir = tmp.path().join("lint-demo");
+    std::fs::create_dir(&config_dir).unwrap();
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        std::fs::copy(&path, config_dir.join(path.file_name().unwrap())).unwrap();
+    }
+
+    let sahjhan = |args: &[&str]| {
+        let mut cmd = Command::cargo_bin("sahjhan").unwrap();
+        cmd.current_dir(tmp.path())
+            .args(["--config-dir", "lint-demo"])
+            .args(args);
+        cmd
+    };
+    sahjhan(&["init"]).assert().success();
+    sahjhan(&["event", "fix_commit", "--field", "sha=3f9c2e1"])
+        .assert()
+        .success();
+    sahjhan(&["transition", "merge"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("fix_loop → merge_done"));
+}
+
 // ---------------------------------------------------------------------------
 // L8 — provenance filters (sahjhan #50)
 //

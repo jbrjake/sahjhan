@@ -350,7 +350,7 @@ error: config integrity violation:
   - transitions.toml (expected: 7f83b1657ff1..., found: a3c2e88d1f2b...)
 
 Run 'sahjhan reseal' with a valid session key to update the seal,
-or 'sahjhan init' to start a new ledger.
+or restore the files above to their sealed contents.
 ```
 
 Config changes do happen legitimately during protocol development. `sahjhan reseal` updates the seal. It requires an HMAC proof, the same as restricted events. Without the session key, the agent can rewrite transitions.toml all day long. It just can't use it. The reseal event goes into the ledger, so you can see exactly when the rules changed and decide whether that was you or the agent getting creative.

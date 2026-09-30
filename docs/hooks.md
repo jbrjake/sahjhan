@@ -48,7 +48,7 @@ If the config doesn't load or the ledger doesn't open, no rule runs, so there's 
 ```bash
 $ echo '# edited' >> enforcement/states.toml
 $ sahjhan --json hook eval --event PreToolUse --tool Edit --file src/main.rs
-{"command":"hook_eval","error":{"code":"integrity_error","message":"config integrity violation:\n  - states.toml (expected: f51f63fb0fbf..., found: d814618523d0...)\n\nRun 'sahjhan reseal' with a valid session key to update the seal,\nor 'sahjhan init' to start a new ledger."},"ok":false,"schema_version":1}
+{"command":"hook_eval","error":{"code":"integrity_error","message":"config integrity violation:\n  - states.toml (expected: f51f63fb0fbf..., found: d814618523d0...)\n\nRun 'sahjhan reseal' with a valid session key to update the seal,\nor restore the files above to their sealed contents."},"ok":false,"schema_version":1}
 ```
 
 That's exit 2. A config that won't parse is `config_error`, exit 3. What either should mean for the tool call is up to the caller, since only the caller knows what's at stake. The generated wrappers let the call through and say why in `systemMessage`, which Claude Code shows the user.

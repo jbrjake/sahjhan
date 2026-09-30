@@ -387,6 +387,38 @@ fn test_cli_tamper_detection_blocks_status() {
         .stderr(predicate::str::contains("transitions"));
 }
 
+#[test]
+fn test_cli_tamper_hint_offers_only_what_recovers() {
+    // `init` refuses whenever a ledger exists, and `reset` opens the ledger
+    // through this same check, so neither recovers from a changed config.
+    // The hint offers reseal, or putting the files back — and putting the
+    // file back has to actually work.
+    let dir = setup_sealed_dir();
+    let transitions = dir.path().join("enforcement/transitions.toml");
+    let sealed = std::fs::read_to_string(&transitions).unwrap();
+    std::fs::write(&transitions, format!("{}# tampered\n", sealed)).unwrap();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "status"])
+        .current_dir(dir.path())
+        .assert()
+        .code(2) // EXIT_INTEGRITY_ERROR
+        .stderr(predicate::str::contains("sahjhan reseal"))
+        .stderr(predicate::str::contains(
+            "restore the files above to their sealed contents",
+        ))
+        .stderr(predicate::str::contains("sahjhan init").not());
+
+    std::fs::write(&transitions, sealed).unwrap();
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "status"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+}
+
 // ---------------------------------------------------------------------------
 // Daemon helpers for reseal tests
 // ---------------------------------------------------------------------------
@@ -498,6 +530,59 @@ fn test_cli_reseal_with_valid_proof_succeeds() {
         .current_dir(dir.path())
         .assert()
         .success();
+}
+
+#[test]
+#[ignore]
+fn test_cli_reset_with_valid_proof_refused_on_tampered_config() {
+    // A valid proof does not get `reset` past the seal: it opens the ledger
+    // through the same check `status` does. So its refusal must not send the
+    // reader to `init`, which refuses too.
+    let dir = setup_sealed_dir();
+    let mut daemon = start_daemon(dir.path());
+    wait_for_socket(dir.path());
+
+    std::fs::write(
+        dir.path().join("enforcement/transitions.toml"),
+        "[[transitions]]\nfrom = \"idle\"\nto = \"idle\"\ncommand = \"noop\"\ngates = []\n# v2\n",
+    )
+    .unwrap();
+
+    let sign_output = Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "sign",
+            "--event-type",
+            "reset",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .expect("sign command failed");
+    assert!(sign_output.status.success(), "sign should succeed");
+    let proof = String::from_utf8_lossy(&sign_output.stdout)
+        .trim()
+        .to_string();
+
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args([
+            "--config-dir",
+            "enforcement",
+            "reset",
+            "--confirm",
+            "--proof",
+            &proof,
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .code(2) // EXIT_INTEGRITY_ERROR
+        .stderr(predicate::str::contains("config integrity violation"))
+        .stderr(predicate::str::contains("sahjhan reseal"))
+        .stderr(predicate::str::contains("sahjhan init").not());
+
+    stop_daemon(&mut daemon);
 }
 
 #[test]

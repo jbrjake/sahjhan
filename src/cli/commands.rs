@@ -12,6 +12,7 @@
 // - [ledger-path] ledger_path() — canonical ledger file path
 // - [manifest-path] manifest_path() — canonical manifest file path
 // - [open-ledger] open_ledger() — open ledger from data_dir
+// - [seal-refusal] seal_refusal() — config-off-its-seal error, naming reseal or restoring the files
 // - [load-manifest] load_manifest() — load manifest from data_dir
 // - [save-manifest] save_manifest() — save manifest to data_dir
 // - [track-ledger] track_ledger_in_manifest() — track ledger in manifest
@@ -143,16 +144,25 @@ pub(crate) fn manifest_path(data_dir: &Path) -> PathBuf {
 pub(crate) fn open_ledger(data_dir: &Path, config_dir: &Path) -> Result<Ledger, (i32, String)> {
     let ledger = Ledger::open(&ledger_path(data_dir))
         .map_err(|e| (EXIT_INTEGRITY_ERROR, format!("Cannot open ledger: {}", e)))?;
-    ledger.verify_config_seal(config_dir).map_err(|e| {
-        (
-            EXIT_INTEGRITY_ERROR,
-            format!(
-                "{}\n\nRun 'sahjhan reseal' with a valid session key to update the seal,\nor 'sahjhan init' to start a new ledger.",
-                e
-            ),
-        )
-    })?;
+    ledger
+        .verify_config_seal(config_dir)
+        .map_err(seal_refusal)?;
     Ok(ledger)
+}
+
+// [seal-refusal]
+/// The refusal for a config that no longer matches its seal, and the only two
+/// ways past it. `reseal` is the one command that opens the ledger without
+/// this check. `init` refuses whenever a ledger exists, and `reset` opens the
+/// ledger through this check, so neither is offered.
+fn seal_refusal(e: crate::ledger::entry::LedgerError) -> (i32, String) {
+    (
+        EXIT_INTEGRITY_ERROR,
+        format!(
+            "{}\n\nRun 'sahjhan reseal' with a valid session key to update the seal,\nor restore the files above to their sealed contents.",
+            e
+        ),
+    )
 }
 
 // [load-manifest]
@@ -274,15 +284,9 @@ pub(crate) fn open_targeted_ledger(
     let (path, mode) = resolve_ledger_from_targeting(config, targeting)?;
     let ledger = Ledger::open(&path)
         .map_err(|e| (EXIT_INTEGRITY_ERROR, format!("Cannot open ledger: {}", e)))?;
-    ledger.verify_config_seal(config_dir).map_err(|e| {
-        (
-            EXIT_INTEGRITY_ERROR,
-            format!(
-                "{}\n\nRun 'sahjhan reseal' with a valid session key to update the seal,\nor 'sahjhan init' to start a new ledger.",
-                e
-            ),
-        )
-    })?;
+    ledger
+        .verify_config_seal(config_dir)
+        .map_err(seal_refusal)?;
     Ok((ledger, mode))
 }
 

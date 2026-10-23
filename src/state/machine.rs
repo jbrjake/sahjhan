@@ -26,6 +26,7 @@ use std::path::PathBuf;
 use thiserror::Error;
 
 use super::sets::{MemberStatus, SetStatus};
+use crate::config::events::{GATE_ATTESTATION, SET_MEMBER_COMPLETE, STATE_TRANSITION};
 use crate::config::ProtocolConfig;
 use crate::gates::evaluator::{evaluate_gate, evaluate_gates, GateAttestation, GateContext};
 use crate::ledger::chain::Ledger;
@@ -414,7 +415,7 @@ impl StateMachine {
 
         self.ledger
             .append(
-                "state_transition",
+                STATE_TRANSITION,
                 fields,
                 &crate::provenance::Recorder::Transition(command.clone()),
             )
@@ -438,7 +439,7 @@ impl StateMachine {
             att_fields.insert("transition_command".to_string(), command.clone());
             self.ledger
                 .append(
-                    "gate_attestation",
+                    GATE_ATTESTATION,
                     att_fields,
                     &crate::provenance::Recorder::Transition(command.clone()),
                 )
@@ -511,7 +512,7 @@ impl StateMachine {
             .expect("set_status called with unknown set name");
 
         let completed_members =
-            self.completed_members_for_set(set_name, "set_member_complete", "member");
+            self.completed_members_for_set(set_name, SET_MEMBER_COMPLETE, "member");
 
         let members: Vec<MemberStatus> = set_config
             .values
@@ -540,7 +541,7 @@ impl StateMachine {
     /// Read the ledger to find the most recent `state_transition` event and
     /// extract the `"to"` field.  Falls back to the config initial state.
     fn derive_state_from_ledger(config: &ProtocolConfig, ledger: &Ledger) -> String {
-        let transitions = ledger.events_of_type("state_transition");
+        let transitions = ledger.events_of_type(STATE_TRANSITION);
         if let Some(last) = transitions.last() {
             if let Some(to) = last.fields.get("to") {
                 return to.clone();
@@ -569,7 +570,7 @@ impl StateMachine {
                             if let Some(set_config) = self.config.sets.get(&param.set) {
                                 let completed = self.completed_members_for_set(
                                     &param.set,
-                                    "set_member_complete",
+                                    SET_MEMBER_COMPLETE,
                                     "member",
                                 );
                                 if let Some(current) =
@@ -582,7 +583,7 @@ impl StateMachine {
                         "last_completed" => {
                             let completed = self.completed_members_for_set(
                                 &param.set,
-                                "set_member_complete",
+                                SET_MEMBER_COMPLETE,
                                 "member",
                             );
                             if let Some(last) = completed.last() {

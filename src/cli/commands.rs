@@ -409,7 +409,7 @@ pub(crate) fn build_state_params(
 /// Scan ledger for completed members of a set.
 fn completed_members_for_set(ledger: &crate::ledger::chain::Ledger, set_name: &str) -> Vec<String> {
     let mut covered = Vec::new();
-    for entry in ledger.events_of_type("set_member_complete") {
+    for entry in ledger.events_of_type(crate::config::events::SET_MEMBER_COMPLETE) {
         let set_matches = entry
             .fields
             .get("set")

@@ -221,7 +221,7 @@ pub(super) fn eval_ledger_has_event_since(gate: &GateConfig, ctx: &GateContext) 
     };
     let found = matching >= min_count;
 
-    let mut since_desc = if baseline_type == "state_transition" {
+    let mut since_desc = if baseline_type == crate::config::events::STATE_TRANSITION {
         "last state_transition".to_string()
     } else {
         format!("last '{}' event", baseline_type)
@@ -331,7 +331,7 @@ pub(super) fn eval_set_covered(gate: &GateConfig, ctx: &GateContext) -> GateResu
         .params
         .get("event")
         .and_then(|v| v.as_str())
-        .unwrap_or("set_member_complete");
+        .unwrap_or(crate::config::events::SET_MEMBER_COMPLETE);
 
     let field_name = gate
         .params

@@ -354,7 +354,7 @@ pub fn cmd_set_complete(
     fields.insert("member".to_string(), member.to_string());
 
     match machine.record_event(
-        "set_member_complete",
+        crate::config::events::SET_MEMBER_COMPLETE,
         fields,
         &crate::provenance::Recorder::AgentCli,
     ) {
@@ -388,7 +388,7 @@ pub fn cmd_set_complete(
                         .unwrap_or(0);
                     match engine.render_triggered(
                         "on_event",
-                        Some("set_member_complete"),
+                        Some(crate::config::events::SET_MEMBER_COMPLETE),
                         machine.ledger(),
                         &render_dir,
                         &mut manifest,

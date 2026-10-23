@@ -7,23 +7,36 @@
 // - EventConfig             — single event type definition; `restricted` marks HMAC-only events; `attestation` names its evidence strength
 // - EventFieldConfig        — field name, type, pattern, allowed values, optional flag
 // - ProducerConfig          — a declared producer of an event, with an optional state window
+// - GENESIS … CONFIG_RESEAL — each engine event type, named once for its writer, its readers and the list
 // - ENGINE_EVENTS           — event types the engine itself writes; part of the vocabulary without being declared
 // - is_engine_event()       — whether an event type is one of those
 
 use serde::Deserialize;
 use std::collections::HashMap;
 
+// Each engine event type is named here and nowhere else in `src/`. The code
+// that appends one, the code that reads it back, and `ENGINE_EVENTS` all use
+// the constant, so the list cannot name an event the engine never writes. A
+// `since` anchor validated against a name like that never matches, and its
+// window silently becomes the whole ledger (#33).
+pub const GENESIS: &str = "genesis";
+pub const STATE_TRANSITION: &str = "state_transition";
+pub const GATE_ATTESTATION: &str = "gate_attestation";
+pub const SET_MEMBER_COMPLETE: &str = "set_member_complete";
+pub const CHECKPOINT: &str = "_checkpoint";
+pub const CONFIG_RESEAL: &str = "config_reseal";
+
 /// Event types the engine writes on its own behalf. Nothing in a consumer's
 /// config produces these, they are never declared in events.toml, and their
 /// absence from it is not a defect — so anything asking "is this a real event
 /// type" has to admit them alongside the declared ones.
 pub const ENGINE_EVENTS: &[&str] = &[
-    "genesis",
-    "state_transition",
-    "gate_attestation",
-    "set_member_complete",
-    "checkpoint",
-    "config_reseal",
+    GENESIS,
+    STATE_TRANSITION,
+    GATE_ATTESTATION,
+    SET_MEMBER_COMPLETE,
+    CHECKPOINT,
+    CONFIG_RESEAL,
 ];
 
 /// Whether `event` is written by the engine itself.

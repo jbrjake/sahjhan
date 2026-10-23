@@ -600,7 +600,7 @@ impl RenderEngine {
 
 /// Derive current state by scanning ledger for the most recent state_transition.
 fn derive_current_state(config: &ProtocolConfig, ledger: &Ledger) -> String {
-    let transitions = ledger.events_of_type("state_transition");
+    let transitions = ledger.events_of_type(crate::config::events::STATE_TRANSITION);
     if let Some(last) = transitions.last() {
         if let Some(to) = last.fields.get("to") {
             return to.clone();
@@ -612,7 +612,7 @@ fn derive_current_state(config: &ProtocolConfig, ledger: &Ledger) -> String {
 /// Find all completed members for a given set by scanning set_member_complete events.
 fn completed_members_for_set(ledger: &Ledger, set_name: &str) -> Vec<String> {
     let mut covered = Vec::new();
-    for entry in ledger.events_of_type("set_member_complete") {
+    for entry in ledger.events_of_type(crate::config::events::SET_MEMBER_COMPLETE) {
         let set_matches = entry
             .fields
             .get("set")

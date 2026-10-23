@@ -136,7 +136,8 @@ pub fn cmd_reseal(config_dir: &str, proof: &str, targeting: &LedgerTargeting) ->
     };
 
     // Verify proof via daemon (payload is "config_reseal" with no fields)
-    let verify_code = super::verify_cmd::cmd_verify(config_dir, "config_reseal", &[], proof);
+    let verify_code =
+        super::verify_cmd::cmd_verify(config_dir, crate::config::events::CONFIG_RESEAL, &[], proof);
     if verify_code != 0 {
         return verify_code;
     }
@@ -177,7 +178,7 @@ pub fn cmd_reseal(config_dir: &str, proof: &str, targeting: &LedgerTargeting) ->
     };
     let manifest = load_manifest(&lock);
     if let Err(e) = ledger.append(
-        "config_reseal",
+        crate::config::events::CONFIG_RESEAL,
         new_seals,
         &crate::provenance::Recorder::AuthedCli,
     ) {

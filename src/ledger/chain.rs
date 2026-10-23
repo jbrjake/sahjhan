@@ -23,6 +23,7 @@ use std::time::Instant;
 use fs2::FileExt;
 
 use super::entry::{LedgerEntry, LedgerError};
+use crate::config::events::{CHECKPOINT, CONFIG_RESEAL, GENESIS};
 use crate::provenance::Recorder;
 
 /// Engine identifier stamped into every entry.
@@ -348,7 +349,7 @@ impl Ledger {
         let mut fields = BTreeMap::new();
         fields.insert("scope".to_string(), scope.to_string());
         fields.insert("snapshot".to_string(), snapshot.to_string());
-        self.append("_checkpoint", fields, &Recorder::AgentCli)?;
+        self.append(CHECKPOINT, fields, &Recorder::AgentCli)?;
         Ok(self.entries.last().expect("entry just appended"))
     }
 
@@ -359,7 +360,7 @@ impl Ledger {
     /// `None` if no matching checkpoint exists.
     pub fn find_latest_checkpoint(&self, scope: &str) -> Option<(u64, &[LedgerEntry])> {
         for (i, entry) in self.entries.iter().enumerate().rev() {
-            if entry.event_type == "_checkpoint" {
+            if entry.event_type == CHECKPOINT {
                 if let Some(s) = entry.fields.get("scope") {
                     if s == scope {
                         return Some((entry.seq, &self.entries[i + 1..]));
@@ -404,7 +405,7 @@ impl Ledger {
     pub fn find_effective_seal(&self) -> Option<BTreeMap<String, String>> {
         // Scan from end for most recent config_reseal event
         for entry in self.entries.iter().rev() {
-            if entry.event_type == "config_reseal" {
+            if entry.event_type == CONFIG_RESEAL {
                 let seals: BTreeMap<String, String> = entry
                     .fields
                     .iter()
@@ -509,7 +510,7 @@ fn create_genesis(
     LedgerEntry::new(
         0,
         prev,
-        "genesis",
+        GENESIS,
         ENGINE_NAME,
         &protocol,
         &Recorder::Init.id(),

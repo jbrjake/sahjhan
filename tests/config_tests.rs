@@ -1071,6 +1071,29 @@ fn test_validate_accepts_recognized_since_anchors() {
 }
 
 #[test]
+fn test_validate_since_anchor_on_the_engine_checkpoint_uses_its_written_name() {
+    // `sahjhan ledger checkpoint` writes `_checkpoint`, undeclared, the way the
+    // engine writes `state_transition` (#33).
+    let errors = config_with_gate(since_gate("last_event_of_type:_checkpoint")).validate();
+    assert!(
+        errors.is_empty(),
+        "the engine writes _checkpoint, so an anchor on it needs no declaration: {:?}",
+        errors
+    );
+
+    // Nothing writes `checkpoint`. An anchor on it would never find a baseline,
+    // and its window would be the whole ledger.
+    let errors = config_with_gate(since_gate("last_event_of_type:checkpoint")).validate();
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("undeclared event type") && e.contains("'checkpoint'")),
+        "an anchor on a name nothing writes must be refused: {:?}",
+        errors
+    );
+}
+
+#[test]
 fn test_validate_checks_since_anchor_nested_in_composite_gate() {
     let mut params = std::collections::HashMap::new();
     params.insert("k".to_string(), toml::Value::Integer(1));

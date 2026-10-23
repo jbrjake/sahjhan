@@ -27,6 +27,7 @@ use std::path::Path;
 
 use serde::Serialize;
 
+use crate::config::events::{GENESIS, STATE_TRANSITION};
 use crate::config::hooks::{HookConfig, HookEvent};
 use crate::config::ProtocolConfig;
 use crate::gates::evaluator::{evaluate_gate, GateContext};
@@ -213,7 +214,7 @@ pub fn evaluate_hooks(
 pub(crate) fn derive_current_state(config: &ProtocolConfig, ledger: &Ledger) -> String {
     // Scan backwards for the last state_transition
     for entry in ledger.entries().iter().rev() {
-        if entry.event_type == "state_transition" {
+        if entry.event_type == STATE_TRANSITION {
             if let Some(to) = entry.fields.get("to") {
                 return to.clone();
             }
@@ -455,11 +456,11 @@ fn count_events_since_last_transition(ledger: &Ledger, event_types: Option<&[Str
     let entries = ledger.entries();
     let mut count = 0;
     for entry in entries.iter().rev() {
-        if entry.event_type == "state_transition" {
+        if entry.event_type == STATE_TRANSITION {
             break;
         }
         // Skip genesis
-        if entry.event_type == "genesis" {
+        if entry.event_type == GENESIS {
             continue;
         }
         match filter {

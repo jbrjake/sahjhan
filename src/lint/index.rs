@@ -220,7 +220,10 @@ fn collect_refs(
             }
         }
         "set_covered" => {
-            push(param_str("event").unwrap_or("set_member_complete"), true);
+            push(
+                param_str("event").unwrap_or(crate::config::events::SET_MEMBER_COMPLETE),
+                true,
+            );
         }
         "no_violations" => {
             push("protocol_violation", false);

@@ -621,7 +621,7 @@ impl ProtocolConfig {
         gate: &'a GateConfig,
     ) -> Result<&'a str, SinceAnchorError> {
         match gate.params.get("since") {
-            None => Ok("state_transition"),
+            None => Ok(events::STATE_TRANSITION),
             Some(value) => match value.as_str() {
                 Some(since) => self.resolve_since_anchor(since),
                 None => Err(SinceAnchorError::NotAString(value.type_str().to_string())),
@@ -632,7 +632,7 @@ impl ProtocolConfig {
     // [resolve-since-anchor]
     pub fn resolve_since_anchor<'a>(&self, since: &'a str) -> Result<&'a str, SinceAnchorError> {
         if since == "last_transition" {
-            return Ok("state_transition");
+            return Ok(events::STATE_TRANSITION);
         }
         match since.strip_prefix("last_event_of_type:") {
             // `last_event_of_type:` with nothing after it names no type at all,

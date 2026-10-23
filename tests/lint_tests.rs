@@ -591,11 +591,19 @@ fields = []
 [events.set_member_complete]
 description = "engine-written"
 fields = []
+
+[events._checkpoint]
+description = "engine-written, by `sahjhan ledger checkpoint` (#33)"
+fields = [
+    { name = "scope", type = "string" },
+    { name = "snapshot", type = "string" },
+]
 "#,
     );
     assert!(
         findings_for(&f.lint(), "L5").is_empty(),
-        "engine events are always live"
+        "engine events are always live: {:?}",
+        f.lint()
     );
 }
 

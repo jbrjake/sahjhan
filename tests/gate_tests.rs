@@ -989,6 +989,51 @@ fn test_ledger_has_event_since_honors_min_count() {
 }
 
 #[test]
+fn test_ledger_has_event_since_anchor_on_a_checkpoint_bounds_the_window() {
+    // The checkpoint comes from the engine's own writer, so the anchor is
+    // tested against the name the engine writes rather than a spelling of it
+    // (#33).
+    let dir = tempdir().unwrap();
+    let config = ProtocolConfig::load(Path::new("examples/minimal")).unwrap();
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let mut ledger = Ledger::init(&ledger_path, "test", "1.0.0").unwrap();
+
+    ledger
+        .append("resolved", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
+    ledger.write_checkpoint("phase-1", "after-first").unwrap();
+
+    let gate = make_gate(
+        "ledger_has_event_since",
+        vec![
+            ("event", toml::Value::String("resolved".to_string())),
+            (
+                "since",
+                toml::Value::String("last_event_of_type:_checkpoint".to_string()),
+            ),
+        ],
+    );
+
+    // The only `resolved` precedes the checkpoint.
+    let result = evaluate_gate(&gate, &_since_ctx(&ledger, &config, dir.path()));
+    assert!(
+        !result.passed,
+        "an event before the checkpoint is outside the window: {:?}",
+        result.reason
+    );
+
+    ledger
+        .append("resolved", BTreeMap::new(), &Recorder::AgentCli)
+        .unwrap();
+    let result = evaluate_gate(&gate, &_since_ctx(&ledger, &config, dir.path()));
+    assert!(
+        result.passed,
+        "one `resolved` follows the checkpoint: {:?}",
+        result.reason
+    );
+}
+
+#[test]
 fn test_ledger_has_event_since_honors_field_filter() {
     // The live holtz `set complete perspective` gate counts `lens_sweep_started`
     // events since the last set_member_complete, filtered to the current

@@ -163,6 +163,23 @@ itself comes from sealed TOML; only the variable values come from the agent.
 Exclusive file locks for writes, shared for reads. The five-second timeout
 applies to the exclusive side; shared reads block without one.
 
+The manifest has its own lock, outside the ledger's: an `flock` on the data dir
+itself, so taking it creates no file. A writer holds it from loading
+`manifest.json` to its last save — across the ledger append, the hash the
+manifest records for the ledger, and every render the event triggers.
+`manifest verify` holds it shared across the load and every hash, so it never
+reads a render whose hash hasn't been saved yet. Both sides wait up to 30
+seconds, then fail with exit 2.
+
+A transition's gate and emit commands run before that lock is taken, because
+one may itself run `sahjhan event` and would wait on its own parent. The commit
+then re-reads the ledger under the lock and refuses, appending nothing, if
+another process moved the state while the gates ran.
+
+`manifest.json` and every rendered file are written to a hidden sibling and
+renamed into place, so a reader — or a writer that dies mid-write — never sees
+a truncated file.
+
 ## source layout
 
 ```

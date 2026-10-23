@@ -1021,6 +1021,14 @@ fn test_ledger_has_event_since_anchor_on_a_checkpoint_bounds_the_window() {
         "an event before the checkpoint is outside the window: {:?}",
         result.reason
     );
+    // The default intent is printed beside the reason, so it must hold for
+    // every anchor, not only `last_transition`.
+    let intent = result.intent.as_deref().unwrap_or_default();
+    assert!(
+        !intent.contains("last transition"),
+        "the intent names an anchor this gate does not use: {:?}",
+        intent
+    );
 
     ledger
         .append("resolved", BTreeMap::new(), &Recorder::AgentCli)

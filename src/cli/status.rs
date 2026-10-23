@@ -15,10 +15,11 @@ use crate::render::engine::RenderEngine;
 use crate::state::machine::StateMachine;
 
 use super::commands::{
-    build_state_params, determine_ledger_source, load_config, load_manifest, open_targeted_ledger,
-    registry_path_from_config, resolve_config_dir, resolve_data_dir, resolve_project_root,
-    save_manifest, status_cache_path, track_ledger_in_manifest, LedgerTargeting, EXIT_CONFIG_ERROR,
-    EXIT_INTEGRITY_ERROR, EXIT_SUCCESS, EXIT_USAGE_ERROR,
+    build_state_params, determine_ledger_source, load_config, load_manifest, lock_manifest,
+    lock_manifest_shared, open_targeted_ledger, registry_path_from_config, resolve_config_dir,
+    resolve_data_dir, resolve_project_root, save_manifest, status_cache_path,
+    track_ledger_in_manifest, LedgerTargeting, EXIT_CONFIG_ERROR, EXIT_INTEGRITY_ERROR,
+    EXIT_SUCCESS, EXIT_USAGE_ERROR,
 };
 use super::output::{
     CommandOutput, CommandResult, EventOnlyStatusData, GateResultData, MemberData, SetSummaryData,
@@ -84,7 +85,7 @@ pub fn cmd_status(
     let (ledger_name, ledger_source) = determine_ledger_source(targeting, &config);
 
     let _data_dir = resolve_data_dir(&config.paths.data_dir);
-    let _manifest = match load_manifest(&_data_dir) {
+    let _manifest = match lock_manifest_shared(&_data_dir).and_then(|lock| load_manifest(&lock)) {
         Ok(m) => m,
         Err((code, msg)) => {
             return Box::new(CommandResult::<StatusData>::err(
@@ -331,7 +332,14 @@ pub fn cmd_set_complete(
     };
 
     let data_dir = resolve_data_dir(&config.paths.data_dir);
-    let mut manifest = match load_manifest(&data_dir) {
+    let lock = match lock_manifest(&data_dir) {
+        Ok(l) => l,
+        Err((code, msg)) => {
+            eprintln!("error: {}", msg);
+            return code;
+        }
+    };
+    let mut manifest = match load_manifest(&lock) {
         Ok(m) => m,
         Err((code, msg)) => {
             eprintln!("error: {}", msg);
@@ -357,7 +365,7 @@ pub fn cmd_set_complete(
                 eprintln!("error: {}", msg);
                 return code;
             }
-            if let Err((code, msg)) = save_manifest(&mut manifest, &data_dir) {
+            if let Err((code, msg)) = save_manifest(&mut manifest, &lock) {
                 eprintln!("error: {}", msg);
                 return code;
             }
@@ -389,7 +397,7 @@ pub fn cmd_set_complete(
                         Ok(rendered) => {
                             render_count = rendered.len();
                             if !rendered.is_empty() {
-                                let _ = save_manifest(&mut manifest, &data_dir);
+                                let _ = save_manifest(&mut manifest, &lock);
                             }
                         }
                         Err(e) => {

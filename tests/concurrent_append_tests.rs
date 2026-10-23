@@ -1,12 +1,17 @@
 // concurrent_append_tests.rs — Stress tests for concurrent ledger writes (Issue #21)
 //
 // Validates that concurrent appends to the same ledger file produce contiguous
-// sequence numbers and a valid hash chain.
+// sequence numbers and a valid hash chain, and that concurrent CLI writers
+// never leave the manifest disagreeing with the files it seals
+// (holtz#ho-0mvwg8q).
 
 use sahjhan::ledger::chain::Ledger;
 use sahjhan::provenance::Recorder;
 use std::collections::BTreeMap;
-use std::sync::{Arc, Barrier};
+use std::path::Path;
+use std::process::{Command, Output};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
 use tempfile::tempdir;
 
@@ -188,4 +193,291 @@ fn test_sequential_rapid_appends_no_corruption() {
     for (i, entry) in ledger.entries().iter().enumerate() {
         assert_eq!(entry.seq, i as u64);
     }
+}
+
+// ---------------------------------------------------------------------------
+// The manifest seal under concurrent CLI writers (holtz#ho-0mvwg8q)
+// ---------------------------------------------------------------------------
+
+fn sahjhan(project: &Path, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_sahjhan"))
+        .current_dir(project)
+        .arg("--config-dir")
+        .arg("enforcement")
+        .args(args)
+        .output()
+        .expect("spawn sahjhan")
+}
+
+fn describe(out: &Output) -> String {
+    format!(
+        "exit {:?}\nstdout: {}\nstderr: {}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    )
+}
+
+/// A project shaped like holtz's: `finding` re-renders three managed files,
+/// and `ping` — holtz's per-tool-call courier events — renders nothing. The
+/// `begin` transition's gate records a `ping` itself, and a PostToolUse hook
+/// auto-records one: the two other ways an append reaches the ledger.
+fn render_project() -> tempfile::TempDir {
+    let dir = tempdir().unwrap();
+    let cfg = dir.path().join("enforcement");
+    std::fs::create_dir_all(cfg.join("templates")).unwrap();
+    let write = |name: &str, body: &str| std::fs::write(cfg.join(name), body).unwrap();
+    write(
+        "protocol.toml",
+        r#"[protocol]
+name = "race"
+version = "1.0.0"
+description = "concurrent writers"
+
+[paths]
+managed = ["output"]
+data_dir = "output/.sahjhan"
+render_dir = "output"
+"#,
+    );
+    write(
+        "states.toml",
+        "[states.idle]\nlabel = \"Idle\"\ninitial = true\n\n\
+         [states.working]\nlabel = \"Working\"\n",
+    );
+    write(
+        "transitions.toml",
+        &format!(
+            "[[transitions]]\nfrom = \"idle\"\nto = \"working\"\ncommand = \"begin\"\n\
+             gates = [{{ type = \"command_succeeds\", cmd = \"'{}' --config-dir enforcement event ping\" }}]\n",
+            env!("CARGO_BIN_EXE_sahjhan")
+        ),
+    );
+    write(
+        "hooks.toml",
+        "[[hooks]]\nevent = \"PostToolUse\"\ntools = [\"Bash\"]\n\n\
+         [hooks.auto_record]\nevent_type = \"ping\"\n",
+    );
+    write(
+        "events.toml",
+        r#"[events.finding]
+description = "A finding"
+fields = [{ name = "id", type = "string" }]
+
+[events.ping]
+description = "A tool call"
+fields = []
+"#,
+    );
+    let mut renders = String::new();
+    for target in ["PUNCHLIST.md", "PUNCHLIST-ARCHIVE.md", "STATUS.md"] {
+        renders.push_str(&format!(
+            "[[renders]]\ntarget = \"{target}\"\ntemplate = \"templates/{target}.tera\"\n\
+             trigger = \"on_event\"\nevent_types = [\"finding\"]\n\n"
+        ));
+        write(
+            &format!("templates/{target}.tera"),
+            &format!(
+                "# {target}\n{{% for e in events %}}{{% if e.event_type == \"finding\" %}}\
+                 - {{{{ e.fields.id }}}} at {{{{ e.seq }}}}\n{{% endif %}}{{% endfor %}}\
+                 {{{{ events | length }}}} events\n"
+            ),
+        );
+    }
+    write("renders.toml", &renders);
+
+    let out = sahjhan(dir.path(), &["init"]);
+    assert!(out.status.success(), "init: {}", describe(&out));
+    dir
+}
+
+/// N concurrent `sahjhan event` writers, some of whose events render and some
+/// of whose do not, with `manifest verify` looping beside them. Every verify
+/// must come back clean — there is nothing writing to a managed file but
+/// sahjhan — and when the writers stop, the manifest must seal exactly the
+/// files on disk, and those files must show every finding.
+///
+/// The two failures it drives, each a permanent violation to holtz
+/// (holtz#ho-0mvwg8q): a verify that reads between a render and its seal, and
+/// an event that renders nothing saving a manifest it loaded before another
+/// writer's seal.
+#[test]
+fn test_concurrent_events_renders_and_verify_agree() {
+    let project = render_project();
+    let root = project.path().to_path_buf();
+
+    const FINDING_WRITERS: usize = 4;
+    const PING_WRITERS: usize = 4;
+    const EVENTS_EACH: usize = 12;
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let verify_failures = Arc::new(Mutex::new(Vec::<String>::new()));
+    let verifies = Arc::new(Mutex::new(0usize));
+
+    let verifier = {
+        let (root, stop) = (root.clone(), stop.clone());
+        let (failures, verifies) = (verify_failures.clone(), verifies.clone());
+        thread::spawn(move || {
+            while !stop.load(Ordering::SeqCst) {
+                let out = sahjhan(&root, &["manifest", "verify"]);
+                *verifies.lock().unwrap() += 1;
+                if !out.status.success() {
+                    failures.lock().unwrap().push(describe(&out));
+                }
+            }
+        })
+    };
+
+    let barrier = Arc::new(Barrier::new(FINDING_WRITERS + PING_WRITERS));
+    let writers: Vec<_> = (0..FINDING_WRITERS + PING_WRITERS)
+        .map(|w| {
+            let (root, barrier) = (root.clone(), barrier.clone());
+            thread::spawn(move || {
+                barrier.wait();
+                let mut failed = Vec::new();
+                for i in 0..EVENTS_EACH {
+                    let id = format!("id=w{}-{}", w, i);
+                    let args: Vec<&str> = if w < FINDING_WRITERS {
+                        vec!["event", "finding", "--field", &id]
+                    } else {
+                        vec!["event", "ping"]
+                    };
+                    let out = sahjhan(&root, &args);
+                    if !out.status.success() {
+                        failed.push(describe(&out));
+                    }
+                }
+                failed
+            })
+        })
+        .collect();
+
+    let writer_failures: Vec<String> = writers
+        .into_iter()
+        .flat_map(|h| h.join().unwrap())
+        .collect();
+    stop.store(true, Ordering::SeqCst);
+    verifier.join().unwrap();
+
+    assert!(
+        writer_failures.is_empty(),
+        "{} writer(s) failed; first:\n{}",
+        writer_failures.len(),
+        writer_failures[0]
+    );
+    let failures = verify_failures.lock().unwrap();
+    assert!(
+        failures.is_empty(),
+        "{} of {} verifies run beside the writers failed; first:\n{}",
+        failures.len(),
+        verifies.lock().unwrap(),
+        failures[0]
+    );
+
+    let out = sahjhan(&root, &["manifest", "verify"]);
+    assert!(out.status.success(), "final verify: {}", describe(&out));
+
+    // A clean verify of a manifest that tracks nothing proves nothing: every
+    // rendered file and the ledger must be among what it sealed.
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("output/.sahjhan/manifest.json")).unwrap(),
+    )
+    .unwrap();
+    for key in [
+        "output/PUNCHLIST.md",
+        "output/PUNCHLIST-ARCHIVE.md",
+        "output/STATUS.md",
+        "output/.sahjhan/ledger.jsonl",
+    ] {
+        assert!(
+            manifest["entries"].get(key).is_some(),
+            "manifest does not seal {}: {}",
+            key,
+            manifest["entries"]
+        );
+    }
+
+    // Renders land in append order, so the last one shows every finding. A
+    // render built from a ledger older than one already sealed would drop some.
+    let punchlist = std::fs::read_to_string(root.join("output/PUNCHLIST.md")).unwrap();
+    for w in 0..FINDING_WRITERS {
+        for i in 0..EVENTS_EACH {
+            let id = format!("- w{}-{} at", w, i);
+            assert!(
+                punchlist.contains(&id),
+                "PUNCHLIST.md lacks {}:\n{}",
+                id,
+                punchlist
+            );
+        }
+    }
+}
+
+/// A gate command that records an event is a second writer inside the first.
+/// The transition must take the manifest lock only after its gates have run;
+/// held across them, the gate's `sahjhan event` waits on its own parent until
+/// the lock times out, and the gate fails.
+#[test]
+fn test_transition_gate_that_records_an_event_does_not_wait_on_its_parent() {
+    let project = render_project();
+    let root = project.path();
+
+    let started = std::time::Instant::now();
+    let out = sahjhan(root, &["transition", "begin"]);
+    let took = started.elapsed();
+    assert!(out.status.success(), "transition: {}", describe(&out));
+    assert!(
+        took < std::time::Duration::from_secs(10),
+        "transition took {:?}: its gate waited on the lock",
+        took
+    );
+
+    let ledger = Ledger::open(&root.join("output/.sahjhan/ledger.jsonl")).unwrap();
+    let types: Vec<&str> = ledger
+        .entries()
+        .iter()
+        .map(|e| e.event_type.as_str())
+        .collect();
+    assert_eq!(
+        types,
+        ["genesis", "ping", "state_transition", "gate_attestation"],
+        "{:?}",
+        types
+    );
+
+    let out = sahjhan(root, &["manifest", "verify"]);
+    assert!(out.status.success(), "verify: {}", describe(&out));
+}
+
+/// Every append path seals the ledger it grows, `hook eval`'s auto-record and
+/// `ledger checkpoint` included. An append that does not leaves the manifest's
+/// ledger entry stale, and every `manifest verify` reads the ledger as
+/// tampered with until some later `event` re-seals it.
+#[test]
+fn test_auto_record_and_checkpoint_seal_the_ledger() {
+    let project = render_project();
+    let root = project.path();
+
+    let out = sahjhan(
+        root,
+        &["hook", "eval", "--event", "PostToolUse", "--tool", "Bash"],
+    );
+    assert!(out.status.success(), "hook eval: {}", describe(&out));
+    let ledger = Ledger::open(&root.join("output/.sahjhan/ledger.jsonl")).unwrap();
+    assert_eq!(ledger.entries().last().unwrap().event_type, "ping");
+    let out = sahjhan(root, &["manifest", "verify"]);
+    assert!(
+        out.status.success(),
+        "verify after auto-record: {}",
+        describe(&out)
+    );
+
+    let out = sahjhan(root, &["ledger", "checkpoint", "--name", "default"]);
+    assert!(out.status.success(), "checkpoint: {}", describe(&out));
+    let out = sahjhan(root, &["manifest", "verify"]);
+    assert!(
+        out.status.success(),
+        "verify after checkpoint: {}",
+        describe(&out)
+    );
 }

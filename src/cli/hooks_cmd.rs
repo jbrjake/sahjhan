@@ -4,14 +4,15 @@
 //
 // ## Index
 // - [cmd-hook-generate] cmd_hook_generate() — generate hook scripts for a harness
-// - [cmd-hook-eval]     cmd_hook_eval()     — evaluate hook rules against current state
+// - [cmd-hook-eval]     cmd_hook_eval()     — evaluate hook rules against current state; auto-records seal the ledger
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use super::commands::{
-    load_config, open_targeted_ledger, resolve_config_dir, resolve_project_root, LedgerTargeting,
-    EXIT_CONFIG_ERROR, EXIT_GATE_FAILED, EXIT_INTEGRITY_ERROR, EXIT_SUCCESS,
+    load_config, load_manifest, lock_manifest, open_targeted_ledger, resolve_config_dir,
+    resolve_data_dir, resolve_project_root, save_manifest, track_ledger_in_manifest,
+    LedgerTargeting, EXIT_CONFIG_ERROR, EXIT_GATE_FAILED, EXIT_INTEGRITY_ERROR, EXIT_SUCCESS,
 };
 use super::output::{
     CommandOutput, CommandResult, HookAutoRecord, HookEvalData, HookEvalMessage, HookMonitorWarning,
@@ -191,18 +192,37 @@ pub fn cmd_hook_eval(
     let caller_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let result = evaluate_hooks(&config, &ledger, &request, &working_dir, &caller_dir);
 
-    // Auto-record events
-    for auto in &result.auto_records {
-        let mut fields = BTreeMap::new();
-        for (k, v) in &auto.fields {
-            fields.insert(k.clone(), v.clone());
-        }
-        if let Err(e) = ledger.append(
-            &auto.event_type,
-            fields,
-            &crate::provenance::Recorder::AgentHookEval,
-        ) {
-            eprintln!("Warning: auto-record failed: {}", e);
+    // Auto-record events, under the manifest lock, and seal the ledger they
+    // grow: an append the manifest does not know about reads as tampering at
+    // the next `manifest verify`. Taken only now, after every gate command
+    // above has run (holtz#ho-0mvwg8q).
+    if !result.auto_records.is_empty() {
+        let data_dir = resolve_data_dir(&config.paths.data_dir);
+        let held = lock_manifest(&data_dir)
+            .and_then(|lock| load_manifest(&lock).map(|manifest| (lock, manifest)));
+        match held {
+            Ok((lock, mut manifest)) => {
+                for auto in &result.auto_records {
+                    let mut fields = BTreeMap::new();
+                    for (k, v) in &auto.fields {
+                        fields.insert(k.clone(), v.clone());
+                    }
+                    if let Err(e) = ledger.append(
+                        &auto.event_type,
+                        fields,
+                        &crate::provenance::Recorder::AgentHookEval,
+                    ) {
+                        eprintln!("Warning: auto-record failed: {}", e);
+                    }
+                }
+                if let Err((_, msg)) =
+                    track_ledger_in_manifest(&mut manifest, &data_dir, &ledger, &config)
+                        .and_then(|()| save_manifest(&mut manifest, &lock))
+                {
+                    eprintln!("Warning: auto-record: {}", msg);
+                }
+            }
+            Err((_, msg)) => eprintln!("Warning: auto-record failed: {}", msg),
         }
     }
 

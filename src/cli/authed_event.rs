@@ -5,15 +5,16 @@
 //
 // ## Index
 // - [cmd-authed-event]        cmd_authed_event()  — record a restricted event with HMAC proof
-// - [cmd-reseal]              cmd_reseal()         — re-seal config hashes with HMAC proof
+// - [cmd-reseal]              cmd_reseal()         — re-seal config hashes with HMAC proof; seals the ledger it appends to
 
 use std::collections::HashMap;
 
 use crate::state::machine::StateMachine;
 
 use super::commands::{
-    load_config, load_manifest, open_targeted_ledger, resolve_config_dir, resolve_data_dir,
-    resolve_ledger_from_targeting, LedgerTargeting, EXIT_INTEGRITY_ERROR, EXIT_USAGE_ERROR,
+    load_config, load_manifest, lock_manifest, open_targeted_ledger, resolve_config_dir,
+    resolve_data_dir, resolve_ledger_from_targeting, save_manifest, track_ledger_in_manifest,
+    LedgerTargeting, EXIT_INTEGRITY_ERROR, EXIT_USAGE_ERROR,
 };
 use super::transition::{record_and_render, validate_event_fields};
 
@@ -65,13 +66,6 @@ pub fn cmd_authed_event(
     };
 
     let data_dir = resolve_data_dir(&config.paths.data_dir);
-    let mut manifest = match load_manifest(&data_dir) {
-        Ok(m) => m,
-        Err((code, msg)) => {
-            eprintln!("{}", msg);
-            return code;
-        }
-    };
 
     // Parse fields
     let mut fields: HashMap<String, String> = HashMap::new();
@@ -98,14 +92,14 @@ pub fn cmd_authed_event(
         return verify_code;
     }
 
-    // Proof verified — record the event
+    // Proof verified — record the event. The manifest lock is taken inside,
+    // after the daemon round trip rather than across it.
     let mut machine = StateMachine::new(&config, ledger);
 
     record_and_render(
         &config,
         &config_path,
         &mut machine,
-        &mut manifest,
         &data_dir,
         event_type,
         fields,
@@ -169,7 +163,19 @@ pub fn cmd_reseal(config_dir: &str, proof: &str, targeting: &LedgerTargeting) ->
         }
     }
 
-    // Append config_reseal event
+    // Append config_reseal event, and seal the ledger it grows — without the
+    // seal, the next `manifest verify` reads the reseal itself as tampering.
+    // The manifest is not a precondition: reseal is the way back from a
+    // broken seal, and must not be refused for a second broken thing.
+    let data_dir = resolve_data_dir(&config.paths.data_dir);
+    let lock = match lock_manifest(&data_dir) {
+        Ok(l) => l,
+        Err((code, msg)) => {
+            eprintln!("{}", msg);
+            return code;
+        }
+    };
+    let manifest = load_manifest(&lock);
     if let Err(e) = ledger.append(
         "config_reseal",
         new_seals,
@@ -178,6 +184,17 @@ pub fn cmd_reseal(config_dir: &str, proof: &str, targeting: &LedgerTargeting) ->
         eprintln!("error: cannot append reseal event: {}", e);
         return EXIT_INTEGRITY_ERROR;
     }
+    let sealed = manifest.and_then(|mut m| {
+        track_ledger_in_manifest(&mut m, &data_dir, &ledger, &config)?;
+        save_manifest(&mut m, &lock)
+    });
+    if let Err((_, msg)) = sealed {
+        eprintln!(
+            "warning: resealed, but the ledger's manifest entry is stale: {}",
+            msg
+        );
+    }
+    drop(lock);
 
     println!("resealed.");
     super::commands::EXIT_SUCCESS

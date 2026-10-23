@@ -518,7 +518,8 @@ fn test_cli_reseal_with_valid_proof_succeeds() {
         .current_dir(dir.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("resealed"));
+        .stdout(predicate::str::contains("resealed"))
+        .stderr(predicate::str::contains("stale").not());
 
     // Status should now work again (need to stop daemon first since
     // status opens the ledger and the daemon may hold the socket).
@@ -527,6 +528,15 @@ fn test_cli_reseal_with_valid_proof_succeeds() {
     Command::cargo_bin("sahjhan")
         .unwrap()
         .args(["--config-dir", "enforcement", "status"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // The reseal is an append, and it sealed the ledger it grew: the
+    // manifest does not read the reseal itself as tampering.
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(["--config-dir", "enforcement", "manifest", "verify"])
         .current_dir(dir.path())
         .assert()
         .success();

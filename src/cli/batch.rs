@@ -7,14 +7,17 @@
 // - [parse-selector] parse_selector() — read the batch's own `--<param>` flag
 // - [select-steps]   select_steps()   — the steps a `--<param>` value list turns on
 // - [items-of]       items_of()       — ids returned by a step's named query
+// - [apply-item]     apply_item()     — one item: gates outside the manifest lock, appends + seal inside
+
+use std::path::Path;
 
 use crate::config::{BatchConfig, BatchStep, ProtocolConfig};
-use crate::state::machine::{StateError, StateMachine};
+use crate::state::machine::{StateError, StateMachine, TransitionOutcome};
 
 use super::commands::{
-    guard_event_only, load_config, load_manifest, open_targeted_ledger, resolve_config_dir,
-    resolve_data_dir, save_manifest, track_ledger_in_manifest, write_status_cache, LedgerTargeting,
-    EXIT_INTEGRITY_ERROR, EXIT_SUCCESS, EXIT_USAGE_ERROR,
+    guard_event_only, load_config, load_manifest, lock_manifest, open_targeted_ledger,
+    resolve_config_dir, resolve_data_dir, save_manifest, track_ledger_in_manifest,
+    write_status_cache, LedgerTargeting, EXIT_INTEGRITY_ERROR, EXIT_SUCCESS, EXIT_USAGE_ERROR,
 };
 
 // [parse-selector]
@@ -136,6 +139,34 @@ fn items_of(
     Ok(ids)
 }
 
+// [apply-item]
+/// One item's transition: its gates outside the manifest lock, then its
+/// appends and the ledger's seal inside it, as `transition` does.
+///
+/// The outer `Err` is a manifest failure, which stops the batch; the inner
+/// result is the transition's own, whose refusals do not.
+fn apply_item(
+    machine: &mut StateMachine,
+    config: &ProtocolConfig,
+    data_dir: &Path,
+    transition: &str,
+    id: &str,
+) -> Result<Result<TransitionOutcome, StateError>, (i32, String)> {
+    let prepared = match machine.prepare_transition(transition, &[id.to_string()]) {
+        Ok(p) => p,
+        Err(e) => return Ok(Err(e)),
+    };
+    let lock = lock_manifest(data_dir)?;
+    let mut manifest = load_manifest(&lock)?;
+    let outcome = match machine.commit_transition(prepared) {
+        Ok(o) => o,
+        Err(e) => return Ok(Err(e)),
+    };
+    track_ledger_in_manifest(&mut manifest, data_dir, machine.ledger(), config)?;
+    save_manifest(&mut manifest, &lock)?;
+    Ok(Ok(outcome))
+}
+
 // [cmd-batch]
 /// Apply a declared batch: for each selected step, run its query and give every
 /// item the step's transition.
@@ -192,14 +223,6 @@ pub fn cmd_batch(
     }
 
     let data_dir = resolve_data_dir(&config.paths.data_dir);
-    let mut manifest = match load_manifest(&data_dir) {
-        Ok(m) => m,
-        Err((code, msg)) => {
-            eprintln!("{}", msg);
-            return code;
-        }
-    };
-
     let ledger_path = ledger.path().to_path_buf();
     let mut machine = StateMachine::new(&config, ledger);
 
@@ -224,7 +247,14 @@ pub fn cmd_batch(
         let mut refused: Vec<(String, String)> = Vec::new();
 
         for id in &ids {
-            match machine.transition(&step.transition, std::slice::from_ref(id)) {
+            let result = match apply_item(&mut machine, &config, &data_dir, &step.transition, id) {
+                Ok(r) => r,
+                Err((code, msg)) => {
+                    eprintln!("{}", msg);
+                    return code;
+                }
+            };
+            match result {
                 Ok(outcome) => {
                     applied += 1;
                     last_state = Some(outcome.to.clone());
@@ -289,15 +319,27 @@ pub fn cmd_batch(
         }
     }
 
-    if let Err((code, msg)) =
-        track_ledger_in_manifest(&mut manifest, &data_dir, machine.ledger(), &config)
-    {
-        eprintln!("{}", msg);
-        return code;
-    }
-    if let Err((code, msg)) = save_manifest(&mut manifest, &data_dir) {
-        eprintln!("{}", msg);
-        return code;
+    // Every item sealed the ledger as it committed. The renders run once, under
+    // a lock of their own, from the ledger as it is now — other writers may
+    // have appended between items, and a render from this machine's older copy
+    // would seal a view of a ledger that is no longer the one on disk.
+    let lock = match lock_manifest(&data_dir) {
+        Ok(l) => l,
+        Err((code, msg)) => {
+            eprintln!("{}", msg);
+            return code;
+        }
+    };
+    let mut manifest = match load_manifest(&lock) {
+        Ok(m) => m,
+        Err((code, msg)) => {
+            eprintln!("{}", msg);
+            return code;
+        }
+    };
+    if let Err(e) = machine.reload_ledger() {
+        eprintln!("error: batch '{}': {}", name, e);
+        return EXIT_INTEGRITY_ERROR;
     }
 
     let render_count = super::transition::render_after_transitions(
@@ -306,9 +348,10 @@ pub fn cmd_batch(
         targeting,
         machine.ledger(),
         &mut manifest,
-        &data_dir,
+        &lock,
         &emitted,
     );
+    drop(lock);
 
     if let Some(state) = last_state {
         write_status_cache(&data_dir, &config, &config_path, &state);

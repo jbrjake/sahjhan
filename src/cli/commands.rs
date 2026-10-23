@@ -13,8 +13,10 @@
 // - [manifest-path] manifest_path() — canonical manifest file path
 // - [open-ledger] open_ledger() — open ledger from data_dir
 // - [seal-refusal] seal_refusal() — config-off-its-seal error, naming reseal or restoring the files
-// - [load-manifest] load_manifest() — load manifest from data_dir
-// - [save-manifest] save_manifest() — save manifest to data_dir
+// - [lock-manifest] lock_manifest() — exclusive manifest lock on data_dir, for a writer
+// - [lock-manifest-shared] lock_manifest_shared() — shared manifest lock, for a reader
+// - [load-manifest] load_manifest() — load the manifest the held lock covers
+// - [save-manifest] save_manifest() — save it, which only an exclusive holder can
 // - [track-ledger] track_ledger_in_manifest() — track ledger in manifest
 // - [resolve-ledger] resolve_ledger_from_targeting() — resolve ledger path from flags
 // - [open-targeted] open_targeted_ledger() — open ledger via targeting
@@ -37,6 +39,7 @@ use std::path::{Path, PathBuf};
 use crate::config::ProtocolConfig;
 use crate::ledger::chain::Ledger;
 use crate::ledger::registry::{LedgerMode, LedgerRegistry};
+use crate::manifest::lock::{ManifestGuard, ManifestLock, ManifestReadLock};
 use crate::manifest::tracker::Manifest;
 
 // ---------------------------------------------------------------------------
@@ -165,16 +168,45 @@ fn seal_refusal(e: crate::ledger::entry::LedgerError) -> (i32, String) {
     )
 }
 
+// [lock-manifest]
+/// Take the exclusive manifest lock for `data_dir`, for a writer.
+///
+/// Held from the manifest load to the last save, and across everything those
+/// seal: the ledger append, and every render the append triggers. Never across
+/// a gate or emit command, or a daemon round trip — a gate may run `sahjhan
+/// event` itself, which would wait on its own parent (holtz#ho-0mvwg8q).
+pub(crate) fn lock_manifest(data_dir: &Path) -> Result<ManifestLock, (i32, String)> {
+    ManifestLock::exclusive(data_dir)
+        .map_err(|e| (EXIT_INTEGRITY_ERROR, format!("Cannot lock manifest: {}", e)))
+}
+
+// [lock-manifest-shared]
+/// Take a shared manifest lock for `data_dir`, for a reader. Readers do not
+/// block each other; each waits only for a writer to reach its last save.
+pub(crate) fn lock_manifest_shared(data_dir: &Path) -> Result<ManifestReadLock, (i32, String)> {
+    ManifestReadLock::shared(data_dir)
+        .map_err(|e| (EXIT_INTEGRITY_ERROR, format!("Cannot lock manifest: {}", e)))
+}
+
 // [load-manifest]
-pub(crate) fn load_manifest(data_dir: &Path) -> Result<Manifest, (i32, String)> {
-    Manifest::load(&manifest_path(data_dir))
+/// Load the manifest of the data dir `lock` holds.
+///
+/// Taking the lock rather than a path is what makes "loaded outside the lock"
+/// unrepresentable. A writer that loaded before another sealed would save the
+/// old hashes back over that seal.
+pub(crate) fn load_manifest(lock: &impl ManifestGuard) -> Result<Manifest, (i32, String)> {
+    Manifest::load(&manifest_path(lock.data_dir()))
         .map_err(|e| (EXIT_INTEGRITY_ERROR, format!("Cannot load manifest: {}", e)))
 }
 
 // [save-manifest]
-pub(crate) fn save_manifest(manifest: &mut Manifest, data_dir: &Path) -> Result<(), (i32, String)> {
+/// Save the manifest of the data dir `lock` holds exclusively.
+pub(crate) fn save_manifest(
+    manifest: &mut Manifest,
+    lock: &ManifestLock,
+) -> Result<(), (i32, String)> {
     manifest
-        .save(&manifest_path(data_dir))
+        .save(&manifest_path(lock.data_dir()))
         .map_err(|e| (EXIT_INTEGRITY_ERROR, format!("Cannot save manifest: {}", e)))
 }
 

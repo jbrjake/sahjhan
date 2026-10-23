@@ -7,7 +7,7 @@
 // - [cmd-ledger-list] cmd_ledger_list() — list registered ledgers
 // - [cmd-ledger-remove] cmd_ledger_remove() — remove a ledger from the registry
 // - [cmd-ledger-verify] cmd_ledger_verify() — verify hash chain integrity of a ledger
-// - [cmd-ledger-checkpoint] cmd_ledger_checkpoint() — write a checkpoint to a ledger
+// - [cmd-ledger-checkpoint] cmd_ledger_checkpoint() — write a checkpoint to a ledger, under the manifest lock
 // - [cmd-ledger-import] cmd_ledger_import() — import bare JSONL from stdin
 // - [cmd-ledger-activate] cmd_ledger_activate() — set active-ledger marker
 // - [cmd-ledger-deactivate] cmd_ledger_deactivate() — remove active-ledger marker
@@ -19,8 +19,9 @@ use crate::ledger::import::import_jsonl;
 use crate::ledger::registry::{LedgerMode, LedgerRegistry};
 
 use super::commands::{
-    compute_registry_path, ledger_path, load_config, read_active_ledger, registry_path_from_config,
-    remove_active_ledger, resolve_config_dir, resolve_data_dir, resolve_registry_path,
+    compute_registry_path, ledger_path, load_config, load_manifest, lock_manifest,
+    read_active_ledger, registry_path_from_config, remove_active_ledger, resolve_config_dir,
+    resolve_data_dir, resolve_registry_path, save_manifest, track_ledger_in_manifest,
     write_active_ledger, EXIT_CONFIG_ERROR, EXIT_INTEGRITY_ERROR, EXIT_SUCCESS, EXIT_USAGE_ERROR,
 };
 use super::output::{CommandOutput, CommandResult, LedgerActivateData, LedgerDeactivateData};
@@ -408,9 +409,33 @@ pub fn cmd_ledger_checkpoint(
         return EXIT_INTEGRITY_ERROR;
     }
 
+    // Under the manifest lock, and sealing the ledger after: a checkpoint is
+    // an append like any other, and an unsealed one reads as tampering.
+    let lock = match lock_manifest(&data_dir) {
+        Ok(l) => l,
+        Err((code, msg)) => {
+            eprintln!("{}", msg);
+            return code;
+        }
+    };
+    let mut manifest = match load_manifest(&lock) {
+        Ok(m) => m,
+        Err((code, msg)) => {
+            eprintln!("{}", msg);
+            return code;
+        }
+    };
     match ledger.write_checkpoint(scope, snapshot) {
         Ok(cp) => {
-            println!("checkpoint: seq {} scope={}", cp.seq, scope);
+            let seq = cp.seq;
+            if let Err((code, msg)) =
+                track_ledger_in_manifest(&mut manifest, &data_dir, &ledger, &config)
+                    .and_then(|()| save_manifest(&mut manifest, &lock))
+            {
+                eprintln!("{}", msg);
+                return code;
+            }
+            println!("checkpoint: seq {} scope={}", seq, scope);
             EXIT_SUCCESS
         }
         Err(e) => {

@@ -3,14 +3,15 @@
 // Template rendering commands.
 //
 // ## Index
-// - [cmd-render] cmd_render() — regenerate all markdown views
+// - [cmd-render] cmd_render() — regenerate all markdown views, under the manifest lock
 // - [cmd-render-dump-context] cmd_render_dump_context() — dump template render context as JSON
 
 use crate::render::engine::RenderEngine;
 
 use super::commands::{
-    load_config, load_manifest, open_targeted_ledger, resolve_config_dir, resolve_data_dir,
-    save_manifest, LedgerTargeting, EXIT_CONFIG_ERROR, EXIT_INTEGRITY_ERROR, EXIT_SUCCESS,
+    load_config, load_manifest, lock_manifest, open_targeted_ledger, resolve_config_dir,
+    resolve_data_dir, save_manifest, LedgerTargeting, EXIT_CONFIG_ERROR, EXIT_INTEGRITY_ERROR,
+    EXIT_SUCCESS,
 };
 
 // ---------------------------------------------------------------------------
@@ -34,6 +35,15 @@ pub fn cmd_render(config_dir: &str, targeting: &LedgerTargeting) -> i32 {
     }
 
     let data_dir = resolve_data_dir(&config.paths.data_dir);
+    // The lock comes before the ledger is read, so what is rendered and sealed
+    // is the ledger no writer can be appending to.
+    let lock = match lock_manifest(&data_dir) {
+        Ok(l) => l,
+        Err((code, msg)) => {
+            eprintln!("{}", msg);
+            return code;
+        }
+    };
     let (ledger, _mode) = match open_targeted_ledger(&config, targeting, &config_path) {
         Ok(lm) => lm,
         Err((code, msg)) => {
@@ -41,7 +51,7 @@ pub fn cmd_render(config_dir: &str, targeting: &LedgerTargeting) -> i32 {
             return code;
         }
     };
-    let mut manifest = match load_manifest(&data_dir) {
+    let mut manifest = match load_manifest(&lock) {
         Ok(m) => m,
         Err((code, msg)) => {
             eprintln!("{}", msg);
@@ -69,7 +79,7 @@ pub fn cmd_render(config_dir: &str, targeting: &LedgerTargeting) -> i32 {
 
     match engine.render_all(&ledger, &render_dir, &mut manifest, ledger_seq) {
         Ok(rendered) => {
-            if let Err((code, msg)) = save_manifest(&mut manifest, &data_dir) {
+            if let Err((code, msg)) = save_manifest(&mut manifest, &lock) {
                 eprintln!("error: {}", msg);
                 return code;
             }

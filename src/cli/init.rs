@@ -4,16 +4,19 @@
 //
 // ## Index
 // - [cmd-init] cmd_init() — initialize ledger, manifest, genesis
+// - init_refusal() — E12 and already-initialized, checked before any write and again under the lock
+// - init_locked() — a run's writes and their rollback, holding the manifest lock; shared by init + reset
 // - [cmd-validate] cmd_validate() — validate protocol config
-// - [cmd-reset] cmd_reset() — archive and reset run (requires HMAC proof via daemon)
+// - [cmd-reset] cmd_reset() — archive and reset run under one manifest lock (requires HMAC proof via daemon)
 
 use crate::config::ProtocolConfig;
+use crate::manifest::lock::ManifestLock;
 use crate::manifest::tracker::Manifest;
 
 use super::commands::{
-    ledger_path, load_config, manifest_path, open_ledger, remove_active_ledger, resolve_config_dir,
-    resolve_data_dir, resolve_project_root, save_manifest, write_status_cache, EXIT_CONFIG_ERROR,
-    EXIT_INTEGRITY_ERROR, EXIT_SUCCESS, EXIT_USAGE_ERROR,
+    ledger_path, load_config, lock_manifest, manifest_path, open_ledger, remove_active_ledger,
+    resolve_config_dir, resolve_data_dir, resolve_project_root, save_manifest, write_status_cache,
+    EXIT_CONFIG_ERROR, EXIT_INTEGRITY_ERROR, EXIT_SUCCESS, EXIT_USAGE_ERROR,
 };
 
 // ---------------------------------------------------------------------------
@@ -71,33 +74,83 @@ pub fn cmd_init(config_dir: &str) -> i32 {
     // genesis seals the config as it is now, so a genesis left behind by a
     // refused init makes the retry "already initialized" and every other
     // command read the corrected config as tampering.
-    let mut manifest = match Manifest::init(&config.paths.data_dir, config.paths.managed.clone()) {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!("{}", e);
-            return EXIT_CONFIG_ERROR;
+    let data_dir = resolve_data_dir(&config.paths.data_dir);
+    if let Err(code) = init_refusal(&config, &data_dir) {
+        return code;
+    }
+
+    // The first write is the data dir, because the manifest lock is a lock on
+    // it. Taking it back is the rollback's, below.
+    let data_dir_existed = data_dir.exists();
+    if let Err(e) = std::fs::create_dir_all(&data_dir) {
+        eprintln!("error: cannot create data directory: {}", e);
+        return EXIT_CONFIG_ERROR;
+    }
+    let lock = match lock_manifest(&data_dir) {
+        Ok(l) => l,
+        Err((code, msg)) => {
+            eprintln!("{}", msg);
+            if !data_dir_existed {
+                let _ = std::fs::remove_dir(&data_dir);
+            }
+            return code;
         }
     };
 
-    let data_dir = resolve_data_dir(&config.paths.data_dir);
-    let lp = ledger_path(&data_dir);
+    init_locked(&config, &config_path, &data_dir, data_dir_existed, &lock)
+}
+
+/// The refusals `init` makes before it writes anything: a `data_dir` outside
+/// every managed path (E12), and a ledger already there. Returns the empty
+/// manifest the run will start from.
+fn init_refusal(config: &ProtocolConfig, data_dir: &std::path::Path) -> Result<Manifest, i32> {
+    let manifest = match Manifest::init(&config.paths.data_dir, config.paths.managed.clone()) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("{}", e);
+            return Err(EXIT_CONFIG_ERROR);
+        }
+    };
+
+    let lp = ledger_path(data_dir);
     if lp.exists() {
         eprintln!(
             "error: already initialized ({}). run reset first.",
             lp.display()
         );
-        return EXIT_USAGE_ERROR;
+        return Err(EXIT_USAGE_ERROR);
     }
+    Ok(manifest)
+}
+
+/// Start a run in `data_dir`, holding `lock` on it — `init` after its own
+/// refusals, `reset` after archiving the run before.
+///
+/// `data_dir_existed` says whether the caller created the data dir, which is
+/// whether a failed init takes it back.
+fn init_locked(
+    config: &ProtocolConfig,
+    config_path: &std::path::Path,
+    data_dir: &std::path::Path,
+    data_dir_existed: bool,
+    lock: &ManifestLock,
+) -> i32 {
+    // Again, under the lock: another init may have finished while this one
+    // waited for it.
+    let mut manifest = match init_refusal(config, data_dir) {
+        Ok(m) => m,
+        Err(code) => return code,
+    };
 
     // A write that fails once the first has landed takes back the files, and
     // the data dir, that this init created, and nothing that was already
     // there. The retry then finds no ledger and starts over.
+    let lp = ledger_path(data_dir);
     let reg_path = data_dir.join("ledgers.toml");
-    let mp = manifest_path(&data_dir);
-    let data_dir_existed = data_dir.exists();
+    let mp = manifest_path(data_dir);
     let registry_existed = reg_path.exists();
     let manifest_existed = mp.exists();
-    if let Err((code, msg)) = write_run(&config, &config_path, &data_dir, &lp, &mut manifest) {
+    if let Err((code, msg)) = write_run(config, config_path, data_dir, &lp, &mut manifest, lock) {
         eprintln!("{}", msg);
         let _ = std::fs::remove_file(&lp);
         if !registry_existed {
@@ -107,36 +160,30 @@ pub fn cmd_init(config_dir: &str) -> i32 {
             let _ = std::fs::remove_file(&mp);
         }
         if !data_dir_existed {
-            let _ = std::fs::remove_dir(&data_dir);
+            let _ = std::fs::remove_dir(data_dir);
         }
         return code;
     }
 
     // Write status cache for fast hook discovery
     let initial_state = config.initial_state().unwrap_or("unknown").to_string();
-    write_status_cache(&data_dir, &config, &config_path, &initial_state);
+    write_status_cache(data_dir, config, config_path, &initial_state);
 
     println!("initialized. good luck.");
     EXIT_SUCCESS
 }
 
-/// The writes `init` makes: the data dir, the sealed genesis, the registry's
-/// "default" entry, and the manifest tracking the ledger. The first `Err`
-/// stops the rest; undoing what landed is the caller's.
+/// The writes `init` makes in the data dir: the sealed genesis, the
+/// registry's "default" entry, and the manifest tracking the ledger. The
+/// first `Err` stops the rest; undoing what landed is the caller's.
 fn write_run(
     config: &ProtocolConfig,
     config_path: &std::path::Path,
     data_dir: &std::path::Path,
     lp: &std::path::Path,
     manifest: &mut Manifest,
+    lock: &ManifestLock,
 ) -> Result<(), (i32, String)> {
-    std::fs::create_dir_all(data_dir).map_err(|e| {
-        (
-            EXIT_CONFIG_ERROR,
-            format!("error: cannot create data directory: {}", e),
-        )
-    })?;
-
     // Compute config integrity seals
     let config_seals = crate::config::compute_config_seals(config_path);
 
@@ -192,7 +239,7 @@ fn write_run(
         )
     })?;
 
-    save_manifest(manifest, data_dir)
+    save_manifest(manifest, lock)
 }
 
 // ---------------------------------------------------------------------------
@@ -230,6 +277,16 @@ pub fn cmd_reset(config_dir: &str, confirm: bool, proof: &str) -> i32 {
         return code;
     }
 
+    // One lock across the archive and the new run, so no other command sees
+    // the data dir between them, with no ledger or no manifest in it.
+    let lock = match lock_manifest(&data_dir) {
+        Ok(l) => l,
+        Err((code, msg)) => {
+            eprintln!("{}", msg);
+            return code;
+        }
+    };
+
     // Archive current ledger and manifest
     let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
     let ledger_archive = data_dir.join(format!("ledger.{}.jsonl", timestamp));
@@ -251,7 +308,7 @@ pub fn cmd_reset(config_dir: &str, confirm: bool, proof: &str) -> i32 {
     remove_active_ledger(&data_dir);
 
     // Reinitialize
-    let result = cmd_init(config_dir);
+    let result = init_locked(&config, &config_path, &data_dir, true, &lock);
     if result == EXIT_SUCCESS {
         println!("reset. prior run archived.");
     }

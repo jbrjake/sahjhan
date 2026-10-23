@@ -29,7 +29,7 @@ use tera::Value;
 use crate::config::ProtocolConfig;
 use crate::ledger::chain::Ledger;
 use crate::ledger::registry::LedgerRegistry;
-use crate::manifest::tracker::Manifest;
+use crate::manifest::tracker::{write_atomic, Manifest};
 
 /// A single event formatted for template rendering.
 #[derive(Debug, Clone, Serialize)]
@@ -382,7 +382,7 @@ impl RenderEngine {
                     .map_err(|e| format!("cannot create directory {}: {}", parent.display(), e))?;
             }
 
-            std::fs::write(&target_path, &output).map_err(|e| {
+            write_atomic(&target_path, output.as_bytes()).map_err(|e| {
                 format!(
                     "cannot write rendered file '{}': {}",
                     target_path.display(),
@@ -417,7 +417,9 @@ impl RenderEngine {
         manifest: &mut Manifest,
         ledger_seq: u64,
     ) -> Result<Vec<String>, String> {
-        let default_ctx = self.build_context(ledger)?;
+        // Built on the first render that matches, not up front: most events
+        // render nothing, and every caller runs this holding the manifest lock.
+        let mut default_ctx: Option<tera::Context> = None;
         let mut rendered = Vec::new();
 
         for render_cfg in &self.config.renders {
@@ -444,7 +446,10 @@ impl RenderEngine {
             let ctx = if let Some(ref ol) = override_ledger {
                 self.build_context(ol)?
             } else {
-                default_ctx.clone()
+                match &default_ctx {
+                    Some(ctx) => ctx.clone(),
+                    None => default_ctx.insert(self.build_context(ledger)?).clone(),
+                }
             };
 
             let output = self
@@ -459,7 +464,7 @@ impl RenderEngine {
                     .map_err(|e| format!("cannot create directory {}: {}", parent.display(), e))?;
             }
 
-            std::fs::write(&target_path, &output).map_err(|e| {
+            write_atomic(&target_path, output.as_bytes()).map_err(|e| {
                 format!(
                     "cannot write rendered file '{}': {}",
                     target_path.display(),

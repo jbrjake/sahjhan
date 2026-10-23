@@ -7,8 +7,12 @@
 //                              (blocked variants carry the gate's intent for CLI display)
 // - BlockedCandidate         — per-candidate failure detail (target, gate_type, reason, intent)
 // - TransitionOutcome        — result of a successful transition (from, to, attestations)
+// - PreparedTransition       — a candidate whose gates passed and emits resolved, nothing appended yet
 // - StateMachine             — owns config + ledger, executes transitions
-// - [transition]             transition()              — execute named command (multi-candidate branching with fallthrough)
+// - [transition]             transition()              — prepare + commit, for a caller that seals nothing
+// - [prepare-transition]     prepare_transition()      — pick the candidate, run its gates and emit commands; appends nothing
+// - [commit-transition]      commit_transition()       — append what a prepared transition records; runs no command
+// - [reload-ledger]          reload_ledger()           — re-read the ledger and re-derive the current state
 // - [record-event]           record_event()            — append event to ledger
 // - [set-status]             set_status()              — completion status of a named set
 // - [build-state-params]     build_state_params()      — derive params from state config + source field
@@ -91,6 +95,22 @@ pub struct TransitionOutcome {
     /// order appended. Empty for transitions with no `emits`. Callers use this
     /// to fire `on_event` renders for the emitted events.
     pub emitted_events: Vec<String>,
+}
+
+/// A transition whose gates passed and whose emits resolved, with nothing yet
+/// appended. Only [`StateMachine::prepare_transition`] makes one.
+///
+/// The split exists so a caller can take the manifest lock between the two
+/// halves: everything that runs a command — gates, emit `commands` — is in the
+/// first, and a gate command may itself run `sahjhan event`, which takes that
+/// lock. Everything that writes is in the second.
+#[derive(Debug)]
+pub struct PreparedTransition {
+    command: String,
+    from: String,
+    to: String,
+    attestations: Vec<GateAttestation>,
+    emits: Vec<(String, BTreeMap<String, String>)>,
 }
 
 // ---------------------------------------------------------------------------
@@ -183,13 +203,29 @@ impl StateMachine {
     /// If a single candidate is blocked, the backward-compatible `GateBlocked`
     /// error is returned.  If multiple candidates all fail,
     /// `AllCandidatesBlocked` is returned with per-candidate failure details.
+    ///
+    /// A caller that seals the ledger in a manifest uses the two halves
+    /// instead, with the manifest lock taken between them.
     pub fn transition(
         &mut self,
         command: &str,
         args: &[String],
     ) -> Result<TransitionOutcome, StateError> {
-        let from_state = self.current_state.clone();
+        let prepared = self.prepare_transition(command, args)?;
+        self.commit_transition(prepared)
+    }
 
+    // [prepare-transition]
+    /// Pick the first candidate whose gates pass and resolve its emits:
+    /// every command the transition runs, and no write.
+    ///
+    /// Errors are the ones [`StateMachine::transition`] documents; the ledger
+    /// is untouched on every one of them.
+    pub fn prepare_transition(
+        &mut self,
+        command: &str,
+        args: &[String],
+    ) -> Result<PreparedTransition, StateError> {
         // Collect ALL matching candidates (preserving TOML order).
         let candidates: Vec<_> = self
             .config
@@ -300,68 +336,13 @@ impl StateMachine {
                 pending_emits.push((emit.event.clone(), fields));
             }
 
-            // Record the transition event.
-            let mut fields = BTreeMap::new();
-            fields.insert("from".to_string(), self.current_state.clone());
-            fields.insert("to".to_string(), candidate.to.clone());
-            fields.insert("command".to_string(), command.to_string());
-
-            self.ledger
-                .append(
-                    "state_transition",
-                    fields,
-                    &crate::provenance::Recorder::Transition(command.to_string()),
-                )
-                .map_err(StateError::Ledger)?;
-
-            self.current_state = candidate.to.clone();
-
-            // Collect attestation from passing gates.
-            let attestations: Vec<GateAttestation> =
-                results.into_iter().filter_map(|r| r.attestation).collect();
-
-            // Emit gate_attestation events for each attestation.
-            for att in &attestations {
-                let mut att_fields = BTreeMap::new();
-                att_fields.insert("gate_type".to_string(), att.gate_type.clone());
-                att_fields.insert("command".to_string(), att.command.clone());
-                att_fields.insert("exit_code".to_string(), att.exit_code.to_string());
-                att_fields.insert("stdout_hash".to_string(), att.stdout_hash.clone());
-                att_fields.insert("wall_time_ms".to_string(), att.wall_time_ms.to_string());
-                att_fields.insert("executed_at".to_string(), att.executed_at.clone());
-                // Where it ran. A gate may be anchored at the caller rather
-                // than the project (#46), so the exit code alone no longer
-                // identifies which tree the claim is about.
-                att_fields.insert("working_dir".to_string(), att.working_dir.clone());
-                att_fields.insert("transition_command".to_string(), command.to_string());
-                self.ledger
-                    .append(
-                        "gate_attestation",
-                        att_fields,
-                        &crate::provenance::Recorder::Transition(command.to_string()),
-                    )
-                    .map_err(StateError::Ledger)?;
-            }
-
-            // Append the pre-resolved emit events (state_transition is now on
-            // the ledger, so these land immediately after it).
-            let mut emitted_events: Vec<String> = Vec::with_capacity(pending_emits.len());
-            for (event_type, event_fields) in pending_emits {
-                self.ledger
-                    .append(
-                        &event_type,
-                        event_fields,
-                        &crate::provenance::Recorder::Emit(command.to_string()),
-                    )
-                    .map_err(StateError::Ledger)?;
-                emitted_events.push(event_type);
-            }
-
-            return Ok(TransitionOutcome {
-                from: from_state,
-                to: self.current_state.clone(),
-                attestations,
-                emitted_events,
+            return Ok(PreparedTransition {
+                command: command.to_string(),
+                from: self.current_state.clone(),
+                to: candidate.to.clone(),
+                // Collect attestation from passing gates.
+                attestations: results.into_iter().filter_map(|r| r.attestation).collect(),
+                emits: pending_emits,
             });
         }
 
@@ -381,6 +362,94 @@ impl StateMachine {
                 candidates: failures,
             })
         }
+    }
+
+    // [commit-transition]
+    /// Append what a prepared transition records: its `state_transition`, a
+    /// `gate_attestation` per attested gate, then its emits. Runs no command.
+    pub fn commit_transition(
+        &mut self,
+        prepared: PreparedTransition,
+    ) -> Result<TransitionOutcome, StateError> {
+        let PreparedTransition {
+            command,
+            from,
+            to,
+            attestations,
+            emits,
+        } = prepared;
+
+        // Record the transition event.
+        let mut fields = BTreeMap::new();
+        fields.insert("from".to_string(), from.clone());
+        fields.insert("to".to_string(), to.clone());
+        fields.insert("command".to_string(), command.clone());
+
+        self.ledger
+            .append(
+                "state_transition",
+                fields,
+                &crate::provenance::Recorder::Transition(command.clone()),
+            )
+            .map_err(StateError::Ledger)?;
+
+        self.current_state = to;
+
+        // Emit gate_attestation events for each attestation.
+        for att in &attestations {
+            let mut att_fields = BTreeMap::new();
+            att_fields.insert("gate_type".to_string(), att.gate_type.clone());
+            att_fields.insert("command".to_string(), att.command.clone());
+            att_fields.insert("exit_code".to_string(), att.exit_code.to_string());
+            att_fields.insert("stdout_hash".to_string(), att.stdout_hash.clone());
+            att_fields.insert("wall_time_ms".to_string(), att.wall_time_ms.to_string());
+            att_fields.insert("executed_at".to_string(), att.executed_at.clone());
+            // Where it ran. A gate may be anchored at the caller rather
+            // than the project (#46), so the exit code alone no longer
+            // identifies which tree the claim is about.
+            att_fields.insert("working_dir".to_string(), att.working_dir.clone());
+            att_fields.insert("transition_command".to_string(), command.clone());
+            self.ledger
+                .append(
+                    "gate_attestation",
+                    att_fields,
+                    &crate::provenance::Recorder::Transition(command.clone()),
+                )
+                .map_err(StateError::Ledger)?;
+        }
+
+        // Append the pre-resolved emit events (state_transition is now on
+        // the ledger, so these land immediately after it).
+        let mut emitted_events: Vec<String> = Vec::with_capacity(emits.len());
+        for (event_type, event_fields) in emits {
+            self.ledger
+                .append(
+                    &event_type,
+                    event_fields,
+                    &crate::provenance::Recorder::Emit(command.clone()),
+                )
+                .map_err(StateError::Ledger)?;
+            emitted_events.push(event_type);
+        }
+
+        Ok(TransitionOutcome {
+            from,
+            to: self.current_state.clone(),
+            attestations,
+            emitted_events,
+        })
+    }
+
+    // [reload-ledger]
+    /// Re-read the ledger from disk and re-derive the current state from it.
+    ///
+    /// For a caller about to render after other processes may have appended:
+    /// a render built from an older copy would seal a view of a ledger that is
+    /// no longer the one on disk.
+    pub fn reload_ledger(&mut self) -> Result<(), StateError> {
+        self.ledger.reload().map_err(StateError::Ledger)?;
+        self.current_state = Self::derive_state_from_ledger(&self.config, &self.ledger);
+        Ok(())
     }
 
     // -----------------------------------------------------------------------

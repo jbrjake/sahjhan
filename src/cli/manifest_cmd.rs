@@ -3,15 +3,15 @@
 // Manifest verification, listing, and restore commands.
 //
 // ## Index
-// - [cmd-manifest-verify] cmd_manifest_verify() — check managed files against manifest
+// - [cmd-manifest-verify] cmd_manifest_verify() — check managed files against manifest, under a shared lock
 // - [cmd-manifest-list] cmd_manifest_list() — show managed files and hashes
 // - [cmd-manifest-restore] cmd_manifest_restore() — restore file from last known-good state
 
 use crate::manifest::verify as manifest_verify;
 
 use super::commands::{
-    load_config, load_manifest, resolve_config_dir, resolve_data_dir, resolve_project_root,
-    EXIT_INTEGRITY_ERROR, EXIT_SUCCESS, EXIT_USAGE_ERROR,
+    load_config, load_manifest, lock_manifest_shared, resolve_config_dir, resolve_data_dir,
+    resolve_project_root, EXIT_INTEGRITY_ERROR, EXIT_SUCCESS, EXIT_USAGE_ERROR,
 };
 use super::output::{CommandOutput, CommandResult, ManifestVerifyData, MismatchData};
 
@@ -35,8 +35,13 @@ pub fn cmd_manifest_verify(config_dir: &str) -> Box<dyn CommandOutput> {
     };
 
     let data_dir = resolve_data_dir(&config.paths.data_dir);
-    let manifest = match load_manifest(&data_dir) {
-        Ok(m) => m,
+    // Shared, and held across the load and every hash: no writer is between a
+    // render and its seal while it is, so the manifest and the files it seals
+    // are read as one state (holtz#ho-0mvwg8q).
+    let loaded = lock_manifest_shared(&data_dir)
+        .and_then(|lock| load_manifest(&lock).map(|manifest| (lock, manifest)));
+    let (lock, manifest) = match loaded {
+        Ok(held) => held,
         Err((code, msg)) => {
             return Box::new(CommandResult::<ManifestVerifyData>::err(
                 "manifest_verify",
@@ -53,6 +58,7 @@ pub fn cmd_manifest_verify(config_dir: &str) -> Box<dyn CommandOutput> {
     // (holtz #85).
     let root = resolve_project_root(&config.paths.data_dir);
     let result = manifest_verify::verify(&manifest, &root);
+    drop(lock);
 
     let to_data = |m: &manifest_verify::Mismatch| MismatchData {
         path: m.path.clone(),
@@ -96,7 +102,7 @@ pub fn cmd_manifest_list(config_dir: &str) -> i32 {
     };
 
     let data_dir = resolve_data_dir(&config.paths.data_dir);
-    let manifest = match load_manifest(&data_dir) {
+    let manifest = match lock_manifest_shared(&data_dir).and_then(|lock| load_manifest(&lock)) {
         Ok(m) => m,
         Err((code, msg)) => {
             eprintln!("{}", msg);
@@ -135,7 +141,7 @@ pub fn cmd_manifest_restore(config_dir: &str, path: &str) -> i32 {
     };
 
     let data_dir = resolve_data_dir(&config.paths.data_dir);
-    let manifest = match load_manifest(&data_dir) {
+    let manifest = match lock_manifest_shared(&data_dir).and_then(|lock| load_manifest(&lock)) {
         Ok(m) => m,
         Err((code, msg)) => {
             eprintln!("{}", msg);

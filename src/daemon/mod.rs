@@ -54,8 +54,8 @@ use self::auth::TrustedCallersManifest;
 use self::protocol::{Request, Response};
 use self::vault::Vault;
 use crate::cli::commands::{
-    load_manifest, open_targeted_ledger, resolve_data_dir, resolve_ledger_from_targeting,
-    LedgerTargeting, EXIT_SUCCESS,
+    load_manifest, lock_manifest_shared, open_targeted_ledger, resolve_data_dir,
+    resolve_ledger_from_targeting, LedgerTargeting, EXIT_SUCCESS,
 };
 use crate::cli::transition::{record_and_render, validate_event_fields};
 use crate::config::{ProtocolConfig, VaultAccess};
@@ -874,17 +874,19 @@ fn handle_record_event(
     };
 
     let data_dir = resolve_data_dir(&config.paths.data_dir);
-    let mut manifest = match load_manifest(&data_dir) {
-        Ok(m) => m,
-        Err((_, msg)) => return Response::err("manifest_error", &msg),
-    };
+    // Only so an unloadable manifest still answers `manifest_error`; the read
+    // lock is released at the end of this statement.
+    if let Err((_, msg)) = lock_manifest_shared(&data_dir).and_then(|lock| load_manifest(&lock)) {
+        return Response::err("manifest_error", &msg);
+    }
 
+    // Takes the manifest lock itself, and holds it through the append, the
+    // seal and the renders, like every other writer (holtz#ho-0mvwg8q).
     let mut machine = StateMachine::new(&config, ledger);
     let code = record_and_render(
         &config,
         config_dir,
         &mut machine,
-        &mut manifest,
         &data_dir,
         event_type,
         fields,

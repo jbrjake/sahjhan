@@ -10,6 +10,7 @@
 // - [manifest-save]          Manifest::save()       — save to JSON
 // - [manifest-track]         Manifest::track()      — record file hash
 // - [compute-sha256]         compute_file_sha256()  — hash a file
+// - [write-atomic]           write_atomic()         — replace a file by rename, never truncate it in place
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;
@@ -107,7 +108,7 @@ impl Manifest {
 
         let json = serde_json::to_string_pretty(self)
             .map_err(|e| format!("cannot serialize manifest: {}", e))?;
-        fs::write(path, json)
+        write_atomic(path, json.as_bytes())
             .map_err(|e| format!("cannot write manifest to {}: {}", path.display(), e))?;
         Ok(())
     }
@@ -204,6 +205,33 @@ pub fn compute_file_sha256(path: &Path) -> Result<String, String> {
     hasher.update(&content);
     let result = hasher.finalize();
     Ok(hex_encode(&result))
+}
+
+// [write-atomic]
+/// Replace `path` with `contents` by writing a hidden sibling and renaming it
+/// over the original.
+///
+/// A reader, or a process that dies mid-write, sees the old contents or the
+/// new — never a truncated file. A truncated `manifest.json` fails every
+/// command that loads it, and a truncated render reads as tampering at the
+/// next verify.
+pub fn write_atomic(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    let name = path.file_name().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{} names no file", path.display()),
+        )
+    })?;
+    let tmp = path.with_file_name(format!(
+        ".{}.{}.tmp",
+        name.to_string_lossy(),
+        std::process::id()
+    ));
+    let written = fs::write(&tmp, contents).and_then(|()| fs::rename(&tmp, path));
+    if written.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    written
 }
 
 /// Hex-encode a byte slice.

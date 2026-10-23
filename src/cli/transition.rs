@@ -4,7 +4,8 @@
 //
 // ## Index
 // - [render-after-transitions] render_after_transitions() — on_transition + on_event renders; shared with batch
-// - [cmd-transition] cmd_transition() — execute a named transition (runs gates); handles GateBlocked + AllCandidatesBlocked
+// - [cmd-transition] cmd_transition() — execute a named transition: gates outside the manifest lock, appends + renders inside it
+// - report_transition_error() — print a blocked or failed transition; GateBlocked + AllCandidatesBlocked
 // - [cmd-gate-check] cmd_gate_check() — dry-run gate evaluation; multi-candidate aware
 // - [record-and-render] record_and_render() — shared event recording + render triggering logic
 // - validate_event_fields() — validate event fields against an EventConfig (shared by cmd_event + cmd_authed_event)
@@ -14,13 +15,14 @@ use std::collections::HashMap;
 
 use crate::config::events::EventConfig;
 use crate::gates::evaluator::{evaluate_gates, GateContext};
+use crate::manifest::lock::ManifestLock;
 use crate::render::engine::RenderEngine;
 use crate::state::machine::StateMachine;
 
 use super::commands::{
-    build_state_params, guard_event_only, load_config, load_manifest, open_targeted_ledger,
-    resolve_config_dir, resolve_data_dir, resolve_project_root, save_manifest,
-    track_ledger_in_manifest, write_status_cache, LedgerTargeting, EXIT_GATE_FAILED,
+    build_state_params, guard_event_only, load_config, load_manifest, lock_manifest,
+    open_targeted_ledger, resolve_config_dir, resolve_data_dir, resolve_project_root,
+    save_manifest, track_ledger_in_manifest, write_status_cache, LedgerTargeting, EXIT_GATE_FAILED,
     EXIT_INTEGRITY_ERROR, EXIT_SUCCESS, EXIT_USAGE_ERROR,
 };
 use super::output::{CandidateData, CommandOutput, CommandResult, GateCheckData, GateResultData};
@@ -39,6 +41,9 @@ use super::output::{CandidateData, CommandOutput, CommandResult, GateCheckData, 
 ///
 /// `emitted_events` is a list rather than one transition's outcome so a batch
 /// can render once for a run of transitions instead of once per item.
+///
+/// `lock` is held by the caller across this call and the appends `ledger`
+/// reflects, so what is rendered is the ledger on disk.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn render_after_transitions(
     config: &crate::config::ProtocolConfig,
@@ -46,7 +51,7 @@ pub(super) fn render_after_transitions(
     targeting: &LedgerTargeting,
     ledger: &crate::ledger::chain::Ledger,
     manifest: &mut crate::manifest::tracker::Manifest,
-    data_dir: &std::path::Path,
+    lock: &ManifestLock,
     emitted_events: &[String],
 ) -> usize {
     if config.renders.is_empty() {
@@ -78,7 +83,7 @@ pub(super) fn render_after_transitions(
             Ok(rendered) => {
                 render_count += rendered.len();
                 if !rendered.is_empty() {
-                    let _ = save_manifest(manifest, data_dir);
+                    let _ = save_manifest(manifest, lock);
                 }
             }
             Err(e) => {
@@ -126,7 +131,23 @@ pub fn cmd_transition(
     }
 
     let data_dir = resolve_data_dir(&config.paths.data_dir);
-    let mut manifest = match load_manifest(&data_dir) {
+    let mut machine = StateMachine::new(&config, ledger);
+
+    // Gates and emit commands run before the lock is taken: a gate command
+    // may run `sahjhan event`, which takes it.
+    let prepared = match machine.prepare_transition(name, args) {
+        Ok(p) => p,
+        Err(e) => return report_transition_error(e),
+    };
+
+    let lock = match lock_manifest(&data_dir) {
+        Ok(l) => l,
+        Err((code, msg)) => {
+            eprintln!("{}", msg);
+            return code;
+        }
+    };
+    let mut manifest = match load_manifest(&lock) {
         Ok(m) => m,
         Err((code, msg)) => {
             eprintln!("{}", msg);
@@ -134,62 +155,68 @@ pub fn cmd_transition(
         }
     };
 
-    let mut machine = StateMachine::new(&config, ledger);
+    let outcome = match machine.commit_transition(prepared) {
+        Ok(o) => o,
+        Err(e) => return report_transition_error(e),
+    };
 
-    match machine.transition(name, args) {
-        Ok(outcome) => {
-            // Update manifest with ledger
-            if let Err((code, msg)) =
-                track_ledger_in_manifest(&mut manifest, &data_dir, machine.ledger(), &config)
-            {
-                eprintln!("{}", msg);
-                return code;
-            }
-            if let Err((code, msg)) = save_manifest(&mut manifest, &data_dir) {
-                eprintln!("{}", msg);
-                return code;
-            }
+    // Update manifest with ledger
+    if let Err((code, msg)) =
+        track_ledger_in_manifest(&mut manifest, &data_dir, machine.ledger(), &config)
+    {
+        eprintln!("{}", msg);
+        return code;
+    }
+    if let Err((code, msg)) = save_manifest(&mut manifest, &lock) {
+        eprintln!("{}", msg);
+        return code;
+    }
 
-            let render_count = render_after_transitions(
-                &config,
-                &config_path,
-                targeting,
-                machine.ledger(),
-                &mut manifest,
-                &data_dir,
-                &outcome.emitted_events,
-            );
+    let render_count = render_after_transitions(
+        &config,
+        &config_path,
+        targeting,
+        machine.ledger(),
+        &mut manifest,
+        &lock,
+        &outcome.emitted_events,
+    );
+    drop(lock);
 
-            // Update status cache with new state
-            write_status_cache(&data_dir, &config, &config_path, &outcome.to);
+    // Update status cache with new state
+    write_status_cache(&data_dir, &config, &config_path, &outcome.to);
 
-            if render_count > 0 {
-                println!(
-                    "{} \u{2192} {} ({} rendered)",
-                    outcome.from, outcome.to, render_count
-                );
-            } else {
-                println!("{} \u{2192} {}", outcome.from, outcome.to);
-            }
+    if render_count > 0 {
+        println!(
+            "{} \u{2192} {} ({} rendered)",
+            outcome.from, outcome.to, render_count
+        );
+    } else {
+        println!("{} \u{2192} {}", outcome.from, outcome.to);
+    }
 
-            EXIT_SUCCESS
-        }
-        Err(crate::state::machine::StateError::GateBlocked {
+    EXIT_SUCCESS
+}
+
+/// Print why a transition did not happen, and return its exit code.
+fn report_transition_error(e: crate::state::machine::StateError) -> i32 {
+    match e {
+        crate::state::machine::StateError::GateBlocked {
             gate_type,
             reason,
             intent,
-        }) => {
+        } => {
             eprintln!(
                 "\u{2717} {}",
                 crate::cli::output::gate_failure_line(&gate_type, &reason, intent.as_deref())
             );
             EXIT_GATE_FAILED
         }
-        Err(crate::state::machine::StateError::AllCandidatesBlocked {
+        crate::state::machine::StateError::AllCandidatesBlocked {
             command: _,
             state: _,
             candidates,
-        }) => {
+        } => {
             for c in &candidates {
                 eprintln!(
                     "\u{2717} \u{2192} {} blocked by {}",
@@ -203,11 +230,11 @@ pub fn cmd_transition(
             }
             EXIT_GATE_FAILED
         }
-        Err(crate::state::machine::StateError::NoTransition { command, state }) => {
+        crate::state::machine::StateError::NoTransition { command, state } => {
             eprintln!("error: no transition '{}' from state '{}'", command, state);
             EXIT_USAGE_ERROR
         }
-        Err(e) => {
+        e => {
             eprintln!("error: transition failed: {}", e);
             EXIT_INTEGRITY_ERROR
         }
@@ -408,18 +435,38 @@ pub fn cmd_gate_check(
 /// Used by `cmd_event`, `cmd_authed_event`, and the daemon's `record_event`
 /// after their respective validations. `recorder` names which of those this
 /// call is; it reaches the ledger entry's `recorded_by` (#50).
+///
+/// The manifest is loaded here, under the lock, and the lock is held through
+/// the append, the seal, and every render the event triggers — so no verify
+/// reads between a render and its seal, and no other writer's seal is saved
+/// over with hashes loaded before it (holtz#ho-0mvwg8q).
 #[allow(clippy::too_many_arguments)]
 pub fn record_and_render(
     config: &crate::config::ProtocolConfig,
     config_path: &std::path::Path,
     machine: &mut StateMachine,
-    manifest: &mut crate::manifest::tracker::Manifest,
     data_dir: &std::path::Path,
     event_type: &str,
     fields: HashMap<String, String>,
     targeting: &LedgerTargeting,
     recorder: &crate::provenance::Recorder,
 ) -> i32 {
+    let lock = match lock_manifest(data_dir) {
+        Ok(l) => l,
+        Err((code, msg)) => {
+            eprintln!("{}", msg);
+            return code;
+        }
+    };
+    let mut manifest = match load_manifest(&lock) {
+        Ok(m) => m,
+        Err((code, msg)) => {
+            eprintln!("{}", msg);
+            return code;
+        }
+    };
+    let manifest = &mut manifest;
+
     match machine.record_event(event_type, fields, recorder) {
         Ok(()) => {
             if let Err((code, msg)) =
@@ -428,7 +475,7 @@ pub fn record_and_render(
                 eprintln!("{}", msg);
                 return code;
             }
-            if let Err((code, msg)) = save_manifest(manifest, data_dir) {
+            if let Err((code, msg)) = save_manifest(manifest, &lock) {
                 eprintln!("{}", msg);
                 return code;
             }
@@ -460,7 +507,7 @@ pub fn record_and_render(
                         Ok(rendered) => {
                             render_count = rendered.len();
                             if !rendered.is_empty() {
-                                let _ = save_manifest(manifest, data_dir);
+                                let _ = save_manifest(manifest, &lock);
                             }
                         }
                         Err(e) => {
@@ -469,6 +516,7 @@ pub fn record_and_render(
                     }
                 }
             }
+            drop(lock);
 
             if render_count > 0 {
                 println!("recorded: {} ({} rendered)", event_type, render_count);
@@ -582,13 +630,6 @@ pub fn cmd_event(
     }
 
     let data_dir = resolve_data_dir(&config.paths.data_dir);
-    let mut manifest = match load_manifest(&data_dir) {
-        Ok(m) => m,
-        Err((code, msg)) => {
-            eprintln!("{}", msg);
-            return code;
-        }
-    };
 
     // Parse --field key=value pairs
     let mut fields: HashMap<String, String> = HashMap::new();
@@ -615,7 +656,6 @@ pub fn cmd_event(
         &config,
         &config_path,
         &mut machine,
-        &mut manifest,
         &data_dir,
         event_type,
         fields,

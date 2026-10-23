@@ -6,7 +6,7 @@ seq: 15
 docs:
   - CLAUDE.md#flow-config-integrity-verification
 verify: "all(lacks src/cli/ledger.rs /valid session key to update the seal\\./, run cargo test target=config_integrity_tests a_checkpoint_off_its_seal_offers_both_ways_past)"
-status: open
+status: done
 created: 2026-10-23T21:45Z
 ---
 `cmd_ledger_checkpoint` (`src/cli/ledger.rs:404`) hand-rolls its own seal
@@ -21,3 +21,8 @@ refusal, because the user asked to see the chain. Leave it as is.
 
 ## log
 - 2026-10-23T21:45Z created
+- 2026-10-23T22:04Z open→doing — claimed by claude (91a2d877-ce17-4ab5-9ccb-a31a561b6f73)
+- 2026-10-23T22:05Z doing→done — verify exit 0 @ c6cabcb+5
+
+## comments
+- 2026-10-23T22:05Z [claude (91a2d877-ce17-4ab5-9ccb-a31a561b6f73)] Done: fix + test in the commit before the store close, docs after it. The test was written first and failed on the missing 'restore the files' line. It also pins that a refused checkpoint appends nothing, and that restoring the files is enough to proceed.

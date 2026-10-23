@@ -34,6 +34,8 @@ struct Fixture {
     transitions: String,
     events: String,
     hooks: String,
+    renders: String,
+    files: Vec<(String, String)>,
     callers: Option<String>,
 }
 
@@ -46,6 +48,8 @@ impl Fixture {
             transitions: String::new(),
             events: String::new(),
             hooks: String::new(),
+            renders: String::new(),
+            files: Vec::new(),
             callers: None,
         }
     }
@@ -75,6 +79,18 @@ impl Fixture {
         self
     }
 
+    fn renders(mut self, toml: &str) -> Self {
+        self.renders.push_str(toml);
+        self
+    }
+
+    /// Any other file in the config dir, at `path` relative to it: a render
+    /// template, say.
+    fn file(mut self, path: &str, contents: &str) -> Self {
+        self.files.push((path.to_string(), contents.to_string()));
+        self
+    }
+
     /// The daemon's trusted-callers manifest. `None` (the default) is an
     /// *absent* file, which L8 reads as "caller auth was never configured".
     fn callers(mut self, toml: &str) -> Self {
@@ -93,6 +109,14 @@ impl Fixture {
         if !self.hooks.is_empty() {
             std::fs::write(p.join("hooks.toml"), &self.hooks).unwrap();
         }
+        if !self.renders.is_empty() {
+            std::fs::write(p.join("renders.toml"), &self.renders).unwrap();
+        }
+        for (path, contents) in &self.files {
+            let full = p.join(path);
+            std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+            std::fs::write(full, contents).unwrap();
+        }
         if let Some(ref callers) = self.callers {
             std::fs::write(p.join("trusted-callers.toml"), callers).unwrap();
         }
@@ -104,7 +128,7 @@ impl Fixture {
     }
 
     fn lint(&self) -> Vec<lint::LintFinding> {
-        lint::run(&self.load(), &LintOptions::default())
+        lint::run(&self.load(), self.dir.path(), &LintOptions::default())
     }
 }
 
@@ -607,6 +631,78 @@ fields = [
     );
 }
 
+#[test]
+fn test_l5_counts_a_template_where_eq_on_event_type_as_a_consumer() {
+    // The render names no `event_types`; its template selects the events
+    // itself, the shape #33 reported from holtz.
+    let f = simple(
+        "",
+        r#"
+[events.prediction]
+description = "read by the summary template"
+fields = []
+
+[events.prediction_outcome]
+description = "read by the summary template, single-quoted"
+fields = []
+
+[events.orphan]
+description = "named in the template only where nothing reads it"
+fields = []
+"#,
+    )
+    .renders(
+        r#"
+[[renders]]
+target = "SUMMARY.md"
+template = "templates/summary.md.tera"
+trigger = "on_transition"
+"#,
+    )
+    .file(
+        "templates/summary.md.tera",
+        r#"{% set predictions = events | where_eq(attribute="event_type", value="prediction") -%}
+{% for o in events | where_eq(attribute='event_type', value='prediction_outcome') %}{{ o.seq }}{% endfor %}
+{# "orphan" in a comment reads nothing #}
+Nor does "orphan" in output text.
+"#,
+    );
+    let findings = f.lint();
+    let l5 = findings_for(&findings, "L5");
+    assert_eq!(
+        l5.len(),
+        1,
+        "only the event the template never reads is dead: {:?}",
+        findings
+    );
+    assert!(l5[0].message.contains("'orphan'"), "{}", l5[0].message);
+}
+
+#[test]
+fn test_l5_skips_a_render_whose_template_is_missing() {
+    // `sahjhan validate` reports the missing file; lint reads nothing from it.
+    let f = simple(
+        "",
+        r#"
+[events.prediction]
+description = "would be read by a template that does not exist"
+fields = []
+"#,
+    )
+    .renders(
+        r#"
+[[renders]]
+target = "SUMMARY.md"
+template = "templates/absent.md.tera"
+trigger = "on_transition"
+"#,
+    );
+    let findings = f.lint();
+    let l5 = findings_for(&findings, "L5");
+    assert_eq!(l5.len(), 1, "{:?}", findings);
+    assert!(l5[0].message.contains("'prediction'"));
+}
+
 // ---------------------------------------------------------------------------
 // Selection and CLI
 // ---------------------------------------------------------------------------
@@ -624,6 +720,7 @@ fields = []
     let config = f.load();
     let findings = lint::run(
         &config,
+        f.dir.path(),
         &LintOptions {
             only: vec!["L4".to_string()],
         },
@@ -1804,7 +1901,7 @@ fn test_lint_demo_example_validates_and_lints_clean() {
     let (errors, _) = config.validate_deep(dir);
     assert!(errors.is_empty(), "example should validate: {:?}", errors);
 
-    let findings = lint::run(&config, &LintOptions::default());
+    let findings = lint::run(&config, dir, &LintOptions::default());
     assert!(
         findings.is_empty(),
         "the worked example must pass every check: {:?}",
@@ -1831,7 +1928,7 @@ fn test_lint_demo_example_rerouted_pause_opens_a_bypass() {
     std::fs::write(tmp.path().join("transitions.toml"), transitions).unwrap();
 
     let config = ProtocolConfig::load(tmp.path()).unwrap();
-    let findings = lint::run(&config, &LintOptions::default());
+    let findings = lint::run(&config, tmp.path(), &LintOptions::default());
     let l3 = findings_for(&findings, "L3");
     assert_eq!(l3.len(), 1, "expected one L3 finding: {:?}", findings);
     assert!(
@@ -2128,6 +2225,7 @@ fn test_l8_is_selectable_by_name() {
     );
     let findings = lint::run(
         &f.load(),
+        f.dir.path(),
         &LintOptions {
             only: vec!["L8".to_string()],
         },

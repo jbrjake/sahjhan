@@ -52,7 +52,7 @@ pub fn cmd_lint(config_dir: &str, only: &[String], strict: bool) -> Box<dyn Comm
     let opts = LintOptions {
         only: only.to_vec(),
     };
-    let findings = lint::run(&config, &opts);
+    let findings = lint::run(&config, &config_path, &opts);
 
     let error_count = findings
         .iter()

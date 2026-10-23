@@ -19,7 +19,7 @@
 // - LintFinding             — one defect: check id, severity, location, message, hint
 // - LintOptions             — which checks to run
 // - Analysis                — shared derived facts (graph, producers, consumers)
-// - [lint-run]              run()  — run every enabled check, sorted findings
+// - [lint-run]              run()  — run every enabled check over a config and the directory it loaded from, sorted findings
 
 pub mod checks;
 pub mod graph;
@@ -27,6 +27,7 @@ pub mod index;
 pub mod similarity;
 
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
 use serde::Serialize;
 
@@ -147,12 +148,14 @@ pub struct Analysis<'a> {
 }
 
 impl<'a> Analysis<'a> {
-    pub fn new(config: &'a ProtocolConfig) -> Self {
+    /// `config_dir` is the directory `config` was loaded from; render templates
+    /// resolve against it.
+    pub fn new(config: &'a ProtocolConfig, config_dir: &Path) -> Self {
         Analysis {
             config,
             graph: graph::Graph::build(config),
             producers: index::ProducerIndex::build(config),
-            consumed: index::consumed_events(config),
+            consumed: index::consumed_events(config, config_dir),
             unsatisfiable: HashMap::new(),
         }
     }
@@ -176,8 +179,8 @@ impl<'a> Analysis<'a> {
 /// Checks run in dependency order regardless of the selection — L4 needs L1's
 /// verdict on which transitions can never fire — and the selection is applied
 /// to the *findings* at the end.
-pub fn run(config: &ProtocolConfig, opts: &LintOptions) -> Vec<LintFinding> {
-    let mut analysis = Analysis::new(config);
+pub fn run(config: &ProtocolConfig, config_dir: &Path, opts: &LintOptions) -> Vec<LintFinding> {
+    let mut analysis = Analysis::new(config, config_dir);
     let mut findings = Vec::new();
 
     // L1 populates `analysis.unsatisfiable`, which L4 reads.

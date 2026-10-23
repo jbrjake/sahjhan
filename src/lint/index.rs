@@ -11,11 +11,13 @@
 // - [gate-event-refs]     gate_event_refs()        — recursive walk over a gate tree
 // - [consumed-events]     consumed_events()        — every event name any config surface reads
 // - [sql-event-mentions]  sql_event_mentions()     — declared event names quoted inside a SQL predicate
+// - [template-event-mentions] template_event_mentions() — declared event names quoted inside a render template's tags
 // - [producible-stamps]   producible_stamps()      — the provenance values some writer of an event can stamp
 // - ProvenanceFilter      — one comparison a predicate makes against `recorded_by`
 // - [provenance-filters]  provenance_filters()     — those comparisons, and whether each is an equality
 
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
 use crate::config::{GateConfig, ProtocolConfig};
 use crate::provenance::Recorder;
@@ -246,9 +248,11 @@ fn collect_refs(
 // [consumed-events]
 /// Every event name that some config surface reads.
 ///
-/// Used by L5 to tell dead vocabulary from a live declaration: gates, render
-/// triggers, hook checks, and hook auto_record targets all count.
-pub fn consumed_events(config: &ProtocolConfig) -> HashSet<String> {
+/// Used by L5 to tell dead vocabulary from a live declaration: gates, renders
+/// (their `event_types` and their templates), hook checks, and hook
+/// auto_record targets all count. `config_dir` is where render templates
+/// resolve, as they do for `RenderEngine`.
+pub fn consumed_events(config: &ProtocolConfig, config_dir: &Path) -> HashSet<String> {
     let mut consumed: HashSet<String> = HashSet::new();
 
     for t in &config.transitions {
@@ -289,6 +293,11 @@ pub fn consumed_events(config: &ProtocolConfig) -> HashSet<String> {
                 consumed.insert(t.clone());
             }
         }
+        // A template that cannot be read reads nothing; `sahjhan validate`
+        // reports a missing one.
+        if let Ok(template) = std::fs::read_to_string(config_dir.join(&render.template)) {
+            consumed.extend(template_event_mentions(&template, config));
+        }
     }
 
     // A named query is a predicate the protocol keeps around on purpose; the
@@ -314,6 +323,45 @@ pub fn sql_event_mentions(sql: &str, config: &ProtocolConfig) -> Vec<String> {
         if config.events.contains_key(&literal) && !found.contains(&literal) {
             found.push(literal);
         }
+    }
+    found
+}
+
+// [template-event-mentions]
+/// Declared event names appearing as quoted literals inside a render
+/// template's `{{ … }}` and `{% … %}` tags.
+///
+/// The template-side counterpart of [`sql_event_mentions`], and syntactic for
+/// the same reason. A render reads the ledger through its template, typically
+/// `events | where_eq(attribute="event_type", value="X")`, so a render whose
+/// `event_types` never names `X` still consumes it (#33). Text outside the
+/// tags is output and a `{# … #}` comment is skipped; neither reads anything.
+pub fn template_event_mentions(template: &str, config: &ProtocolConfig) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut rest = template;
+    while let Some(open) = rest.find('{') {
+        let after = &rest[open + 1..];
+        let close = match after.chars().next() {
+            Some('{') => "}}",
+            Some('%') => "%}",
+            Some('#') => "#}",
+            _ => {
+                rest = after;
+                continue;
+            }
+        };
+        let body = &after[1..];
+        let Some(end) = body.find(close) else {
+            break;
+        };
+        if close != "#}" {
+            for literal in quoted_literals(&body[..end]) {
+                if config.events.contains_key(&literal) && !found.contains(&literal) {
+                    found.push(literal);
+                }
+            }
+        }
+        rest = &body[end + close.len()..];
     }
     found
 }

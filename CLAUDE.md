@@ -432,7 +432,7 @@ current directory. Reach for this module before writing
 | Alias resolution | `cli/aliases.rs` | `[resolve-alias]`, `[expand-alias]` | Rewrite CLI args via protocol aliases; keys may name several words (`"defer low"`), widest key wins, a flag ends the key |
 | JSON output types | `cli/output.rs` | `CommandOutput`, `CommandResult<T>`, data structs | Structured output with JSON envelope (`schema_version: 1`) |
 | Gate failure line | `cli/output.rs` | `[gate-failure-line]` | `<type>: <reason> — <intent>` for a blocked gate; the intent stays on the headline so a command gate's attached output tail follows it rather than swallowing it. Used by `transition`, `batch`, `status`, `gate check` |
-| Shared helpers | `cli/commands.rs` | (see file index) | Exit codes, ledger targeting, config loading, active-ledger marker, `[compute-registry-path]`, `[status-cache-path]`, `[write-status-cache]`, `[seal-refusal]` (a config off its seal: the refusal both ledger openers return, naming `reseal` or restoring the files — `init` and `reset` both refuse there) |
+| Shared helpers | `cli/commands.rs` | (see file index) | Exit codes, ledger targeting, config loading, active-ledger marker, `[compute-registry-path]`, `[status-cache-path]`, `[write-status-cache]`, `[seal-refusal]` (a config off its seal: the refusal both ledger openers and `ledger checkpoint` return, naming `reseal` or restoring the files — `init` and `reset` both refuse there) |
 | Path anchoring | `cli/commands.rs` | `[resolve-data-dir]`, `[resolve-project-root]` | Resolve `data_dir` and the project root; both delegate to `paths.rs` so they cannot drift |
 | Manifest under lock | `cli/commands.rs` | `[lock-manifest]`, `[lock-manifest-shared]`, `[load-manifest]`, `[save-manifest]` | Take the exclusive (writer) or shared (reader) lock; load the manifest of the dir a held lock names; save it, which only an exclusive holder can. See Flow: Manifest Seal |
 | Lint | `cli/lint.rs` | `[cmd-lint]` | Static integrity analysis; `--only <CHECK>`, `--strict`; exit 3 on errors |
@@ -967,7 +967,7 @@ cli/init.rs [cmd-init]
   → config/mod.rs compute_config_seals()      ← SHA-256 of all eight sealed config files (incl. trusted-callers.toml, vault.toml)
   → ledger/chain.rs init_with_seals()          ← seals stored in genesis entry fields
 
-cli/commands.rs [open-ledger] or [open-targeted]
+cli/commands.rs [open-ledger] or [open-targeted], or cli/ledger.rs [cmd-ledger-checkpoint]
   → ledger/chain.rs Ledger::open()             ← parse and verify hash chain
   → ledger/chain.rs [verify-config-seal]
     → ledger/chain.rs [find-effective-seal]     ← scan for config_reseal, fall back to genesis
@@ -1047,7 +1047,7 @@ field Claude Code shows the user — with no `decision` beside it.
 | `tests/template_tests.rs` | Template-based ledger creation via cmd_ledger_create |
 | `tests/auth_tests.rs` | Session key generation, restricted events, HMAC auth |
 | `tests/mermaid_tests.rs` | Mermaid stateDiagram-v2 output, hyphen sanitization, gate labels, ASCII tree, cycle detection |
-| `tests/config_integrity_tests.rs` | Config sealing, tamper detection, reseal (and `manifest verify` clean after it, because the reseal seals the ledger it grows), backward compat; the tamper refusal offering only what recovers — `reseal`, or the files restored, which the test does — and `reset` with a valid proof refused by the same check (`#[ignore]`, needs a live daemon) |
+| `tests/config_integrity_tests.rs` | Config sealing, tamper detection, reseal (and `manifest verify` clean after it, because the reseal seals the ledger it grows), backward compat; the tamper refusal offering only what recovers — `reseal`, or the files restored, which the test does — the same refusal from `ledger checkpoint`, appending nothing, and `reset` with a valid proof refused by the same check (`#[ignore]`, needs a live daemon) |
 | `tests/render_filter_tests.rs` | Custom Tera filters (where_eq, unique_by) |
 | `tests/json_output_tests.rs` | JSON envelope serialization, per-command data structs, CLI --json integration |
 | `tests/horizons1_tests.rs` | HORIZONS-1 mission protocol: status, transitions, gates, sets with --json |

@@ -8,6 +8,7 @@ docs:
 verify: "all(contains Cargo.toml /\\[profile\\.dev\\]/, exists .cargo/config.toml, exists tests/sahjhan/main.rs, absent tests/gate_tests.rs)"
 status: open
 created: 2026-10-23T20:24Z
+relates: [sj-tz2yren]
 ---
 Found while working sj-1zq2xr5 (2026-10-23): sahjhan has none of the four
 items `portfolio/CLAUDE.md` requires of every Rust workspace. No
@@ -26,3 +27,6 @@ CLAUDE.md's Test Files table and its `cargo test --test` lines follow.
 
 ## log
 - 2026-10-23T20:24Z created
+
+## comments
+- 2026-10-23T20:29Z [claude (458e1a62-9f03-498d-ab4d-d00dde1c6d95)] Do this after sj-tz2yren is ruled on. The scaffold folds every test file into one target, which rewrites each target= in the store's open verifies, sj-tz2yren's among them. Also: with -D warnings in .cargo/config.toml rustflags, the linker's 'warning: linker stderr: ld: __eh_frame section too large' (the linker_messages lint, warn by default) may turn into a build error. clippy never links, so it passes today and proves nothing about this. Check it in the same pass.

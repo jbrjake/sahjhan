@@ -221,7 +221,9 @@ fn describe(out: &Output) -> String {
 /// A project shaped like holtz's: `finding` re-renders three managed files,
 /// and `ping` — holtz's per-tool-call courier events — renders nothing. The
 /// `begin` transition's gate records a `ping` itself, and a PostToolUse hook
-/// auto-records one: the two other ways an append reaches the ledger.
+/// auto-records one: the two other ways an append reaches the ledger. The
+/// `race` transition's gate takes `begin` itself, so the machine leaves the
+/// state `race` is being checked in while `race` is being checked.
 fn render_project() -> tempfile::TempDir {
     let dir = tempdir().unwrap();
     let cfg = dir.path().join("enforcement");
@@ -243,14 +245,17 @@ render_dir = "output"
     write(
         "states.toml",
         "[states.idle]\nlabel = \"Idle\"\ninitial = true\n\n\
-         [states.working]\nlabel = \"Working\"\n",
+         [states.working]\nlabel = \"Working\"\n\n\
+         [states.done]\nlabel = \"Done\"\n",
     );
     write(
         "transitions.toml",
         &format!(
             "[[transitions]]\nfrom = \"idle\"\nto = \"working\"\ncommand = \"begin\"\n\
-             gates = [{{ type = \"command_succeeds\", cmd = \"'{}' --config-dir enforcement event ping\" }}]\n",
-            env!("CARGO_BIN_EXE_sahjhan")
+             gates = [{{ type = \"command_succeeds\", cmd = \"'{bin}' --config-dir enforcement event ping\" }}]\n\n\
+             [[transitions]]\nfrom = \"idle\"\nto = \"done\"\ncommand = \"race\"\n\
+             gates = [{{ type = \"command_succeeds\", cmd = \"'{bin}' --config-dir enforcement transition begin\" }}]\n",
+            bin = env!("CARGO_BIN_EXE_sahjhan")
         ),
     );
     write(
@@ -443,6 +448,41 @@ fn test_transition_gate_that_records_an_event_does_not_wait_on_its_parent() {
         ["genesis", "ping", "state_transition", "gate_attestation"],
         "{:?}",
         types
+    );
+
+    let out = sahjhan(root, &["manifest", "verify"]);
+    assert!(out.status.success(), "verify: {}", describe(&out));
+}
+
+/// A transition's gates are checked in one state and its record appended
+/// later. When the machine moves in between — here `race`'s own gate takes
+/// `begin` — the commit must refuse rather than record `from = idle` for a
+/// machine that is in `working`, and move it to a target chosen from a state
+/// it has left.
+#[test]
+fn test_transition_refuses_when_its_gate_moved_the_state() {
+    let project = render_project();
+    let root = project.path();
+
+    let out = sahjhan(root, &["transition", "race"]);
+    assert_eq!(out.status.code(), Some(1), "race: {}", describe(&out));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("'idle'") && stderr.contains("'working'"),
+        "the refusal names both states: {}",
+        stderr
+    );
+
+    let ledger = Ledger::open(&root.join("output/.sahjhan/ledger.jsonl")).unwrap();
+    let moves: Vec<(String, String)> = ledger
+        .events_of_type("state_transition")
+        .iter()
+        .map(|e| (e.fields["from"].clone(), e.fields["to"].clone()))
+        .collect();
+    assert_eq!(
+        moves,
+        [("idle".to_string(), "working".to_string())],
+        "only the gate's own transition is recorded"
     );
 
     let out = sahjhan(root, &["manifest", "verify"]);

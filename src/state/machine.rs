@@ -3,15 +3,15 @@
 // Core state machine: derives state from ledger, executes transitions with gate checks.
 //
 // ## Index
-// - StateError               — NoTransition, GateBlocked, AllCandidatesBlocked, Ledger, Serialization, UnknownSet
-//                              (blocked variants carry the gate's intent for CLI display)
+// - StateError               — NoTransition, GateBlocked, AllCandidatesBlocked, Ledger, Serialization, UnknownSet,
+//                              EmitFailed, StateMoved (blocked variants carry the gate's intent for CLI display)
 // - BlockedCandidate         — per-candidate failure detail (target, gate_type, reason, intent)
 // - TransitionOutcome        — result of a successful transition (from, to, attestations)
 // - PreparedTransition       — a candidate whose gates passed and emits resolved, nothing appended yet
 // - StateMachine             — owns config + ledger, executes transitions
 // - [transition]             transition()              — prepare + commit, for a caller that seals nothing
 // - [prepare-transition]     prepare_transition()      — pick the candidate, run its gates and emit commands; appends nothing
-// - [commit-transition]      commit_transition()       — append what a prepared transition records; runs no command
+// - [commit-transition]      commit_transition()       — append what a prepared transition records; runs no command; refuses if the state moved
 // - [reload-ledger]          reload_ledger()           — re-read the ledger and re-derive the current state
 // - [record-event]           record_event()            — append event to ledger
 // - [set-status]             set_status()              — completion status of a named set
@@ -67,6 +67,17 @@ pub enum StateError {
 
     #[error("transition emit of event '{event}' failed: {reason}")]
     EmitFailed { event: String, reason: String },
+
+    #[error(
+        "the state moved from '{expected}' to '{actual}' while '{command}' was being checked; nothing was recorded"
+    )]
+    StateMoved {
+        command: String,
+        /// The state the transition's gates were checked in.
+        expected: String,
+        /// The state the ledger is in now.
+        actual: String,
+    },
 }
 
 /// A transition candidate that was gate-blocked, kept for error reporting.
@@ -367,6 +378,13 @@ impl StateMachine {
     // [commit-transition]
     /// Append what a prepared transition records: its `state_transition`, a
     /// `gate_attestation` per attested gate, then its emits. Runs no command.
+    ///
+    /// Refuses with `StateMoved`, appending nothing, when the ledger's state
+    /// is no longer the one the gates were checked in — another actor, or a
+    /// gate command itself, moved the machine in between. Committing anyway
+    /// would record a `from` that is false, and take a target chosen and gated
+    /// from a state the machine has left. A CLI caller holds the manifest lock
+    /// here, so nothing moves it between this check and the append.
     pub fn commit_transition(
         &mut self,
         prepared: PreparedTransition,
@@ -378,6 +396,15 @@ impl StateMachine {
             attestations,
             emits,
         } = prepared;
+
+        self.reload_ledger()?;
+        if self.current_state != from {
+            return Err(StateError::StateMoved {
+                command,
+                expected: from,
+                actual: self.current_state.clone(),
+            });
+        }
 
         // Record the transition event.
         let mut fields = BTreeMap::new();

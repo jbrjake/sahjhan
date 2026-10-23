@@ -17,7 +17,8 @@ use crate::state::machine::{StateError, StateMachine, TransitionOutcome};
 use super::commands::{
     guard_event_only, load_config, load_manifest, lock_manifest, open_targeted_ledger,
     resolve_config_dir, resolve_data_dir, save_manifest, track_ledger_in_manifest,
-    write_status_cache, LedgerTargeting, EXIT_INTEGRITY_ERROR, EXIT_SUCCESS, EXIT_USAGE_ERROR,
+    write_status_cache, LedgerTargeting, EXIT_GATE_FAILED, EXIT_INTEGRITY_ERROR, EXIT_SUCCESS,
+    EXIT_USAGE_ERROR,
 };
 
 // [parse-selector]
@@ -290,6 +291,15 @@ pub fn cmd_batch(
                         })
                         .unwrap_or_else(|| "blocked".to_string());
                     refused.push((id.clone(), reason));
+                }
+                // Something else is moving this machine; every remaining item
+                // would be checked against a state that no longer holds.
+                Err(e @ StateError::StateMoved { .. }) => {
+                    eprintln!(
+                        "error: batch '{}': {} on '{}': {}",
+                        name, step.transition, id, e
+                    );
+                    return EXIT_GATE_FAILED;
                 }
                 Err(e) => {
                     eprintln!(

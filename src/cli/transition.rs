@@ -234,6 +234,12 @@ fn report_transition_error(e: crate::state::machine::StateError) -> i32 {
             eprintln!("error: no transition '{}' from state '{}'", command, state);
             EXIT_USAGE_ERROR
         }
+        // Blocked, not failed: it did not happen, and running it again checks
+        // its gates in the state the machine is actually in.
+        e @ crate::state::machine::StateError::StateMoved { .. } => {
+            eprintln!("\u{2717} {}", e);
+            EXIT_GATE_FAILED
+        }
         e => {
             eprintln!("error: transition failed: {}", e);
             EXIT_INTEGRITY_ERROR

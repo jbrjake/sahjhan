@@ -25,7 +25,7 @@ handoff: |
   - c4e4ebe: `ledger checkpoint` returns the shared seal refusal.
   - 798971c: an append seals the ledger it grew rather than always the
   default
-  one. Owner's ruling on sj-tz2yren.
+  one, by the owner's ruling.
   - 908506d: a since gate's default intent no longer says "last
   transition".
   - Their docs commits.
@@ -54,8 +54,9 @@ handoff: |
   Once tagged and published:
   1. Re-run the holtz-shaped stress against the *published* darwin binary.
   The
-  scenario is in sj-1zq2xr5's close comment.
-  2. Comment on sj-1zq2xr5 (the answer to holtz#ho-0mvwg8q) with the tag,
+  scenario is in the close comment of the manifest-lock task in
+  `relates:`.
+  2. Comment on that task (the answer to holtz#ho-0mvwg8q) with the tag,
   the
   commits, and that re-run as a before/after against 0.28.2. Also tell
   holtz
@@ -99,3 +100,4 @@ the act, and the store cannot check it.
 - 2026-10-23T20:29Z handoff by claude (458e1a62-9f03-498d-ab4d-d00dde1c6d95)
 - 2026-10-23T21:00Z handoff by claude (458e1a62-9f03-498d-ab4d-d00dde1c6d95)
 - 2026-10-23T22:22Z handoff by claude (91a2d877-ce17-4ab5-9ccb-a31a561b6f73)
+- 2026-10-23T22:23Z handoff by claude (91a2d877-ce17-4ab5-9ccb-a31a561b6f73)

@@ -1,7 +1,7 @@
 ---
 id: sj-ya5bywy
 title: Draft v0.28.3 release notes at the repo root for the owner's review
-status: open
+status: done
 category: release
 relates: [sj-dkvmtrp]
 verify: contains RELEASE-NOTES-v0.28.3.md /## Upgrading/
@@ -15,3 +15,8 @@ The owner asked, this session, for release notes drafted and left uncommitted fo
 
 ## log
 - 2026-10-23T20:53Z created
+- 2026-10-23T20:55Z open→doing — claimed by claude (458e1a62-9f03-498d-ab4d-d00dde1c6d95)
+- 2026-10-23T21:00Z doing→done — verify exit 0 @ 80de674+6
+
+## comments
+- 2026-10-23T21:00Z [claude (458e1a62-9f03-498d-ab4d-d00dde1c6d95)] Drafted RELEASE-NOTES-v0.28.3.md at the repo root, untracked, for the owner's review. Range v0.28.2..80de674: 49277b9, ba9f236, docs. Each transcript was run on the shipped 0.28.2 (holtz 0.170.16 plugin bin/) and a HEAD release build. The stress table is ranges over two or three runs of each, not one run.

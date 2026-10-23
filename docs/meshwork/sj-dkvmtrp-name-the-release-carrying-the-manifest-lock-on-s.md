@@ -36,17 +36,15 @@ handoff: |
   before/after against 0.28.2. holtz#ho-0mvwg8q's own verify wants
   `answered by sahjhan vX.Y.Z` in holtz's task file, so the version is the
   thing holtz is waiting on.
-  3. Release notes in the v0.25.0 style. Behavior a consumer can notice:
-  the 30s
-  lock timeout (exit 2, `Cannot lock manifest: timed out…`); verify
-  waits for
-  writers; renders and manifest.json replaced by rename (hidden
-  `.<name>.<pid>.tmp`, new inode, umask mode); a hook-eval auto-record
-  with an
-  unloadable manifest skipped with a warning; a transition whose manifest
-  will
-  not load fails after its gates; a transition whose state moved under it
-  refuses with exit 1. The answer's close comment has the full list.
+  3. Release notes: drafted as `RELEASE-NOTES-v0.28.3.md` at the repo
+  root,
+  untracked, under the owner's review. Every transcript and claim in it
+  was
+  driven through both the shipped 0.28.2 and a HEAD release build. Post
+  the
+  version the owner revises with `gh release edit v0.28.3 --notes-file`
+  after the workflow publishes. If the range grows before the tag, redraft
+  from `git log v0.28.2..<tag>`.
   4. Close this.
 ---
 49277b9 (the manifest lock, sj-1zq2xr5) is on main after v0.28.2 and rides in
@@ -66,3 +64,4 @@ the act, and the store cannot check it.
 - 2026-10-23T20:24Z created
 - 2026-10-23T20:29Z handoff by claude (458e1a62-9f03-498d-ab4d-d00dde1c6d95)
 - 2026-10-23T20:29Z handoff by claude (458e1a62-9f03-498d-ab4d-d00dde1c6d95)
+- 2026-10-23T21:00Z handoff by claude (458e1a62-9f03-498d-ab4d-d00dde1c6d95)

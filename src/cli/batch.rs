@@ -163,7 +163,7 @@ fn apply_item(
         Ok(o) => o,
         Err(e) => return Ok(Err(e)),
     };
-    track_ledger_in_manifest(&mut manifest, data_dir, machine.ledger(), config)?;
+    track_ledger_in_manifest(&mut manifest, machine.ledger(), config)?;
     save_manifest(&mut manifest, &lock)?;
     Ok(Ok(outcome))
 }

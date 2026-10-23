@@ -360,7 +360,7 @@ pub fn cmd_set_complete(
     ) {
         Ok(()) => {
             if let Err((code, msg)) =
-                track_ledger_in_manifest(&mut manifest, &data_dir, machine.ledger(), &config)
+                track_ledger_in_manifest(&mut manifest, machine.ledger(), &config)
             {
                 eprintln!("error: {}", msg);
                 return code;

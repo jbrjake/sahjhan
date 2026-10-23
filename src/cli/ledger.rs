@@ -426,9 +426,8 @@ pub fn cmd_ledger_checkpoint(
     match ledger.write_checkpoint(scope, snapshot) {
         Ok(cp) => {
             let seq = cp.seq;
-            if let Err((code, msg)) =
-                track_ledger_in_manifest(&mut manifest, &data_dir, &ledger, &config)
-                    .and_then(|()| save_manifest(&mut manifest, &lock))
+            if let Err((code, msg)) = track_ledger_in_manifest(&mut manifest, &ledger, &config)
+                .and_then(|()| save_manifest(&mut manifest, &lock))
             {
                 eprintln!("{}", msg);
                 return code;

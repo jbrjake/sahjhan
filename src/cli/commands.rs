@@ -17,7 +17,7 @@
 // - [lock-manifest-shared] lock_manifest_shared() — shared manifest lock, for a reader
 // - [load-manifest] load_manifest() — load the manifest the held lock covers
 // - [save-manifest] save_manifest() — save it, which only an exclusive holder can
-// - [track-ledger] track_ledger_in_manifest() — track ledger in manifest
+// - [track-ledger] track_ledger_in_manifest() — seal the ledger an append grew, when it is managed
 // - [resolve-ledger] resolve_ledger_from_targeting() — resolve ledger path from flags
 // - [open-targeted] open_targeted_ledger() — open ledger via targeting
 // - [registry-path] registry_path_from_config() — registry path from config
@@ -213,24 +213,39 @@ pub(crate) fn save_manifest(
 }
 
 // [track-ledger]
-/// Track the ledger file in the manifest under its project-root-relative key.
+/// Seal the ledger an append grew: `ledger`, whichever one it is — the
+/// default, a named or active one, or a file `--ledger-path` named.
 ///
-/// The key is derived from the project root — never the process cwd — so the
-/// ledger has one spelling regardless of which directory the command was run
-/// from (holtz #85).
+/// The hash chain catches a rewritten entry but not a ledger truncated by its
+/// last entries, which still chains. The manifest catches that, for every
+/// ledger it seals. A ledger outside every managed path is not the manifest's
+/// to seal and stays untracked; tracking it would fail every append with E13.
+///
+/// The key is spelled against the project root — never the process cwd — so
+/// the ledger has one spelling regardless of which directory the command was
+/// run from (holtz #85). A registered ledger's path is absolute; a
+/// `--ledger-path` is as typed, relative to the cwd and free to climb with
+/// `..`. `project_relative` spells either against the root and applies `..`
+/// lexically, since a key that keeps one is never managed.
 pub(crate) fn track_ledger_in_manifest(
     manifest: &mut Manifest,
-    data_dir: &Path,
     ledger: &Ledger,
     config: &ProtocolConfig,
 ) -> Result<(), (i32, String)> {
-    let lp = ledger_path(data_dir);
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let root = resolve_project_root(&config.paths.data_dir);
-    let rel = crate::paths::manifest_key(&lp, &root);
+    let key = crate::paths::project_relative(ledger.path(), &cwd, &root);
+    if key.is_absolute() {
+        return Ok(());
+    }
+    let key = key.to_string_lossy().replace('\\', "/");
+    if !crate::paths::is_managed(&key, &manifest.managed_paths) {
+        return Ok(());
+    }
     manifest
         .track(
-            &rel,
-            &lp,
+            &key,
+            &root.join(&key),
             "ledger_append",
             ledger.entries().last().unwrap().seq,
         )

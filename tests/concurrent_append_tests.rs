@@ -521,3 +521,114 @@ fn test_auto_record_and_checkpoint_seal_the_ledger() {
         describe(&out)
     );
 }
+
+/// A run ledger registered beside the data dir, the way holtz registers
+/// `runs/<n>/ledger.jsonl`, and appended to from a subdirectory by name and by
+/// a cwd-relative `--ledger-path` that climbs with `..`. Each append seals that
+/// ledger under its one project-root key, so `manifest verify` catches it
+/// truncated by its last entry, which the hash chain cannot.
+#[test]
+fn test_an_append_to_a_named_ledger_seals_that_ledger() {
+    let project = render_project();
+    let root = project.path();
+    let run = root.join("output/runs/1/ledger.jsonl");
+
+    let out = sahjhan(
+        root,
+        &[
+            "ledger",
+            "create",
+            "--name",
+            "run-1",
+            "--path",
+            "output/runs/1/ledger.jsonl",
+        ],
+    );
+    assert!(out.status.success(), "create: {}", describe(&out));
+
+    let sub = root.join("output");
+    for target in [
+        ["--ledger", "run-1"],
+        ["--ledger-path", "../output/runs/1/ledger.jsonl"],
+    ] {
+        let out = Command::new(env!("CARGO_BIN_EXE_sahjhan"))
+            .current_dir(&sub)
+            .args(["--config-dir", "../enforcement", "event", "ping"])
+            .args(target)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "event {:?} from a subdir: {}",
+            target,
+            describe(&out)
+        );
+    }
+
+    let manifest = std::fs::read_to_string(root.join("output/.sahjhan/manifest.json")).unwrap();
+    assert!(
+        manifest.contains("\"output/runs/1/ledger.jsonl\""),
+        "the run ledger is sealed under its project-root key: {}",
+        manifest
+    );
+    assert!(
+        !manifest.contains("\"runs/1/ledger.jsonl\"") && !manifest.contains(".."),
+        "and under no cwd-relative spelling: {}",
+        manifest
+    );
+    let out = sahjhan(root, &["manifest", "verify"]);
+    assert!(out.status.success(), "verify: {}", describe(&out));
+
+    // Drop the last entry. What is left still chains.
+    let content = std::fs::read_to_string(&run).unwrap();
+    let mut lines: Vec<&str> = content.lines().collect();
+    lines.pop();
+    std::fs::write(&run, format!("{}\n", lines.join("\n"))).unwrap();
+    let out = sahjhan(root, &["log", "verify", "--ledger", "run-1"]);
+    assert!(
+        out.status.success(),
+        "a truncated ledger still chains: {}",
+        describe(&out)
+    );
+
+    let out = sahjhan(root, &["manifest", "verify"]);
+    assert!(
+        !out.status.success(),
+        "the manifest catches the truncation: {}",
+        describe(&out)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("output/runs/1/ledger.jsonl")
+            || String::from_utf8_lossy(&out.stderr).contains("output/runs/1/ledger.jsonl"),
+        "and names the ledger: {}",
+        describe(&out)
+    );
+}
+
+/// A ledger outside every managed path is not the manifest's to seal. An
+/// append to it succeeds and leaves it untracked, rather than failing E13.
+#[test]
+fn test_an_append_to_an_unmanaged_ledger_leaves_it_unsealed() {
+    let project = render_project();
+    let root = project.path();
+
+    let out = sahjhan(
+        root,
+        &[
+            "ledger",
+            "create",
+            "--name",
+            "scratch",
+            "--path",
+            "scratch/ledger.jsonl",
+        ],
+    );
+    assert!(out.status.success(), "create: {}", describe(&out));
+    let out = sahjhan(root, &["event", "ping", "--ledger", "scratch"]);
+    assert!(out.status.success(), "event: {}", describe(&out));
+
+    let manifest = std::fs::read_to_string(root.join("output/.sahjhan/manifest.json")).unwrap();
+    assert!(!manifest.contains("scratch"), "{}", manifest);
+    let out = sahjhan(root, &["manifest", "verify"]);
+    assert!(out.status.success(), "verify: {}", describe(&out));
+}

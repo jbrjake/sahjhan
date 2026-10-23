@@ -186,7 +186,7 @@ pub fn cmd_reseal(config_dir: &str, proof: &str, targeting: &LedgerTargeting) ->
         return EXIT_INTEGRITY_ERROR;
     }
     let sealed = manifest.and_then(|mut m| {
-        track_ledger_in_manifest(&mut m, &data_dir, &ledger, &config)?;
+        track_ledger_in_manifest(&mut m, &ledger, &config)?;
         save_manifest(&mut m, &lock)
     });
     if let Err((_, msg)) = sealed {

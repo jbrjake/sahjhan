@@ -161,9 +161,7 @@ pub fn cmd_transition(
     };
 
     // Update manifest with ledger
-    if let Err((code, msg)) =
-        track_ledger_in_manifest(&mut manifest, &data_dir, machine.ledger(), &config)
-    {
+    if let Err((code, msg)) = track_ledger_in_manifest(&mut manifest, machine.ledger(), &config) {
         eprintln!("{}", msg);
         return code;
     }
@@ -475,9 +473,7 @@ pub fn record_and_render(
 
     match machine.record_event(event_type, fields, recorder) {
         Ok(()) => {
-            if let Err((code, msg)) =
-                track_ledger_in_manifest(manifest, data_dir, machine.ledger(), config)
-            {
+            if let Err((code, msg)) = track_ledger_in_manifest(manifest, machine.ledger(), config) {
                 eprintln!("{}", msg);
                 return code;
             }

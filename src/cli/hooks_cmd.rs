@@ -215,9 +215,8 @@ pub fn cmd_hook_eval(
                         eprintln!("Warning: auto-record failed: {}", e);
                     }
                 }
-                if let Err((_, msg)) =
-                    track_ledger_in_manifest(&mut manifest, &data_dir, &ledger, &config)
-                        .and_then(|()| save_manifest(&mut manifest, &lock))
+                if let Err((_, msg)) = track_ledger_in_manifest(&mut manifest, &ledger, &config)
+                    .and_then(|()| save_manifest(&mut manifest, &lock))
                 {
                     eprintln!("Warning: auto-record: {}", msg);
                 }

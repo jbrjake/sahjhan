@@ -1,7 +1,7 @@
 ---
 id: sj-9a7ret0
 title: Refuse to commit a transition whose state moved while its gates ran
-status: open
+status: done
 category: state/transitions
 discovered-from: sj-1zq2xr5
 relates: [sj-1zq2xr5]
@@ -37,3 +37,8 @@ binary; red first.
 
 ## log
 - 2026-10-23T20:23Z created
+- 2026-10-23T20:24Z open→doing — claimed by claude (458e1a62-9f03-498d-ab4d-d00dde1c6d95)
+- 2026-10-23T20:27Z doing→done — verify exit 0 @ 03a8f4a+4
+
+## comments
+- 2026-10-23T20:27Z [claude (458e1a62-9f03-498d-ab4d-d00dde1c6d95)] Fixed in ba9f236 (fix(state): refuse to commit a transition whose state moved while its gates ran), map in 03a8f4a. Not yet in a release; rides with sj-1zq2xr5 (see sj-dkvmtrp). Before: `transition race`, whose gate runs `transition begin`, exited 0 and left idle -> working then idle -> done, the second record false. After: exit 1, stderr '✗ the state moved from 'idle' to 'working' while 'race' was being checked; nothing was recorded', and the ledger holds only idle -> working. Test: concurrent_append_tests test_transition_refuses_when_its_gate_moved_the_state, red on the unfixed tree (race: exit Some(0)). Batch stops on it with exit 1. For consumers: a transition that used to commit from a stale state now refuses, and re-running it re-checks its gates in the current state.

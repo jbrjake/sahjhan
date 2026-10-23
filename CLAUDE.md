@@ -190,7 +190,7 @@ Config-only analysis: no ledger is opened, no gate command runs. Answers "is thi
 | Finding | `lint/mod.rs` | `LintFinding`, `Severity` | check id, severity, location, message, hint |
 | Options | `lint/mod.rs` | `LintOptions` | `--only` check selection |
 | Shared analysis | `lint/mod.rs` | `Analysis` | Graph + producer index + consumed set + `unsatisfiable` map (L1 writes, L4 reads) |
-| Run all checks | `lint/mod.rs` | `[lint-run]` | Runs checks in dependency order, filters by selection, sorts |
+| Run all checks | `lint/mod.rs` | `[lint-run]` | Runs checks in dependency order, filters by selection, sorts. Takes the directory the config loaded from, where render templates resolve |
 | Transition graph | `lint/graph.rs` | `Graph`, `Edge` | Adjacency over transitions |
 | Build graph | `lint/graph.rs` | `[graph-build]` | `build()` / `build_filtered()` (drop edges to test route-arounds) |
 | Forward closure | `lint/graph.rs` | `[graph-reachable]` | States reachable from a state |
@@ -199,8 +199,9 @@ Config-only analysis: no ledger is opened, no gate command runs. Answers "is thi
 | Engine events | `lint/index.rs` | `ENGINE_EVENTS`, `is_engine_event` | Re-export of the list in `config/events.rs` (the `since` anchor validator needs the same one) |
 | Producer index | `lint/index.rs` | `ProducerIndex`, `[build-producers]` | declared + emits + hook auto_record + engine |
 | Gate event refs | `lint/index.rs` | `EventRef`, `[gate-event-refs]` | Recursive walk; `not` flips polarity, `any_of`/`k_of_n` mark disjunctive |
-| Consumed events | `lint/index.rs` | `[consumed-events]` | Every event any config surface reads |
+| Consumed events | `lint/index.rs` | `[consumed-events]` | Every event any config surface reads, render templates included |
 | SQL event mentions | `lint/index.rs` | `[sql-event-mentions]` | Declared event names quoted in a predicate |
+| Template event mentions | `lint/index.rs` | `[template-event-mentions]` | Declared event names quoted inside a render template's `{{ }}` / `{% %}` tags — `where_eq(attribute="event_type", value="X")` reads `X` without the render's `event_types` naming it. Comments and output text read nothing (#33) |
 | Producible stamps | `lint/index.rs` | `[producible-stamps]` | Every provenance value some writer of an event can stamp — one arm per `Recorder`, since each is reachable under different config (#50) |
 | Provenance filters | `lint/index.rs` | `ProvenanceFilter`, `[provenance-filters]` | Every literal a predicate compares against `recorded_by`, with whether a *positive equality* reaches it. The column is found by scanning left past punctuation, other literals and `IN`/`NOT`; `!=`, `<>`, `NOT (<col> = …)` and `IN` lists are negations, anything else reads as positive, which is the cost of not shipping a SQL parser into a lint pass |
 | L1 unsatisfiable gate | `lint/checks.rs` | `[check-l1]` | Required event with no producer (error if restricted or `require_producers`) |
@@ -888,7 +889,7 @@ main.rs [cli-main] → Commands::Lint
       → lint/mod.rs Analysis::new
         → lint/graph.rs [graph-build]     ← transition adjacency (forward + reverse)
         → lint/index.rs [build-producers] ← declared producers + emits + hook auto_record + engine built-ins
-        → lint/index.rs [consumed-events] ← gates, renders, hook checks, named queries
+        → lint/index.rs [consumed-events] ← gates, renders and their templates, hook checks, named queries
       → lint/checks.rs [check-l1]         ← required event with no producer; fills Analysis.unsatisfiable
       → lint/checks.rs [check-l2]         ← graph.ancestors_of(t.from) ∪ {t.from} vs producer available_in_states
       → lint/checks.rs [check-l3]         ← graph.build_filtered() drops boundary-tagged edges, then path_between()
@@ -1050,7 +1051,7 @@ field Claude Code shows the user — with no `decision` beside it.
 | `tests/render_filter_tests.rs` | Custom Tera filters (where_eq, unique_by) |
 | `tests/json_output_tests.rs` | JSON envelope serialization, per-command data structs, CLI --json integration |
 | `tests/horizons1_tests.rs` | HORIZONS-1 mission protocol: status, transitions, gates, sets with --json |
-| `tests/lint_tests.rs` | Static analysis (incl. `examples/lint-demo` lints clean, and runs as shipped — `init`, a `fix_commit`, and the `merge` its `fix_budget` query gates): L1 producer closure (restricted/require_producers/emits/auto_record/polarity), L2 producer windows vs reachability, L3 boundary route-arounds, L4 dead ends, L5 dead vocabulary (engine events, `_checkpoint` included, exempt), L6 predicate drift + similarity scoring, L7 attestation lattice, L8 provenance filters — a `hook:` path the manifest does not list, the same path once it does, the `engine:emits:` misspelling from #50's own prose, `engine:transition:` accepted, `import:` never judged, a provenance-shaped value on an ordinary field ignored, the `agent:cli` warning and the negations that must not trigger it, inline gate predicates as well as named queries — check selection, CLI exit codes + JSON |
+| `tests/lint_tests.rs` | Static analysis (incl. `examples/lint-demo` lints clean, and runs as shipped — `init`, a `fix_commit`, and the `merge` its `fix_budget` query gates): L1 producer closure (restricted/require_producers/emits/auto_record/polarity), L2 producer windows vs reachability, L3 boundary route-arounds, L4 dead ends, L5 dead vocabulary (engine events, `_checkpoint` included, exempt; a render template's `where_eq` on `event_type` a read, a comment or output text not, a missing template read as nothing — #33), L6 predicate drift + similarity scoring, L7 attestation lattice, L8 provenance filters — a `hook:` path the manifest does not list, the same path once it does, the `engine:emits:` misspelling from #50's own prose, `engine:transition:` accepted, `import:` never judged, a provenance-shaped value on an ordinary field ignored, the `agent:cli` warning and the negations that must not trigger it, inline gate predicates as well as named queries — check selection, CLI exit codes + JSON |
 | `tests/hook_eval_tests.rs` | Hook evaluation engine: gate/check/filter/state/monitor/write-gated/managed-path/CLI eval; a hook that could not be evaluated (#51) — a config that does not parse, a missing config dir, an uninitialised ledger, a config edited after its seal, an unregistered `--ledger` — answering `ok: false` with its code and no `data` |
 | `tests/concurrent_append_tests.rs` | Concurrent ledger append stress tests (issue #21 TOCTOU race); the manifest seal under concurrent CLI writers (holtz#ho-0mvwg8q) — `event` writers against the built binary, half re-rendering three files and half rendering nothing, with `manifest verify` looping beside them: no verify fails, the final manifest seals every rendered file and the ledger, and the last render shows every finding; a transition whose gate runs `sahjhan event` not waiting on its own lock; a transition whose gate moves the machine refused with nothing recorded, rather than committed from the state it left; `hook eval`'s auto-record and a default-ledger checkpoint leaving verify clean |
 | `tests/daemon_platform_tests.rs` | Platform API smoke tests: preload env, exe path, cmdline, parent PID, mlock |

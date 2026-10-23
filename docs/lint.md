@@ -31,7 +31,7 @@ L4 error: states.toml: state 'anomaly'
 | `L2` | A gate requires an event whose producers can only run in states that cannot precede it. Satisfiable on paper, unsatisfiable in every actual run. |
 | `L3` | A path reaches a boundary's target without crossing the boundary. The route-around nobody noticed. |
 | `L4` | A non-terminal state with no exit, or whose every exit is blocked by an unsatisfiable gate. |
-| `L5` | A declared event nothing produces or consumes. Dead vocabulary that reads as load-bearing. |
+| `L5` | A declared event nothing produces or consumes. Dead vocabulary that reads as load-bearing. A render's template consumes any declared event it quotes inside a `{{ }}` or `{% %}` tag, such as `where_eq(attribute="event_type", value="prediction")`. |
 | `L6` | Two copies of one predicate — inline SQL duplicating a named query, or each other. Drift waiting to happen. |
 | `L7` | A gate demanding evidence stronger than the event supplying it. Reads as a strong check, enforces a weak one. |
 | `L8` | A predicate filtering on a provenance no writer can stamp, or requiring one the agent can stamp at will. A gate that names a writer who doesn't exist, or one who is the agent. |

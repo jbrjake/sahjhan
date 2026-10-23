@@ -304,7 +304,7 @@ current directory. Reach for this module before writing
 | Git common dir | `paths.rs` | `[git-common-dir]` | `gitdir:` → `commondir` → the directory holding the shared `.git`. The `commondir` check is what separates a linked worktree from a submodule, which has a `.git` file too and is its own repository (#47) |
 | Data dir | `paths.rs` | `[data-dir]` | `project_root_from(..).join(data_dir)`; one derivation, so the two cannot drift |
 | Manifest key | `paths.rs` | `[manifest-key]` | Project-root-relative key for a managed file |
-| Project-relative | `paths.rs` | `[project-relative]` | A path the user typed (relative to cwd, or absolute) spelled against the project root: relative when under it, absolute when not, `.` for the root. Lexical, so a directory that does not exist yet works. `hook generate` writes `--config-dir` and `--output-dir` through it, because the scripts join both onto the project root |
+| Project-relative | `paths.rs` | `[project-relative]` | A path the user typed (relative to cwd, or absolute) spelled against the project root: relative when under it, absolute when not, `.` for the root. Lexical, so a directory that does not exist yet works. `hook generate` writes `--config-dir` and `--output-dir` through it, because the scripts join both onto the project root; `[track-ledger]` keys the ledger an append grew through it, because `--ledger-path` is typed relative to the cwd |
 | Containment | `paths.rs` | `[path-under]` | Component-wise "is under" (not string `starts_with`); refuses `..` |
 | Managed test | `paths.rs` | `[is-managed]` | Under any of `managed_paths`; empty list = unconstrained |
 
@@ -529,7 +529,8 @@ config paths.data_dir  (e.g. "docs/holtz/.sahjhan", relative)
       ├→ paths.rs [data-dir]         = project_root.join(data_dir)   ← ledger, manifest, registry live here
       ├→ paths.rs [manifest-key]     = file.strip_prefix(project_root) ← every manifest entry key
       ├→ paths.rs [project-relative] ← a typed path (`hook generate`'s --config-dir, --output-dir)
-      │                                spelled against the root, for scripts that join it back on
+      │                                spelled against the root, for scripts that join it back on;
+      │                                and the ledger an append grew, for its manifest key
       │    → manifest/tracker.rs [manifest-track]  ← refuses a key outside managed_paths (E13)
       ├→ manifest/verify.rs [verify] ← base_dir for resolving those same keys
       └→ state/machine.rs StateMachine::new  ← working_dir for `command_succeeds` gates
@@ -667,7 +668,7 @@ writer — event, authed-event, the daemon's record_event, set complete, the com
   → cli/commands.rs [lock-manifest]          ← manifest/lock.rs [manifest-lock]: flock(EX) on data_dir
   → cli/commands.rs [load-manifest]          ← takes the lock, not a path
   → ledger/chain.rs [ledger-append]          ← the ledger's own flock(EX), inside this one
-  → cli/commands.rs [track-ledger]
+  → cli/commands.rs [track-ledger]           ← the ledger that append grew, when it is managed
   → cli/commands.rs [save-manifest]          ← manifest/tracker.rs [write-atomic]
   → render/engine.rs [render-triggered]      ← [write-atomic] per target, then [manifest-track]
   → cli/commands.rs [save-manifest]
@@ -686,6 +687,15 @@ that loaded the manifest before another's seal saves the old hashes back over
 it — a mismatch nothing clears until the next render. Holtz records each
 mismatch as a permanent `protocol_violation`, so either one ends a run.
 `tests/concurrent_append_tests.rs` drives both against the built binary.
+
+**Which ledger it seals.** The one the append grew — default, named, active, or
+whatever `--ledger-path` named — under its project-root key, so `manifest
+verify` catches a run ledger truncated by its last entries, which still chains.
+A ledger outside every managed path is left untracked rather than refused with
+E13. The cost, accepted by owner ruling (sj-tz2yren): a writer killed between
+its append and its seal leaves that ledger's hash stale until the next append
+to it reseals it. Claude Code kills a hook that overruns its timeout, and
+holtz's couriers are hooks, so every run ledger carries that exposure.
 
 **What may not happen under it.** A gate or emit command — `[prepare-transition]`
 runs before the lock is taken — and a daemon round trip — `authed-event` and
@@ -1053,7 +1063,7 @@ field Claude Code shows the user — with no `decision` beside it.
 | `tests/horizons1_tests.rs` | HORIZONS-1 mission protocol: status, transitions, gates, sets with --json |
 | `tests/lint_tests.rs` | Static analysis (incl. `examples/lint-demo` lints clean, and runs as shipped — `init`, a `fix_commit`, and the `merge` its `fix_budget` query gates): L1 producer closure (restricted/require_producers/emits/auto_record/polarity), L2 producer windows vs reachability, L3 boundary route-arounds, L4 dead ends, L5 dead vocabulary (engine events, `_checkpoint` included, exempt; a render template's `where_eq` on `event_type` a read, a comment or output text not, a missing template read as nothing — #33), L6 predicate drift + similarity scoring, L7 attestation lattice, L8 provenance filters — a `hook:` path the manifest does not list, the same path once it does, the `engine:emits:` misspelling from #50's own prose, `engine:transition:` accepted, `import:` never judged, a provenance-shaped value on an ordinary field ignored, the `agent:cli` warning and the negations that must not trigger it, inline gate predicates as well as named queries — check selection, CLI exit codes + JSON |
 | `tests/hook_eval_tests.rs` | Hook evaluation engine: gate/check/filter/state/monitor/write-gated/managed-path/CLI eval; a hook that could not be evaluated (#51) — a config that does not parse, a missing config dir, an uninitialised ledger, a config edited after its seal, an unregistered `--ledger` — answering `ok: false` with its code and no `data` |
-| `tests/concurrent_append_tests.rs` | Concurrent ledger append stress tests (issue #21 TOCTOU race); the manifest seal under concurrent CLI writers (holtz#ho-0mvwg8q) — `event` writers against the built binary, half re-rendering three files and half rendering nothing, with `manifest verify` looping beside them: no verify fails, the final manifest seals every rendered file and the ledger, and the last render shows every finding; a transition whose gate runs `sahjhan event` not waiting on its own lock; a transition whose gate moves the machine refused with nothing recorded, rather than committed from the state it left; `hook eval`'s auto-record and a default-ledger checkpoint leaving verify clean |
+| `tests/concurrent_append_tests.rs` | Concurrent ledger append stress tests (issue #21 TOCTOU race); the manifest seal under concurrent CLI writers (holtz#ho-0mvwg8q) — `event` writers against the built binary, half re-rendering three files and half rendering nothing, with `manifest verify` looping beside them: no verify fails, the final manifest seals every rendered file and the ledger, and the last render shows every finding; a transition whose gate runs `sahjhan event` not waiting on its own lock; a transition whose gate moves the machine refused with nothing recorded, rather than committed from the state it left; `hook eval`'s auto-record and a default-ledger checkpoint leaving verify clean; an append to a named ledger, by name and by a cwd-relative `--ledger-path` from a subdirectory, sealing it under one project-root key, so the ledger cut short by one entry, which still chains, fails `manifest verify`; an append to an unmanaged ledger leaving it untracked rather than failing E13 |
 | `tests/daemon_platform_tests.rs` | Platform API smoke tests: preload env, exe path, cmdline, parent PID, mlock |
 | `tests/daemon_protocol_tests.rs` | Wire protocol types: Request deserialization (all ops + unknowns, incl. `enforcement_merge` and the optional `expect_version` absent and present), Response serialization (all constructors incl. idle fields, and `version` present only when attached) |
 | `tests/daemon_auth_tests.rs` | Trusted-callers manifest load/parse, hash match/mismatch, not-in-manifest, extract_script_path |

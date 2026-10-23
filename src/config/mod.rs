@@ -76,6 +76,19 @@ impl std::fmt::Display for SinceAnchorError {
                  or \"last_event_of_type:<event type>\")",
                 value
             ),
+            // `checkpoint` for the engine's `_checkpoint`: declaring it would
+            // load and still never match, so name what the engine writes.
+            SinceAnchorError::UndeclaredEvent(event_type)
+                if events::is_engine_event(&format!("_{}", event_type)) =>
+            {
+                write!(
+                    f,
+                    "anchors on undeclared event type '{}' (since = \
+                     \"last_event_of_type:{}\" — the engine writes '_{}'; declare \
+                     [events.{}] only if you record one yourself)",
+                    event_type, event_type, event_type, event_type
+                )
+            }
             SinceAnchorError::UndeclaredEvent(event_type) => write!(
                 f,
                 "anchors on undeclared event type '{}' (since = \

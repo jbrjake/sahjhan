@@ -1091,6 +1091,15 @@ fn test_validate_since_anchor_on_the_engine_checkpoint_uses_its_written_name() {
         "an anchor on a name nothing writes must be refused: {:?}",
         errors
     );
+    // Declaring `checkpoint` would make the anchor load again and still never
+    // match, so the refusal names the spelling the engine writes.
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("the engine writes '_checkpoint'")),
+        "the refusal points at the engine's own event: {:?}",
+        errors
+    );
 }
 
 #[test]

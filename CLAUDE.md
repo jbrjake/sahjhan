@@ -222,7 +222,10 @@ Config-only analysis: no ledger is opened, no gate command runs. Answers "is thi
 |---------|------|-------------|---------|
 | State machine | `state/machine.rs` | `StateMachine` | Owns config + ledger, executes transitions; holds both anchors (`working_dir` = project root, `caller_dir` = the cwd it was constructed from), and hands **both** to gates and to emits (#46, #48) |
 | Transition outcome | `state/machine.rs` | `TransitionOutcome` | Result of a successful transition (from, to, attestations, emitted_events) |
-| Transition | `state/machine.rs` | `[transition]` | Execute named command: build params → check gates → resolve emits → append event → emit gate_attestation events → append the resolved emits. The `state_transition` and attestations record `engine:transition:<command>`; the emits record `engine:emit:<command>` (#50) |
+| Transition | `state/machine.rs` | `[transition]` | `[prepare-transition]` then `[commit-transition]`, for a caller that seals nothing. The `state_transition` and attestations record `engine:transition:<command>`; the emits record `engine:emit:<command>` (#50) |
+| Prepare transition | `state/machine.rs` | `[prepare-transition]`, `PreparedTransition` | Build params → check gates → reload → resolve emits: every command the transition runs, and no write. The split is so a CLI caller takes the manifest lock *between* the halves — a gate command may run `sahjhan event`, which takes that lock (holtz#ho-0mvwg8q) |
+| Commit transition | `state/machine.rs` | `[commit-transition]` | Append the `state_transition`, a `gate_attestation` per attested gate, then the resolved emits. Runs no command |
+| Reload ledger | `state/machine.rs` | `[reload-ledger]` | Re-read the ledger and re-derive the current state; `batch` calls it under the lock before its closing render |
 | Emit resolution | `state/emit.rs` | `[resolve-emit]` | One emitted event's fields: ledger field inheritance → `state_params` → `commands` stdout → `fields` templates. Any failure returns `Err` **before** anything is appended, so a transition with a bad emit is atomic |
 | Emit working dir | `state/emit.rs` | `[emit-working-dir]` | The directory an emit's `commands` run in — the same two anchors a gate has, read by `[resolve-anchor]`. Unreadable fails the emit rather than falling back to the project, because the fallback is spelled exactly like a deliberate project anchor and the record it writes is false (#48) |
 | Build state params | `state/machine.rs` | `[build-state-params]` | Derive params from state config + set state (`source` field) |
@@ -310,7 +313,11 @@ current directory. Reach for this module before writing
 |---------|------|-------------|---------|
 | Manifest | `manifest/tracker.rs` | `Manifest` | SHA-256 tracked file registry |
 | Track file | `manifest/tracker.rs` | `[manifest-track]` | Record file hash + metadata; refuses keys outside `managed_paths` (E13) |
-| Load/Save | `manifest/tracker.rs` | `[manifest-load]`, `[manifest-save]` | JSON persistence |
+| Load/Save | `manifest/tracker.rs` | `[manifest-load]`, `[manifest-save]` | JSON persistence; the save goes through `[write-atomic]` |
+| Atomic write | `manifest/tracker.rs` | `[write-atomic]` | Hidden sibling, then rename over the target. Manifest saves and renders both use it, so a reader or a writer that dies mid-write never leaves a truncated file — which every command would fail to load, or the next verify would read as tampering |
+| Manifest lock | `manifest/lock.rs` | `[manifest-lock]`, `ManifestLock` | Exclusive `flock` on the **data dir itself** — no lock file, so a refused `init` still writes nothing. Every writer holds it from its manifest load to its last save: the append, the seal, and every render. Never across a gate or emit command (which may run `sahjhan event`, and would wait on its parent) or a daemon round trip. `LOCK_TIMEOUT_SECS` = 30 (holtz#ho-0mvwg8q) |
+| Manifest read lock | `manifest/lock.rs` | `[manifest-read-lock]`, `ManifestReadLock` | Shared; `manifest verify` holds it across the load **and every hash**, so it reads the manifest and the files it seals as one state |
+| Lock witness | `manifest/lock.rs` | `ManifestGuard` | What the CLI's `load_manifest` / `save_manifest` take instead of a path — a manifest loaded or saved outside the lock does not compile, the same mechanism as #50's required `Recorder` |
 | Verify | `manifest/verify.rs` | `[verify]` | Compare files against manifest hashes; `base_dir` is the **project root** |
 | Mismatch | `manifest/verify.rs` | `Mismatch` | File that differs from manifest, plus its `kind` |
 | Mismatch kind | `manifest/verify.rs` | `MismatchKind` | `Modified` / `Missing` / `Unmanaged` — only the first two count against `clean` |
@@ -329,7 +336,7 @@ current directory. Reach for this module before writing
 | Open registry entry | `render/engine.rs` | `open_registry_entry` | Shared helper to open ledger from registry entry |
 | Build context | `render/engine.rs` | `[build-context]` | Build template vars from ledger + config; injects `template_instance_id` / `template_name` from registry |
 | Manifest key anchor | `render/engine.rs` | `[project-root]` | The directory rendered files are keyed against — from the config's `data_dir`, never the process cwd |
-| Render triggered | `render/engine.rs` | `[render-triggered]` | Render on_transition / on_event |
+| Render triggered | `render/engine.rs` | `[render-triggered]` | Render on_transition / on_event; builds the context only once a render matches, since every caller holds the manifest lock and most events render nothing. Writes through `[write-atomic]` |
 | Dump context | `render/engine.rs` | `[dump-context]` | Export render context as JSON |
 
 ### query/ — SQL Query Engine
@@ -379,7 +386,7 @@ current directory. Reach for this module before writing
 | Server cleanup | `daemon/mod.rs` | `DaemonServer::cleanup` | Remove socket and PID files |
 | Handle connection | `daemon/mod.rs` | `handle_connection` | Read JSON lines from stream, dispatch to handle_request, write responses; I/O bounded by `CONNECTION_IO_TIMEOUT` (10s) so a silent client cannot wedge the sequential accept loop. Resolves the peer's `Recorder` once — the verified script path, or `daemon:unverified` when no manifest exists (#50) |
 | Handle request | `daemon/mod.rs` | `handle_request` | Dispatch Request variant to sign/vault/status/enforcement/record_event operation |
-| Record event (authed peer) | `daemon/mod.rs` | `handle_record_event` | Append a consumer-declared event to the active ledger for an authenticated peer; ledger-write analog of `enforcement_write` (validates against events.toml, no HMAC proof). Records `hook:<verified script path>` — the identity it authenticated is the identity it records (#50) |
+| Record event (authed peer) | `daemon/mod.rs` | `handle_record_event` | Append a consumer-declared event to the active ledger for an authenticated peer; ledger-write analog of `enforcement_write` (validates against events.toml, no HMAC proof). Records `hook:<verified script path>` — the identity it authenticated is the identity it records (#50). Goes through `[record-and-render]`, so it holds the manifest lock like any CLI writer; an unloadable manifest still answers `manifest_error` |
 | Ledger-state overlay | `daemon/mod.rs` | `overlay_ledger_state` | Override enforcement blob `state` key with ledger-derived state on enforcement_read (holtz #57); fail-soft to stored bytes |
 | Derive ledger state | `daemon/mod.rs` | `derive_ledger_state` | Resolve active ledger (marker → registry → default), verify chain, derive current state; None on any failure |
 | Compute sign | `daemon/mod.rs` | `compute_sign` | HMAC-SHA256 proof computation (same algorithm as authed_event.rs) |
@@ -426,20 +433,21 @@ current directory. Reach for this module before writing
 | Gate failure line | `cli/output.rs` | `[gate-failure-line]` | `<type>: <reason> — <intent>` for a blocked gate; the intent stays on the headline so a command gate's attached output tail follows it rather than swallowing it. Used by `transition`, `batch`, `status`, `gate check` |
 | Shared helpers | `cli/commands.rs` | (see file index) | Exit codes, ledger targeting, config loading, active-ledger marker, `[compute-registry-path]`, `[status-cache-path]`, `[write-status-cache]`, `[seal-refusal]` (a config off its seal: the refusal both ledger openers return, naming `reseal` or restoring the files — `init` and `reset` both refuse there) |
 | Path anchoring | `cli/commands.rs` | `[resolve-data-dir]`, `[resolve-project-root]` | Resolve `data_dir` and the project root; both delegate to `paths.rs` so they cannot drift |
+| Manifest under lock | `cli/commands.rs` | `[lock-manifest]`, `[lock-manifest-shared]`, `[load-manifest]`, `[save-manifest]` | Take the exclusive (writer) or shared (reader) lock; load the manifest of the dir a held lock names; save it, which only an exclusive holder can. See Flow: Manifest Seal |
 | Lint | `cli/lint.rs` | `[cmd-lint]` | Static integrity analysis; `--only <CHECK>`, `--strict`; exit 3 on errors |
-| Init/validate/reset | `cli/init.rs` | `[cmd-init]`, `[cmd-validate]`, `[cmd-reset]` | Lifecycle commands; init writes status-cache.json; reset requires HMAC proof via daemon (#26) |
-| Transition/gate/event | `cli/transition.rs` | `[cmd-transition]`, `[render-after-transitions]`, `[cmd-gate-check]`, `[record-and-render]`, `validate_event_fields`, `[cmd-event]` | State machine commands; transition updates status-cache.json. `[record-and-render]` carries the `Recorder` from `event` / `authed-event` / the daemon's `record_event` down to the append (#50) |
-| Batch | `cli/batch.rs` | `[cmd-batch]`, `[parse-selector]`, `[select-steps]`, `[items-of]` | `[batches.<name>]`: one transition per item a named query returns; selector flag named by the batch's own `param`; gate refusals are reported per item, not fatal; renders once at the end |
+| Init/validate/reset | `cli/init.rs` | `[cmd-init]`, `init_refusal`, `init_locked`, `[cmd-validate]`, `[cmd-reset]` | Lifecycle commands; init writes status-cache.json; reset requires HMAC proof via daemon (#26). `init_refusal` runs before any write and again under the lock; `init_locked` is a run's writes and their rollback, shared by init and by reset, which holds one lock across archiving the old run and starting the new |
+| Transition/gate/event | `cli/transition.rs` | `[cmd-transition]`, `report_transition_error`, `[render-after-transitions]`, `[cmd-gate-check]`, `[record-and-render]`, `validate_event_fields`, `[cmd-event]` | State machine commands; transition updates status-cache.json. `[cmd-transition]` prepares outside the manifest lock and commits, seals and renders inside it. `[record-and-render]` takes the lock and loads the manifest itself, and carries the `Recorder` from `event` / `authed-event` / the daemon's `record_event` down to the append (#50) |
+| Batch | `cli/batch.rs` | `[cmd-batch]`, `[parse-selector]`, `[select-steps]`, `[items-of]`, `[apply-item]` | `[batches.<name>]`: one transition per item a named query returns; selector flag named by the batch's own `param`; gate refusals are reported per item, not fatal. `[apply-item]` commits and seals each item under its own lock; renders once at the end, under a lock of its own, from the reloaded ledger |
 | Status/sets | `cli/status.rs` | `[cmd-status]`, `[cmd-set-status]`, `[cmd-set-complete]` | Status display + set management; status warns on missing cache; `--no-gates` skips transition gate evaluation (fast, side-effect-free for hook callers) |
 | Log inspection | `cli/log.rs` | `[cmd-log-dump]`, `[cmd-log-verify]`, `[cmd-log-tail]` | Ledger viewing |
-| Ledger management | `cli/ledger.rs` | `[cmd-ledger-create]`, `[cmd-ledger-list]`, `[cmd-ledger-activate]`, `[cmd-ledger-deactivate]`, etc. | Multi-ledger CRUD; create supports `--from` template + `--activate`; activate/deactivate manage active-ledger marker |
+| Ledger management | `cli/ledger.rs` | `[cmd-ledger-create]`, `[cmd-ledger-list]`, `[cmd-ledger-activate]`, `[cmd-ledger-deactivate]`, `[cmd-ledger-checkpoint]`, etc. | Multi-ledger CRUD; create supports `--from` template + `--activate`; activate/deactivate manage active-ledger marker; a checkpoint appends under the manifest lock and seals the ledger |
 | Query | `cli/query.rs` | `[cmd-query]` | SQL queries over events |
-| Render | `cli/render.rs` | `[cmd-render]`, `[cmd-render-dump-context]` | Template rendering |
-| Manifest | `cli/manifest_cmd.rs` | `[cmd-manifest-verify]`, `[cmd-manifest-list]` | File integrity |
+| Render | `cli/render.rs` | `[cmd-render]`, `[cmd-render-dump-context]` | Template rendering; `render` takes the manifest lock before it reads the ledger |
+| Manifest | `cli/manifest_cmd.rs` | `[cmd-manifest-verify]`, `[cmd-manifest-list]` | File integrity; verify, list and restore read under the shared lock |
 | Authed event | `cli/authed_event.rs` | `[cmd-authed-event]` | HMAC-verified restricted event recording (proof verified via daemon) |
-| Hooks | `cli/hooks_cmd.rs` | `[cmd-hook-generate]`, `[cmd-hook-eval]` | Hook script generation + runtime evaluation; a config or ledger that fails to load is `ok: false`, never a decision (#51) |
+| Hooks | `cli/hooks_cmd.rs` | `[cmd-hook-generate]`, `[cmd-hook-eval]` | Hook script generation + runtime evaluation; a config or ledger that fails to load is `ok: false`, never a decision (#51). Auto-records append under the manifest lock, taken after every gate has run, and seal the ledger they grow |
 | Mermaid | `cli/mermaid.rs` | `[cmd-mermaid]` | Diagram generation command (stateDiagram-v2 or ASCII) |
-| Reseal | `cli/authed_event.rs` | `[cmd-reseal]` | HMAC-authenticated config reseal (proof verified via daemon) |
+| Reseal | `cli/authed_event.rs` | `[cmd-reseal]` | HMAC-authenticated config reseal (proof verified via daemon); appends under the manifest lock and seals the ledger, warning rather than refusing when the manifest will not load — reseal is the way back from one broken seal and must not be refused for a second |
 | Verify proof | `cli/verify_cmd.rs` | `[cmd-verify]` | Verify HMAC-SHA256 proof via daemon socket |
 | Daemon start | `cli/daemon_cmd.rs` | `[cmd-daemon-start]` | Start daemon in foreground (accepts idle_timeout) |
 | Daemon stop | `cli/daemon_cmd.rs` | `[cmd-daemon-stop]` | Stop running daemon (SIGTERM, then SIGKILL) |
@@ -466,7 +474,7 @@ How `sahjhan transition <command>` executes:
 main.rs [cli-main]
   → cli/transition.rs [cmd-transition]
     → cli/commands.rs [load-config], [open-targeted]
-    → state/machine.rs [transition]
+    → state/machine.rs [prepare-transition]      ← every command the transition runs; no lock held, no write
       → state/machine.rs [build-state-params]    ← resolves StateParam.source ("current", "last_completed", "values")
       → CLI args merged: positional mapped to transition.args names, key=value as overrides
       → for each candidate transition (in TOML order):
@@ -489,13 +497,22 @@ main.rs [cli-main]
           → state/emit.rs [emit-working-dir]      ← project anchor, or the caller's — per emit (#48)
           → gates/command.rs [run-shell-output-with-timeout]  ← each `commands` entry, at that anchor
           → gates/template.rs [resolve-template-plain]        ← `fields` templates
+    → cli/commands.rs [lock-manifest], [load-manifest]  ← exclusive, held from here to the last save
+    → state/machine.rs [commit-transition]       ← runs no command
       → ledger/chain.rs [ledger-append]           ← state_transition event
       → for each GateAttestation from passing gates:
         → ledger/chain.rs [ledger-append]           ← gate_attestation event (stdout_hash, exit_code, working_dir)
       → for each resolved emit:
         → ledger/chain.rs [ledger-append]           ← the emitted event
-    → render/engine.rs [render-triggered]         ← on_transition renders, then on_event for each emit
+    → cli/commands.rs [track-ledger], [save-manifest]
+    → cli/transition.rs [render-after-transitions]
+      → render/engine.rs [render-triggered]       ← on_transition renders, then on_event for each emit
+      → cli/commands.rs [save-manifest]           ← then the lock is released
 ```
+
+The lock sits between the halves, not around the call, because a gate command
+may itself run `sahjhan event` — which takes the same lock, and would wait on
+its own parent until the timeout failed the gate. See Flow: Manifest Seal.
 
 ### Flow: Path Anchoring
 
@@ -636,13 +653,62 @@ gates/types.rs [eval] matches gate_type:
   "k_of_n"              → gates/types.rs    [eval] (inline) — pass if >= k children pass
 ```
 
+### Flow: Manifest Seal (one lock from load to last save)
+
+What every writer holds, and why a verify beside it never reads a half-sealed
+state (holtz#ho-0mvwg8q):
+
+```
+writer — event, authed-event, the daemon's record_event, set complete, the commit
+         half of transition and of each batch item, hook eval's auto-record,
+         checkpoint, reseal, render, init, reset
+  → cli/commands.rs [lock-manifest]          ← manifest/lock.rs [manifest-lock]: flock(EX) on data_dir
+  → cli/commands.rs [load-manifest]          ← takes the lock, not a path
+  → ledger/chain.rs [ledger-append]          ← the ledger's own flock(EX), inside this one
+  → cli/commands.rs [track-ledger]
+  → cli/commands.rs [save-manifest]          ← manifest/tracker.rs [write-atomic]
+  → render/engine.rs [render-triggered]      ← [write-atomic] per target, then [manifest-track]
+  → cli/commands.rs [save-manifest]
+  → dropped                                  ← released
+
+reader — manifest verify, list, restore, status
+  → cli/commands.rs [lock-manifest-shared]   ← manifest/lock.rs [manifest-read-lock]: flock(SH)
+  → cli/commands.rs [load-manifest]
+  → manifest/verify.rs [verify]              ← every hash, still holding it
+  → dropped
+```
+
+**What it rules out.** With the lock spanning less than load-to-last-save, a
+verify beside a writer reads between a render's write and its seal, and a writer
+that loaded the manifest before another's seal saves the old hashes back over
+it — a mismatch nothing clears until the next render. Holtz records each
+mismatch as a permanent `protocol_violation`, so either one ends a run.
+`tests/concurrent_append_tests.rs` drives both against the built binary.
+
+**What may not happen under it.** A gate or emit command — `[prepare-transition]`
+runs before the lock is taken — and a daemon round trip — `authed-event` and
+`reset` verify their proof first. Either can reach another sahjhan process that
+takes this lock, and it would wait on its own caller until the 30-second
+timeout.
+
+**Why the data dir and not a lock file.** Taking the lock creates nothing, so a
+refused `init` still writes nothing and the rollback of a failed one still
+removes the dir it made. A lock on `manifest.json` would not hold at all:
+`[write-atomic]` replaces it by rename, so each save unlinks the inode the lock
+is on.
+
+**Order.** The manifest lock is outer and the ledger's is inner; nothing takes
+them the other way round.
+
 ### Flow: Set Completion
 
 ```
 main.rs [cli-main] → Commands::Set → SetAction::Complete
   → cli/status.rs [cmd-set-complete]
     → validates set exists, member exists
+    → cli/commands.rs [lock-manifest], [load-manifest]
     → state/machine.rs [record-event] type="set_member_complete" fields={set, member}
+    → cli/commands.rs [track-ledger], [save-manifest]
     → render/engine.rs [render-triggered] trigger="on_event" event="set_member_complete"
 ```
 
@@ -907,7 +973,9 @@ cli/commands.rs [open-ledger] or [open-targeted]
 cli/authed_event.rs [cmd-reseal]
   → HMAC proof verification (session key)
   → config/mod.rs compute_config_seals()        ← new hashes
+  → cli/commands.rs [lock-manifest]             ← after the daemon round trip, not across it
   → ledger/chain.rs [ledger-append]             ← config_reseal event
+  → cli/commands.rs [track-ledger], [save-manifest]  ← a manifest that will not load warns, never refuses
 ```
 
 ### Flow: Hook Evaluation
@@ -931,7 +999,10 @@ main.rs [cli-main]
         → if gate: gates/evaluator.rs evaluate_gate() — fire if gate FAILS
         → if check: eval check condition (output_contains_any, event_count_since_last_transition)
       → hooks/eval.rs eval_monitors()            ← event_count_since_last_transition triggers
-    → for auto_records: ledger.append()           ← record auto events
+    → if any auto_records:                        ← every gate above has already run
+      → cli/commands.rs [lock-manifest], [load-manifest]
+      → for auto_records: ledger.append()         ← record auto events
+      → cli/commands.rs [track-ledger], [save-manifest]  ← unsealed, the next verify reads them as tampering
     → decision: block > warn > allow
     → CommandResult with exit_code 1 (block) or 0 (allow/warn)
 ```
@@ -971,13 +1042,13 @@ field Claude Code shows the user — with no `decision` beside it.
 | `tests/template_tests.rs` | Template-based ledger creation via cmd_ledger_create |
 | `tests/auth_tests.rs` | Session key generation, restricted events, HMAC auth |
 | `tests/mermaid_tests.rs` | Mermaid stateDiagram-v2 output, hyphen sanitization, gate labels, ASCII tree, cycle detection |
-| `tests/config_integrity_tests.rs` | Config sealing, tamper detection, reseal, backward compat; the tamper refusal offering only what recovers — `reseal`, or the files restored, which the test does — and `reset` with a valid proof refused by the same check (`#[ignore]`, needs a live daemon) |
+| `tests/config_integrity_tests.rs` | Config sealing, tamper detection, reseal (and `manifest verify` clean after it, because the reseal seals the ledger it grows), backward compat; the tamper refusal offering only what recovers — `reseal`, or the files restored, which the test does — and `reset` with a valid proof refused by the same check (`#[ignore]`, needs a live daemon) |
 | `tests/render_filter_tests.rs` | Custom Tera filters (where_eq, unique_by) |
 | `tests/json_output_tests.rs` | JSON envelope serialization, per-command data structs, CLI --json integration |
 | `tests/horizons1_tests.rs` | HORIZONS-1 mission protocol: status, transitions, gates, sets with --json |
 | `tests/lint_tests.rs` | Static analysis (incl. `examples/lint-demo` lints clean, and runs as shipped — `init`, a `fix_commit`, and the `merge` its `fix_budget` query gates): L1 producer closure (restricted/require_producers/emits/auto_record/polarity), L2 producer windows vs reachability, L3 boundary route-arounds, L4 dead ends, L5 dead vocabulary, L6 predicate drift + similarity scoring, L7 attestation lattice, L8 provenance filters — a `hook:` path the manifest does not list, the same path once it does, the `engine:emits:` misspelling from #50's own prose, `engine:transition:` accepted, `import:` never judged, a provenance-shaped value on an ordinary field ignored, the `agent:cli` warning and the negations that must not trigger it, inline gate predicates as well as named queries — check selection, CLI exit codes + JSON |
 | `tests/hook_eval_tests.rs` | Hook evaluation engine: gate/check/filter/state/monitor/write-gated/managed-path/CLI eval; a hook that could not be evaluated (#51) — a config that does not parse, a missing config dir, an uninitialised ledger, a config edited after its seal, an unregistered `--ledger` — answering `ok: false` with its code and no `data` |
-| `tests/concurrent_append_tests.rs` | Concurrent ledger append stress tests (issue #21 TOCTOU race) |
+| `tests/concurrent_append_tests.rs` | Concurrent ledger append stress tests (issue #21 TOCTOU race); the manifest seal under concurrent CLI writers (holtz#ho-0mvwg8q) — `event` writers against the built binary, half re-rendering three files and half rendering nothing, with `manifest verify` looping beside them: no verify fails, the final manifest seals every rendered file and the ledger, and the last render shows every finding; a transition whose gate runs `sahjhan event` not waiting on its own lock; `hook eval`'s auto-record and a default-ledger checkpoint leaving verify clean |
 | `tests/daemon_platform_tests.rs` | Platform API smoke tests: preload env, exe path, cmdline, parent PID, mlock |
 | `tests/daemon_protocol_tests.rs` | Wire protocol types: Request deserialization (all ops + unknowns, incl. `enforcement_merge` and the optional `expect_version` absent and present), Response serialization (all constructors incl. idle fields, and `version` present only when attached) |
 | `tests/daemon_auth_tests.rs` | Trusted-callers manifest load/parse, hash match/mismatch, not-in-manifest, extract_script_path |

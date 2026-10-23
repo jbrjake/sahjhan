@@ -419,6 +419,55 @@ fn test_cli_tamper_hint_offers_only_what_recovers() {
         .success();
 }
 
+#[test]
+fn test_cli_a_checkpoint_off_its_seal_offers_both_ways_past() {
+    // `ledger checkpoint` opens the ledger itself rather than through the
+    // shared openers, so it is checked on its own: the same refusal, nothing
+    // appended, and the restored files enough to proceed.
+    let dir = setup_sealed_dir();
+    let transitions = dir.path().join("enforcement/transitions.toml");
+    let ledger = dir.path().join("output/.sahjhan/ledger.jsonl");
+    let sealed = std::fs::read_to_string(&transitions).unwrap();
+    std::fs::write(&transitions, format!("{}# tampered\n", sealed)).unwrap();
+    let before = std::fs::read_to_string(&ledger).unwrap();
+
+    let checkpoint = [
+        "--config-dir",
+        "enforcement",
+        "ledger",
+        "checkpoint",
+        "--name",
+        "default",
+        "--scope",
+        "phase-1",
+        "--snapshot",
+        "s",
+    ];
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(checkpoint)
+        .current_dir(dir.path())
+        .assert()
+        .code(2) // EXIT_INTEGRITY_ERROR
+        .stderr(predicate::str::contains("sahjhan reseal"))
+        .stderr(predicate::str::contains(
+            "restore the files above to their sealed contents",
+        ));
+    assert_eq!(
+        std::fs::read_to_string(&ledger).unwrap(),
+        before,
+        "a refused checkpoint appends nothing"
+    );
+
+    std::fs::write(&transitions, sealed).unwrap();
+    Command::cargo_bin("sahjhan")
+        .unwrap()
+        .args(checkpoint)
+        .current_dir(dir.path())
+        .assert()
+        .success();
+}
+
 // ---------------------------------------------------------------------------
 // Daemon helpers for reseal tests
 // ---------------------------------------------------------------------------

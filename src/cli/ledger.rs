@@ -21,7 +21,7 @@ use crate::ledger::registry::{LedgerMode, LedgerRegistry};
 use super::commands::{
     compute_registry_path, ledger_path, load_config, load_manifest, lock_manifest,
     read_active_ledger, registry_path_from_config, remove_active_ledger, resolve_config_dir,
-    resolve_data_dir, resolve_registry_path, save_manifest, track_ledger_in_manifest,
+    resolve_data_dir, resolve_registry_path, save_manifest, seal_refusal, track_ledger_in_manifest,
     write_active_ledger, EXIT_CONFIG_ERROR, EXIT_INTEGRITY_ERROR, EXIT_SUCCESS, EXIT_USAGE_ERROR,
 };
 use super::output::{CommandOutput, CommandResult, LedgerActivateData, LedgerDeactivateData};
@@ -402,11 +402,9 @@ pub fn cmd_ledger_checkpoint(
     };
 
     if let Err(e) = ledger.verify_config_seal(&config_path) {
-        eprintln!(
-            "{}\n\nRun 'sahjhan reseal' with a valid session key to update the seal.",
-            e
-        );
-        return EXIT_INTEGRITY_ERROR;
+        let (code, msg) = seal_refusal(e);
+        eprintln!("{}", msg);
+        return code;
     }
 
     // Under the manifest lock, and sealing the ledger after: a checkpoint is

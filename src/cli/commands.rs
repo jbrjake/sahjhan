@@ -12,7 +12,7 @@
 // - [ledger-path] ledger_path() — canonical ledger file path
 // - [manifest-path] manifest_path() — canonical manifest file path
 // - [open-ledger] open_ledger() — open ledger from data_dir
-// - [seal-refusal] seal_refusal() — config-off-its-seal error, naming reseal or restoring the files
+// - [seal-refusal] seal_refusal() — config-off-its-seal error, naming reseal or restoring the files; every refusing command uses it
 // - [lock-manifest] lock_manifest() — exclusive manifest lock on data_dir, for a writer
 // - [lock-manifest-shared] lock_manifest_shared() — shared manifest lock, for a reader
 // - [load-manifest] load_manifest() — load the manifest the held lock covers
@@ -157,8 +157,10 @@ pub(crate) fn open_ledger(data_dir: &Path, config_dir: &Path) -> Result<Ledger, 
 /// The refusal for a config that no longer matches its seal, and the only two
 /// ways past it. `reseal` is the one command that opens the ledger without
 /// this check. `init` refuses whenever a ledger exists, and `reset` opens the
-/// ledger through this check, so neither is offered.
-fn seal_refusal(e: crate::ledger::entry::LedgerError) -> (i32, String) {
+/// ledger through this check, so neither is offered. Every command that
+/// refuses on a broken seal answers with this, including `ledger checkpoint`,
+/// which opens its ledger itself.
+pub(crate) fn seal_refusal(e: crate::ledger::entry::LedgerError) -> (i32, String) {
     (
         EXIT_INTEGRITY_ERROR,
         format!(

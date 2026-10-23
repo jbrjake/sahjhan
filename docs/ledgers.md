@@ -43,6 +43,8 @@ sahjhan query --glob "*.jsonl" "SELECT type, count(*) FROM events GROUP BY 1"
 
 Stateful ledgers are bound to the state machine; event-only ledgers just accumulate. Both are hash-chained. `--ledger` and `--ledger-path` steer every command that reads or writes the ledger. The exception is `ledger checkpoint`, which takes `--name` or falls back to the active marker and ignores them.
 
+Every append seals the ledger it grew in the manifest, so `manifest verify` catches a named ledger cut short by its last entries, which the chain alone cannot. A ledger outside every managed path isn't the manifest's to seal, and appends to it leave it untracked.
+
 `sahjhan ledger list` shows what's registered, `ledger verify` re-checks a chain, `ledger remove` unregisters without deleting the file, and `ledger import` wraps bare JSONL from stdin in a hash-chained ledger.
 
 ## templates

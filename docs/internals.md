@@ -45,7 +45,7 @@ keys, `engine` and `protocol` included, feed the hash.
 Tampering with one entry means recomputing every hash after it. The chain is
 unkeyed, though — it proves the file is internally consistent, not who wrote
 it — and nothing pins the tail, so truncation from the end is invisible to
-`log verify`. What raises the cost of a wholesale rewrite lives outside the chain: the
+`log verify`. `manifest verify` sees it, for a ledger under a managed path. What raises the cost of a wholesale rewrite lives outside the chain: the
 manifest records the ledger file's hash, and a fresh genesis draws a new
 CSPRNG nonce, so a rebuilt ledger is distinguishable from the one it replaced.
 
@@ -65,7 +65,8 @@ and sahjhan says so on the next command.
 and the hash stops matching, and `sahjhan manifest verify` says so (exit 2).
 Recording a `protocol_violation` for it is your protocol's job — a `hooks.toml`
 rule or an explicit event; the engine only ever reads that event type. The
-manifest records the ledger file's hash alongside its other entries and hashes
+manifest records the hash of every ledger file an append grows under a managed
+path, default and named alike, alongside its other entries and hashes
 its own contents into a `manifest_hash` field — self-referential bookkeeping,
 not an external anchor. The coupling runs one way: the manifest notices a
 rewritten ledger, nothing in the ledger notices a rewritten manifest.

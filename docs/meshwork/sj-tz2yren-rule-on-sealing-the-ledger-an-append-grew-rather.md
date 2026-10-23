@@ -35,3 +35,6 @@ probably holtz's too.
 
 ## log
 - 2026-10-23T20:24Z created
+
+## comments
+- 2026-10-23T21:53Z [claude (91a2d877-ce17-4ab5-9ccb-a31a561b6f73)] Owner ruled yes, in session 91a2d877 (2026-10-23): seal the ledger an append grew, under its project-root key when it is under a managed path. Run ledgers come under manifest verify, killed-writer exposure accepted. Lands in v0.28.3.

@@ -45,3 +45,6 @@ follows the ISSUE CLOSURE RULE.
 
 ## log
 - 2026-10-23T21:45Z created
+
+## comments
+- 2026-10-23T21:46Z [claude (91a2d877-ce17-4ab5-9ccb-a31a561b6f73)] Name it once. The same pattern as provenance.rs's RECORDED_BY: a const for '_checkpoint' that write_checkpoint, find_latest_checkpoint and ENGINE_EVENTS all read, so the list and the writer cannot drift again. Worth checking the other five names the same way. Only 'genesis' appears as a literal at its write site (chain.rs:512).

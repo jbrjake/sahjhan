@@ -104,4 +104,4 @@ Ledger: default (no active-ledger marker)
 
 ## checkpoints
 
-`sahjhan ledger checkpoint` writes a checkpoint event into the chain, defaulting to the active ledger. Checkpoints happen when you ask: `[checkpoints] interval` parses in `protocol.toml` but nothing reads it yet.
+`sahjhan ledger checkpoint` writes a `_checkpoint` event into the chain, defaulting to the active ledger. Checkpoints happen when you ask: `[checkpoints] interval` parses in `protocol.toml` but nothing reads it yet.

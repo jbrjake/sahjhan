@@ -62,7 +62,8 @@ event and fails once the third lands, forcing the run to do something else.
 
 **`since` on `ledger_has_event_since`** takes either `"last_transition"` or
 `"last_event_of_type:<type>"`, and the type has to be one events.toml declares
-or one the engine writes. Given an event type, it measures from the last
+or one the engine writes (`genesis`, `state_transition`, `gate_attestation`,
+`set_member_complete`, `_checkpoint`, `config_reseal`). Given an event type, it measures from the last
 occurrence of that type; if there has never been one, the baseline is the start
 of the run (seq 0), not the last transition — so the whole ledger counts.
 Anything else is a config error, refused where the config is loaded and sealed

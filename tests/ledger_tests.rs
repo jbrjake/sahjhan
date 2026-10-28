@@ -195,11 +195,15 @@ fn test_from_jsonl_rejects_tampered_hash() {
         BTreeMap::new(),
     );
     let line = entry.to_jsonl();
-    // Tamper: flip last hex char in hash
+    // Tamper: flip the hash's last hex char to one it is not. The hash follows
+    // the wall clock, so a fixed replacement is a no-op whenever it already
+    // ends that way.
+    let flipped = if entry.hash.ends_with('0') { "1" } else { "0" };
     let tampered = line.replace(
         &entry.hash,
-        &format!("{}ff", &entry.hash[..entry.hash.len() - 2]),
+        &format!("{}{}", &entry.hash[..entry.hash.len() - 1], flipped),
     );
+    assert_ne!(tampered, line, "the tamper must have applied");
     let err = LedgerEntry::from_jsonl(&tampered).unwrap_err();
     let msg = err.to_string();
     assert!(

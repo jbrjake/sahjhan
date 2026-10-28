@@ -1,7 +1,7 @@
 ---
 id: sj-44ja0wa
 title: "Post #33's resolution comment once the owner has reviewed it"
-status: open
+status: done
 category: release
 discovered-from: sj-dkvmtrp
 relates: [sj-xarb4a4, sj-q6pq18t]
@@ -10,6 +10,7 @@ docs:
 seq: 20
 created: 2026-10-28T16:58Z
 verify: contains docs/meshwork/sj-44ja0wa-post-33-s-resolution-comment-once-the-owner-has-r.md /^- 2026-\d\d-\d\d owner approved/
+waived: "owner approved in this session's transcript (5b99787e) rather than writing the marker: \"i am fine with the comment as is.\""
 ---
 
 ISSUE CLOSURE RULE for #33, which v0.28.3 closed (46636de says `Closes #33`).
@@ -43,3 +44,8 @@ that it happened.
 
 ## log
 - 2026-10-28T16:58Z created
+- 2026-10-28T17:00Z open→doing — claimed by claude (5b99787e-3e5f-4cac-892c-faec3ba0c708)
+- 2026-10-28T17:00Z doing→done — waived: owner approved in this session's transcript (5b99787e) rather than writing the marker: "i am fine with the comment as is." @ 0e7d18e+6
+
+## comments
+- 2026-10-28T17:00Z [claude (5b99787e-3e5f-4cac-892c-faec3ba0c708)] Posted: https://github.com/jbrjake/sahjhan/issues/33#issuecomment-6475346436 (2026-10-28T17:00:35Z), body byte-identical to ISSUE-33-COMMENT.md. It supersedes the v0.22.1 status note, the only earlier comment on #33.

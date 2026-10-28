@@ -11,66 +11,46 @@ verify: contains Cargo.toml /^version = "0\.(28\.[3-9]|29\.)/
 status: doing
 created: 2026-10-23T20:24Z
 handoff: |
-  **Cut v0.28.3 now.** On 2026-10-28 the owner said "ok i'm good with the
-  release
-  notes finally". `RELEASE-NOTES-v0.28.3.md` at the root is final as they
-  left
-  it; do not edit it. Follow the release process memory: bump to 0.28.3
-  with
-  `cargo check` so `Cargo.lock` follows, commit `chore: bump version to
-  0.28.3`
-  using `git commit -- Cargo.toml Cargo.lock`, create an annotated tag,
-  push
-  main, then push the tag. Watch release.yml until it is green.
+  **v0.28.3 is tagged locally and not pushed.** Pre-flight on 2026-10-28
+  was
+  clean: fmt, clippy `-D warnings`, and seven `cargo test --all` runs at
+  799 passed, 0 failed, 67 ignored. The earlier 617-passed/1-failed run
+  was
+  `ledger_tests.rs`'s tampered-hash test, a 1-in-256 flake, fixed in
+  2323a9a.
+  Then `251f144 chore: bump version to 0.28.3` and the annotated
+  tag `v0.28.3` on it ("v0.28.3 — manifest verify agrees with concurrent
+  writers, and a since anchor on a checkpoint").
   
-  Pre-flight at a316509 (2026-10-28): fmt and clippy `-D warnings` clean.
-  One
-  `cargo test` run came back 617 passed, 1 failed. A binary stopped early,
-  and
-  that run's output was not captured, so the failing test is unknown. Six
-  reruns
-  with `--no-fail-fast` all came back 799 passed, 0 failed. CI runs the
-  suite on
-  the tag push, so a flake there fails the release. Run the suite a few
-  more
-  times before tagging. If it fails again, read the failing test's name
-  and
-  whether it is concurrent_append_tests or another binary.
+  `git push origin main && git push origin v0.28.3` was refused by the
+  auto-mode
+  classifier (creates a public surface), so the owner pushes or allows it.
+  If
+  main has moved past 251f144 since then, the tag still names the bump
+  commit,
+  which is the one to release.
   
-  Main is local and **unpushed**: 36 commits after v0.28.2, with no
-  `feat:`.
-  They are the manifest lock (49277b9) and the stale-state refusal
-  (ba9f236) for
-  holtz#ho-0mvwg8q; #33 (f9a017d, 9d9df66, 46636de, which says `Closes
-  #33`);
-  c4e4ebe (the checkpoint's seal refusal); 798971c (an append seals the
-  ledger it
-  grew, by the owner's ruling); and 908506d (a since gate's default
-  intent).
-  
-  Once tagged and published:
-  1. `gh release edit v0.28.3 --notes-file RELEASE-NOTES-v0.28.3.md`.
-  2. ISSUE CLOSURE RULE for #33: `ISSUE-33-COMMENT.md` at the root has not
-  been
-  reviewed by the owner. Re-run its table against the published darwin
-  binary.
-  The shapes are the issue's template, plus a `since` gate on `check_done`
-  with a checkpoint between two events. Show it to the owner, then post
-  it.
-  3. Re-run the holtz-shaped stress against the published binary. The
-  scenario
-  is in the close comment of the manifest-lock task in `relates:`. Then
-  comment on that task with the tag, the commits, and the before/after
-  against 0.28.2. Tell holtz that run ledgers under `paths.managed` are
-  now
-  sealed at their next append, and that a courier hook killed between its
+  After the tag push, in order:
+  1. Watch release.yml (`gh run watch`) until the release exists.
+  2. `gh release edit v0.28.3 --notes-file RELEASE-NOTES-v0.28.3.md`. The
+  file
+  is final as the owner left it; do not edit it.
+  3. #33: re-run `ISSUE-33-COMMENT.md`'s table against the published
+  darwin
+  binary, then show it to the owner before posting (not yet reviewed).
+  4. holtz: re-run the stress against the published binary. The driver is
+  recovered at the session scratchpad's `stress.py`
+  (`python3 -I stress.py <bin> <fresh dir> 2000`), and 0.28.2 is in the
+  holtz 0.170.16 plugin's `bin/`. Comment on the manifest-lock task in
+  `relates:` with the tag, the
+  commits, and the before/after. Say that run ledgers under
+  `paths.managed`
+  are now sealed at their next append, and that a courier killed between
+  its
   append and its manifest save leaves that ledger reported modified until
-  the
-  next append to it. The owner cut that point from the notes, so this
-  comment
-  is where holtz learns it. holtz's verify wants `answered by sahjhan
+  the next append to it. holtz's verify wants `answered by sahjhan
   v0.28.3`.
-  4. Close this.
+  5. Close this.
 claimed-by: claude (5b99787e-3e5f-4cac-892c-faec3ba0c708)
 ---
 49277b9 (the manifest lock, sj-1zq2xr5) is on main after v0.28.2 and rides in
@@ -95,3 +75,5 @@ the act, and the store cannot check it.
 - 2026-10-23T22:23Z handoff by claude (91a2d877-ce17-4ab5-9ccb-a31a561b6f73)
 - 2026-10-28T16:20Z handoff by claude (91a2d877-ce17-4ab5-9ccb-a31a561b6f73)
 - 2026-10-28T16:23Z open→doing — claimed by claude (5b99787e-3e5f-4cac-892c-faec3ba0c708)
+- 2026-10-28T16:29Z handoff by claude (5b99787e-3e5f-4cac-892c-faec3ba0c708)
+- 2026-10-28T16:29Z handoff by claude (5b99787e-3e5f-4cac-892c-faec3ba0c708)

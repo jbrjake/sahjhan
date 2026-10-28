@@ -12,7 +12,7 @@ chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 datafusion = "51"
 fs2 = "0.4"
-getrandom = "0.2"
+getrandom = "0.4"
 glob = "0.3"
 hex = "0.4"
 hmac = "0.12"

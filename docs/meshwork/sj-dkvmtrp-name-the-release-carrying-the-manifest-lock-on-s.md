@@ -8,7 +8,7 @@ relates: [sj-1zq2xr5, sj-9a7ret0]
 docs:
   - CLAUDE.md#flow-manifest-seal-one-lock-from-load-to-last-save
 verify: contains Cargo.toml /^version = "0\.(28\.[3-9]|29\.)/
-status: open
+status: doing
 created: 2026-10-23T20:24Z
 handoff: |
   **Cut v0.28.3 now.** On 2026-10-28 the owner said "ok i'm good with the
@@ -71,6 +71,7 @@ handoff: |
   is where holtz learns it. holtz's verify wants `answered by sahjhan
   v0.28.3`.
   4. Close this.
+claimed-by: claude (5b99787e-3e5f-4cac-892c-faec3ba0c708)
 ---
 49277b9 (the manifest lock, sj-1zq2xr5) is on main after v0.28.2 and rides in
 the next release. Cutting it is the owner's. A range of `fix:` and `docs:`
@@ -93,3 +94,4 @@ the act, and the store cannot check it.
 - 2026-10-23T22:22Z handoff by claude (91a2d877-ce17-4ab5-9ccb-a31a561b6f73)
 - 2026-10-23T22:23Z handoff by claude (91a2d877-ce17-4ab5-9ccb-a31a561b6f73)
 - 2026-10-28T16:20Z handoff by claude (91a2d877-ce17-4ab5-9ccb-a31a561b6f73)
+- 2026-10-28T16:23Z open→doing — claimed by claude (5b99787e-3e5f-4cac-892c-faec3ba0c708)

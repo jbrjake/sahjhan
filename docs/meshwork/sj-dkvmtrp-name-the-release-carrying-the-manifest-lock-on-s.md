@@ -11,75 +11,66 @@ verify: contains Cargo.toml /^version = "0\.(28\.[3-9]|29\.)/
 status: open
 created: 2026-10-23T20:24Z
 handoff: |
-  Waiting on the owner to cut the release. Main is local and **unpushed**.
-  After
-  v0.28.2 it carries:
-  
-  - 49277b9 (the manifest lock) and ba9f236 (a transition refused when its
-  state
-  moved under it). This is the work for holtz#ho-0mvwg8q.
-  - f9a017d and 9d9df66: the engine's `_checkpoint` named as written, and
-  the
-  refusal for a `checkpoint` anchor naming it. 46636de: L5 counts render
-  templates' reads, and says `Closes #33`.
-  - c4e4ebe: `ledger checkpoint` returns the shared seal refusal.
-  - 798971c: an append seals the ledger it grew rather than always the
-  default
-  one, by the owner's ruling.
-  - 908506d: a since gate's default intent no longer says "last
-  transition".
-  - Their docs commits.
-  
-  There is no `feat:`, so v0.28.3. The gate at 908506d: fmt, clippy
-  `-D warnings`, 799 passed, 0 failed. The 28 `#[ignore]` daemon tests
-  (daemon_record_event, config_integrity, daemon_signing) passed at
-  798971c.
-  Neither of the two later commits touches a daemon path.
-  
-  Notes: `RELEASE-NOTES-v0.28.3.md` at the root, untracked. The owner
-  revised it
-  at 17:41 on 2026-10-23, cutting the console transcripts, the timing
-  table, the
-  Breaking changes table and the Rust API paragraph. Session 91a2d877 then
-  inserted sections for the later fixes and touched one of the owner's
-  lines (the
-  Upgrading opener, which now names the `checkpoint` exception). Every new
-  claim
-  was driven against the downloaded 0.28.2 darwin binary and a HEAD
+  **Cut v0.28.3 now.** On 2026-10-28 the owner said "ok i'm good with the
   release
-  build. The bullet in "`manifest verify` beside other writers" that ends
-  in a
-  colon is the owner's edit in progress; leave it to them.
+  notes finally". `RELEASE-NOTES-v0.28.3.md` at the root is final as they
+  left
+  it; do not edit it. Follow the release process memory: bump to 0.28.3
+  with
+  `cargo check` so `Cargo.lock` follows, commit `chore: bump version to
+  0.28.3`
+  using `git commit -- Cargo.toml Cargo.lock`, create an annotated tag,
+  push
+  main, then push the tag. Watch release.yml until it is green.
+  
+  Pre-flight at a316509 (2026-10-28): fmt and clippy `-D warnings` clean.
+  One
+  `cargo test` run came back 617 passed, 1 failed. A binary stopped early,
+  and
+  that run's output was not captured, so the failing test is unknown. Six
+  reruns
+  with `--no-fail-fast` all came back 799 passed, 0 failed. CI runs the
+  suite on
+  the tag push, so a flake there fails the release. Run the suite a few
+  more
+  times before tagging. If it fails again, read the failing test's name
+  and
+  whether it is concurrent_append_tests or another binary.
+  
+  Main is local and **unpushed**: 36 commits after v0.28.2, with no
+  `feat:`.
+  They are the manifest lock (49277b9) and the stale-state refusal
+  (ba9f236) for
+  holtz#ho-0mvwg8q; #33 (f9a017d, 9d9df66, 46636de, which says `Closes
+  #33`);
+  c4e4ebe (the checkpoint's seal refusal); 798971c (an append seals the
+  ledger it
+  grew, by the owner's ruling); and 908506d (a since gate's default
+  intent).
   
   Once tagged and published:
-  1. Re-run the holtz-shaped stress against the *published* darwin binary.
-  The
-  scenario is in the close comment of the manifest-lock task in
-  `relates:`.
-  2. Comment on that task (the answer to holtz#ho-0mvwg8q) with the tag,
+  1. `gh release edit v0.28.3 --notes-file RELEASE-NOTES-v0.28.3.md`.
+  2. ISSUE CLOSURE RULE for #33: `ISSUE-33-COMMENT.md` at the root has not
+  been
+  reviewed by the owner. Re-run its table against the published darwin
+  binary.
+  The shapes are the issue's template, plus a `since` gate on `check_done`
+  with a checkpoint between two events. Show it to the owner, then post
+  it.
+  3. Re-run the holtz-shaped stress against the published binary. The
+  scenario
+  is in the close comment of the manifest-lock task in `relates:`. Then
+  comment on that task with the tag, the commits, and the before/after
+  against 0.28.2. Tell holtz that run ledgers under `paths.managed` are
+  now
+  sealed at their next append, and that a courier hook killed between its
+  append and its manifest save leaves that ledger reported modified until
   the
-  commits, and that re-run as a before/after against 0.28.2. Also tell
-  holtz
-  that run ledgers under `paths.managed` are now sealed at their next
-  append.
-  A courier hook killed between its append and its manifest save leaves
-  that
-  run ledger reported modified until the next append to it, and holtz
-  records
-  every mismatch as a permanent violation. holtz's verify wants `answered
-  by
-  sahjhan vX.Y.Z` in its task file.
-  3. `ISSUE-33-COMMENT.md` at the root is the #33 resolution comment
-  (ISSUE
-  CLOSURE RULE). Re-run its table against the published binary, then post
-  the
-  version the owner leaves. The probe shapes are the issue's template plus
-  a
-  `since` gate on `check_done` with a checkpoint between two events.
-  4. `gh release edit v0.28.3 --notes-file RELEASE-NOTES-v0.28.3.md` with
-  the
-  version the owner leaves.
-  5. Close this.
+  next append to it. The owner cut that point from the notes, so this
+  comment
+  is where holtz learns it. holtz's verify wants `answered by sahjhan
+  v0.28.3`.
+  4. Close this.
 ---
 49277b9 (the manifest lock, sj-1zq2xr5) is on main after v0.28.2 and rides in
 the next release. Cutting it is the owner's. A range of `fix:` and `docs:`
@@ -101,3 +92,4 @@ the act, and the store cannot check it.
 - 2026-10-23T21:00Z handoff by claude (458e1a62-9f03-498d-ab4d-d00dde1c6d95)
 - 2026-10-23T22:22Z handoff by claude (91a2d877-ce17-4ab5-9ccb-a31a561b6f73)
 - 2026-10-23T22:23Z handoff by claude (91a2d877-ce17-4ab5-9ccb-a31a561b6f73)
+- 2026-10-28T16:20Z handoff by claude (91a2d877-ce17-4ab5-9ccb-a31a561b6f73)
